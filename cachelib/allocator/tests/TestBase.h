@@ -418,7 +418,7 @@ void AllocatorTest<AllocatorT>::testShmIsRemoved(
   ASSERT_FALSE(AllocatorT::ShmManager::segmentExists(
       config.getCacheDir(), detail::kShmHashTableName, config.usePosixShm));
   ASSERT_FALSE(AllocatorT::ShmManager::segmentExists(
-      config.getCacheDir(), detail::kShmCacheName, config.usePosixShm));
+      config.getCacheDir(), detail::kShmCacheName + std::to_string(0), config.usePosixShm));
   ASSERT_FALSE(AllocatorT::ShmManager::segmentExists(
       config.getCacheDir(), detail::kShmChainedItemHashTableName,
       config.usePosixShm));
@@ -432,7 +432,7 @@ void AllocatorTest<AllocatorT>::testShmIsNotRemoved(
   ASSERT_TRUE(AllocatorT::ShmManager::segmentExists(
       config.getCacheDir(), detail::kShmHashTableName, config.usePosixShm));
   ASSERT_TRUE(AllocatorT::ShmManager::segmentExists(
-      config.getCacheDir(), detail::kShmCacheName, config.usePosixShm));
+      config.getCacheDir(), detail::kShmCacheName + std::to_string(0), config.usePosixShm));
   ASSERT_TRUE(AllocatorT::ShmManager::segmentExists(
       config.getCacheDir(), detail::kShmChainedItemHashTableName,
       config.usePosixShm));

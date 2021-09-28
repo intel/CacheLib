@@ -325,8 +325,8 @@ class Cache {
   // return the stats for the pool.
   PoolStats getPoolStats(PoolId pid) const { return cache_->getPoolStats(pid); }
 
-  ACStats getACStats(PoolId pid, ClassId cid) const {
-    return cache_->getACStats(pid, cid);
+  ACStats getACStats(TierId tid, PoolId pid, ClassId cid) const {
+    return cache_->getACStats(tid, pid, cid);
   }
 
   // return the total number of inconsistent operations detected since start.
@@ -1128,14 +1128,15 @@ Stats Cache<Allocator>::getStats() const {
     aggregate += poolStats;
   }
 
-  std::map<PoolId, std::map<ClassId, ACStats>> allocationClassStats{};
+  std::map<TierId, std::map<PoolId, std::map<ClassId, ACStats>>> allocationClassStats{};
 
   for (size_t pid = 0; pid < pools_.size(); pid++) {
     PoolId poolId = static_cast<PoolId>(pid);
     auto poolStats = cache_->getPoolStats(poolId);
     auto cids = poolStats.getClassIds();
-    for (auto [cid, stats] : poolStats.mpStats.acStats) {
-      allocationClassStats[poolId][cid] = stats;
+    for (TierId tid = 0; tid < cache_->getNumTiers(); tid++) {
+      for (auto cid : cids)
+        allocationClassStats[tid][pid][cid] = cache_->getACStats(tid, pid, cid);
     }
   }
 

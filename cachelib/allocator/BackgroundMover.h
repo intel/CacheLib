@@ -27,17 +27,19 @@ namespace facebook::cachelib {
 template <typename C>
 struct BackgroundMoverAPIWrapper {
   static size_t traverseAndEvictItems(C& cache,
+                                      unsigned int tid,
                                       unsigned int pid,
                                       unsigned int cid,
                                       size_t batch) {
-    return cache.traverseAndEvictItems(pid, cid, batch);
+    return cache.traverseAndEvictItems(tid, pid, cid, batch);
   }
 
   static size_t traverseAndPromoteItems(C& cache,
+                                        unsigned int tid,
                                         unsigned int pid,
                                         unsigned int cid,
                                         size_t batch) {
-    return cache.traverseAndPromoteItems(pid, cid, batch);
+    return cache.traverseAndPromoteItems(tid, pid, cid, batch);
   }
 };
 
@@ -60,16 +62,18 @@ class BackgroundMover : public PeriodicWorker {
   ~BackgroundMover() override;
 
   BackgroundMoverStats getStats() const noexcept;
-  std::map<PoolId, std::map<ClassId, uint64_t>> getClassStats() const noexcept;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+  getClassStats() const noexcept;
 
   void setAssignedMemory(std::vector<MemoryDescriptorType>&& assignedMemory);
 
   // return id of the worker responsible for promoting/evicting from particlar
   // pool and allocation calss (id is in range [0, numWorkers))
-  static size_t workerId(PoolId pid, ClassId cid, size_t numWorkers);
+  static size_t workerId(TierId tid, PoolId pid, ClassId cid, size_t numWorkers);
 
  private:
-  std::map<PoolId, std::map<ClassId, uint64_t>> movesPerClass_;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+      movesPerClass_;
   // cache allocator's interface for evicting
   using Item = typename Cache::Item;
 
@@ -77,7 +81,9 @@ class BackgroundMover : public PeriodicWorker {
   std::shared_ptr<BackgroundMoverStrategy> strategy_;
   MoverDir direction_;
 
-  std::function<size_t(Cache&, unsigned int, unsigned int, size_t)> moverFunc;
+  std::function<size_t(
+      Cache&, unsigned int, unsigned int, unsigned int, size_t)>
+      moverFunc;
 
   // implements the actual logic of running the background evictor
   void work() override final;
@@ -123,8 +129,8 @@ template <typename CacheT>
 void BackgroundMover<CacheT>::setAssignedMemory(
     std::vector<MemoryDescriptorType>&& assignedMemory) {
   XLOG(INFO, "Class assigned to background worker:");
-  for (auto [pid, cid] : assignedMemory) {
-    XLOGF(INFO, "Pid: {}, Cid: {}", pid, cid);
+  for (auto [tid, pid, cid] : assignedMemory) {
+    XLOGF(INFO, "Tid: {}, Pid: {}, Cid: {}", tid, pid, cid);
   }
 
   mutex_.lock_combine([this, &assignedMemory] {
@@ -142,18 +148,18 @@ void BackgroundMover<CacheT>::checkAndRun() {
   auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
 
   for (size_t i = 0; i < batches.size(); i++) {
-    const auto [pid, cid] = assignedMemory[i];
+    const auto [tid, pid, cid] = assignedMemory[i];
     const auto batch = batches[i];
 
     if (batch == 0) {
       continue;
     }
-
+    const auto& mpStats = cache_.getPoolByTid(pid, tid).getStats();
     // try moving BATCH items from the class in order to reach free target
-    auto moved = moverFunc(cache_, pid, cid, batch);
+    auto moved = moverFunc(cache_, tid, pid, cid, batch);
     moves += moved;
-    movesPerClass_[pid][cid] += moved;
-    totalBytesMoved_.add(moved * cache_.getPool(pid).getAllocSizes()[cid]);
+    movesPerClass_[tid][pid][cid] += moved;
+    totalBytesMoved_.add(moved * mpStats.acStats.at(cid).allocSize );
   }
 
   numTraversals_.inc();
@@ -171,18 +177,19 @@ BackgroundMoverStats BackgroundMover<CacheT>::getStats() const noexcept {
 }
 
 template <typename CacheT>
-std::map<PoolId, std::map<ClassId, uint64_t>>
+std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
 BackgroundMover<CacheT>::getClassStats() const noexcept {
   return movesPerClass_;
 }
 
 template <typename CacheT>
-size_t BackgroundMover<CacheT>::workerId(PoolId pid,
+size_t BackgroundMover<CacheT>::workerId(TierId tid,
+                                         PoolId pid,
                                          ClassId cid,
                                          size_t numWorkers) {
   XDCHECK(numWorkers);
 
   // TODO: came up with some better sharding (use hashing?)
-  return (pid + cid) % numWorkers;
+  return (tid + pid + cid) % numWorkers;
 }
 } // namespace facebook::cachelib

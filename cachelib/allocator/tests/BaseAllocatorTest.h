@@ -4341,13 +4341,13 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     // Had a bug: D4799860 where we allocated the wrong size for chained item
     {
       const auto parentAllocInfo =
-          alloc.allocator_->getAllocInfo(itemHandle->getMemory());
+          alloc.allocator_[0 /* TODO - extend test */]->getAllocInfo(itemHandle->getMemory());
       const auto child1AllocInfo =
-          alloc.allocator_->getAllocInfo(chainedItemHandle->getMemory());
+          alloc.allocator_[0 /* TODO - extend test */]->getAllocInfo(chainedItemHandle->getMemory());
       const auto child2AllocInfo =
-          alloc.allocator_->getAllocInfo(chainedItemHandle2->getMemory());
+          alloc.allocator_[0 /* TODO - extend test */]->getAllocInfo(chainedItemHandle2->getMemory());
       const auto child3AllocInfo =
-          alloc.allocator_->getAllocInfo(chainedItemHandle3->getMemory());
+          alloc.allocator_[0 /* TODO - extend test */]->getAllocInfo(chainedItemHandle3->getMemory());
 
       const auto parentCid = parentAllocInfo.classId;
       const auto child1Cid = child1AllocInfo.classId;
