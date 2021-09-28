@@ -167,11 +167,11 @@ class PtrCompressor {
       : allocator_(allocator) {}
 
   const CompressedPtr compress(const PtrType* uncompressed) const {
-    return allocator_.compress(uncompressed, false);
+    return allocator_.compress(uncompressed, true);
   }
 
   PtrType* unCompress(const CompressedPtr compressed) const {
-    return static_cast<PtrType*>(allocator_.unCompress(compressed, false));
+    return static_cast<PtrType*>(allocator_.unCompress(compressed, true));
   }
 
   bool operator==(const PtrCompressor& rhs) const noexcept {
