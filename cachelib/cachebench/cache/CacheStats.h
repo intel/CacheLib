@@ -127,15 +127,15 @@ struct Stats {
   uint64_t invalidDestructorCount{0};
   int64_t unDestructedItemCount{0};
 
-  std::map<PoolId, std::map<ClassId, ACStats>> allocationClassStats;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, ACStats>>> allocationClassStats;
 
   // populate the counters related to nvm usage. Cache implementation can decide
   // what to populate since not all of those are interesting when running
   // cachebench.
   std::unordered_map<std::string, double> nvmCounters;
 
-  std::map<PoolId, std::map<ClassId, uint64_t>> backgroundEvictionClasses;
-  std::map<PoolId, std::map<ClassId, uint64_t>> backgroundPromotionClasses;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> backgroundEvictionClasses;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> backgroundPromotionClasses;
 
   // errors from the nvm engine.
   std::unordered_map<std::string, double> nvmErrors;
@@ -157,9 +157,11 @@ struct Stats {
     out << folly::sformat("RAM Evictions : {:,}", numEvictions) << std::endl;
 
     auto foreachAC = [](const auto& map, auto cb) {
-      for (auto& pidStat : map) {
-        for (auto& cidStat : pidStat.second) {
-          cb(pidStat.first, cidStat.first, cidStat.second);
+      for (auto &tidStat : map) {
+        for (auto& pidStat : tidStat.second) {
+          for (auto& cidStat : pidStat.second) {
+            cb(tidStat.first, pidStat.first, cidStat.first, cidStat.second);
+          }
         }
       }
     };
@@ -191,17 +193,17 @@ struct Stats {
         }
       };
 
-      foreachAC(allocationClassStats, [&](auto pid, auto cid, auto stats) {
+      foreachAC(allocationClassStats, [&](auto tid, auto pid, auto cid, auto stats) {
         auto [allocSizeSuffix, allocSize] = formatMemory(stats.allocSize);
         auto [memorySizeSuffix, memorySize] =
             formatMemory(stats.totalAllocatedSize());
-        out << folly::sformat("pid{:2} cid{:4} {:8.2f}{} memorySize: {:8.2f}{}",
-                              pid, cid, allocSize, allocSizeSuffix, memorySize,
+        out << folly::sformat("tid{:2} pid{:2} cid{:4} {:8.2f}{} memorySize: {:8.2f}{}",
+                              tid, pid, cid, allocSize, allocSizeSuffix, memorySize,
                               memorySizeSuffix)
             << std::endl;
       });
 
-      foreachAC(allocationClassStats, [&](auto pid, auto cid, auto stats) {
+      foreachAC(allocationClassStats, [&](auto tid, auto pid, auto cid, auto stats) {
         auto [allocSizeSuffix, allocSize] = formatMemory(stats.allocSize);
 
         // If the pool is not full, extrapolate usageFraction for AC assuming it
@@ -211,8 +213,8 @@ struct Stats {
                                    : stats.usageFraction();
 
         out << folly::sformat(
-                   "pid{:2} cid{:4} {:8.2f}{} usageFraction: {:4.2f}", pid, cid,
-                   allocSize, allocSizeSuffix, acUsageFraction)
+                   "tid{:2} pid{:2} cid{:4} {:8.2f}{} usageFraction: {:4.2f}",
+                   tid, pid, cid, allocSize, allocSizeSuffix, acUsageFraction)
             << std::endl;
       });
     }
@@ -251,10 +253,9 @@ struct Stats {
         backgndEvicStats.nEvictedItems > 0) {
       out << "== Class Background Eviction Counters Map ==" << std::endl;
       foreachAC(backgroundEvictionClasses,
-                [&](auto pid, auto cid, auto evicted) {
-                  out << folly::sformat("pid{:2} cid{:4} evicted: {:4}", pid,
-                                        cid, evicted)
-                      << std::endl;
+                [&](auto tid, auto pid, auto cid, auto evicted) {
+                  out << folly::sformat("tid{:2} pid{:2} cid{:4} evicted: {:4}",
+                    tid, pid, cid, evicted) << std::endl;
                 });
 
       out << folly::sformat("Background Evicted Items : {:,}",
@@ -269,10 +270,9 @@ struct Stats {
         backgndPromoStats.nPromotedItems > 0) {
       out << "== Class Background Promotion Counters Map ==" << std::endl;
       foreachAC(backgroundPromotionClasses,
-                [&](auto pid, auto cid, auto promoted) {
-                  out << folly::sformat("pid{:2} cid{:4} promoted: {:4}", pid,
-                                        cid, promoted)
-                      << std::endl;
+                [&](auto tid, auto pid, auto cid, auto promoted) {
+                  out << folly::sformat("tid{:2} pid{:2} cid{:4} promoted: {:4}",
+                    pid, cid, promoted) << std::endl;
                 });
 
       out << folly::sformat("Background Promoted Items : {:,}",

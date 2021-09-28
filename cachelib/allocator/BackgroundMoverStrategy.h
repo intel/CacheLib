@@ -22,7 +22,9 @@ namespace facebook {
 namespace cachelib {
 
 struct MemoryDescriptorType {
-  MemoryDescriptorType(PoolId pid, ClassId cid) : pid_(pid), cid_(cid) {}
+  MemoryDescriptorType(TierId tid, PoolId pid, ClassId cid) : 
+      tid_(tid), pid_(pid), cid_(cid) {}
+  TierId tid_;
   PoolId pid_;
   ClassId cid_;
 };
