@@ -646,6 +646,13 @@ class MemoryAllocator {
     memoryPoolManager_.updateNumSlabsToAdvise(numSlabs);
   }
 
+  // returns ture if ptr points to memory which is managed by this
+  // allocator
+  bool isMemoryInAllocator(const void *ptr) {
+    return ptr && ptr >= slabAllocator_.getSlabMemoryBegin()
+      && ptr < slabAllocator_.getSlabMemoryEnd();
+  }
+
  private:
   // @param memory    pointer to the memory.
   // @return          the MemoryPool corresponding to the memory.

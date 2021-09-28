@@ -322,6 +322,17 @@ class SlabAllocator {
     return PtrCompressor<PtrType, SlabAllocator>(*this);
   }
 
+  // returns starting address of memory we own.
+  const Slab* getSlabMemoryBegin() const noexcept {
+    return reinterpret_cast<Slab*>(memoryStart_);
+  }
+
+  // returns first byte after the end of memory region we own.
+  const Slab* getSlabMemoryEnd() const noexcept {
+    return reinterpret_cast<Slab*>(reinterpret_cast<uint8_t*>(memoryStart_) +
+                                   memorySize_);
+  }
+
  private:
   // null Slab* presenttation. With 4M Slab size, a valid slab index would never
   // reach 2^16 - 1;
@@ -338,12 +349,6 @@ class SlabAllocator {
   //
   // @throw std::invalid_argument if the state is invalid.
   void checkState() const;
-
-  // returns first byte after the end of memory region we own.
-  const Slab* getSlabMemoryEnd() const noexcept {
-    return reinterpret_cast<Slab*>(reinterpret_cast<uint8_t*>(memoryStart_) +
-                                   memorySize_);
-  }
 
   // returns true if we have slabbed all the memory that is available to us.
   // false otherwise.

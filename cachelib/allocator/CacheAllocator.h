@@ -710,7 +710,7 @@ class CacheAllocator : public CacheBase {
   uint32_t getUsableSize(const Item& item) const;
 
   // create memory assignment to bg workers
-  auto createBgWorkerMemoryAssignments(size_t numWorkers);
+  auto createBgWorkerMemoryAssignments(size_t numWorkers, TierId tid);
 
   // whether bg worker should be woken
   bool shouldWakeupBgEvictor(PoolId pid, ClassId cid);
@@ -811,7 +811,7 @@ class CacheAllocator : public CacheBase {
   // @param config    new config for the pool
   //
   // @throw std::invalid_argument if the poolId is invalid
-  void overridePoolConfig(PoolId pid, const MMConfig& config);
+  void overridePoolConfig(TierId tid, PoolId pid, const MMConfig& config);
 
   // update an existing pool's rebalance strategy
   //
@@ -852,8 +852,9 @@ class CacheAllocator : public CacheBase {
   // @return  true if the operation succeeded. false if the size of the pool is
   //          smaller than _bytes_
   // @throw   std::invalid_argument if the poolId is invalid.
+  // TODO: should call shrinkPool for specific tier?
   bool shrinkPool(PoolId pid, size_t bytes) {
-    return allocator_->shrinkPool(pid, bytes);
+    return allocator_[currentTier()]->shrinkPool(pid, bytes);
   }
 
   // grow an existing pool by _bytes_. This will fail if there is no
@@ -862,8 +863,9 @@ class CacheAllocator : public CacheBase {
   // @return    true if the pool was grown. false if the necessary number of
   //            bytes were not available.
   // @throw     std::invalid_argument if the poolId is invalid.
+  // TODO: should call growPool for specific tier?
   bool growPool(PoolId pid, size_t bytes) {
-    return allocator_->growPool(pid, bytes);
+    return allocator_[currentTier()]->growPool(pid, bytes);
   }
 
   // move bytes from one pool to another. The source pool should be at least
@@ -876,7 +878,7 @@ class CacheAllocator : public CacheBase {
   //          correct size to do the transfer.
   // @throw   std::invalid_argument if src or dest is invalid pool
   bool resizePools(PoolId src, PoolId dest, size_t bytes) override {
-    return allocator_->resizePools(src, dest, bytes);
+    return allocator_[currentTier()]->resizePools(src, dest, bytes);
   }
 
   // Add a new compact cache with given name and size
@@ -1105,12 +1107,13 @@ class CacheAllocator : public CacheBase {
   // @throw std::invalid_argument if the memory does not belong to this
   //        cache allocator
   AllocInfo getAllocInfo(const void* memory) const {
-    return allocator_->getAllocInfo(memory);
+    return allocator_[getTierId(memory)]->getAllocInfo(memory);
   }
 
   // return the ids for the set of existing pools in this cache.
   std::set<PoolId> getPoolIds() const override final {
-    return allocator_->getPoolIds();
+    // all tiers have the same pool ids. TODO: deduplicate
+    return allocator_[0]->getPoolIds();
   }
 
   // return a list of pool ids that are backing compact caches. This includes
@@ -1122,18 +1125,22 @@ class CacheAllocator : public CacheBase {
 
   // return the pool with speicified id.
   const MemoryPool& getPool(PoolId pid) const override final {
-    return allocator_->getPool(pid);
+    return allocator_[currentTier()]->getPool(pid);
+  }
+
+  const MemoryPool& getPoolByTid(PoolId pid, TierId tid) const override final {
+    return allocator_[tid]->getPool(pid);
   }
 
   // calculate the number of slabs to be advised/reclaimed in each pool
   PoolAdviseReclaimData calcNumSlabsToAdviseReclaim() override final {
     auto regularPoolIds = getRegularPoolIds();
-    return allocator_->calcNumSlabsToAdviseReclaim(regularPoolIds);
+    return allocator_[currentTier()]->calcNumSlabsToAdviseReclaim(regularPoolIds);
   }
 
   // update number of slabs to advise in the cache
   void updateNumSlabsToAdvise(int32_t numSlabsToAdvise) override final {
-    allocator_->updateNumSlabsToAdvise(numSlabsToAdvise);
+    allocator_[currentTier()]->updateNumSlabsToAdvise(numSlabsToAdvise);
   }
 
   // returns a valid PoolId corresponding to the name or kInvalidPoolId if the
@@ -1141,8 +1148,9 @@ class CacheAllocator : public CacheBase {
   PoolId getPoolId(folly::StringPiece name) const noexcept;
 
   // returns the pool's name by its poolId.
-  std::string getPoolName(PoolId poolId) const override {
-    return allocator_->getPoolName(poolId);
+  std::string getPoolName(PoolId poolId) const {
+    // all tiers have the same pool names.
+    return allocator_[0]->getPoolName(poolId);
   }
 
   // get stats related to all kinds of slab release events.
@@ -1215,7 +1223,7 @@ class CacheAllocator : public CacheBase {
   CacheMemoryStats getCacheMemoryStats() const override final;
 
   // return stats for Allocation Class
-  ACStats getACStats(PoolId pid, ClassId cid) const override final;
+  ACStats getACStats(TierId tid, PoolId pid, ClassId cid) const override final;
 
   // return the nvm cache stats map
   util::StatsMap getNvmCacheStatsMap() const override final;
@@ -1420,10 +1428,13 @@ class CacheAllocator : public CacheBase {
 
   using MMContainerPtr = std::unique_ptr<MMContainer>;
   using MMContainers =
-      std::array<std::array<MMContainerPtr, MemoryAllocator::kMaxClasses>,
-                 MemoryPoolManager::kMaxPools>;
+      std::vector<std::array<std::array<MMContainerPtr, MemoryAllocator::kMaxClasses>,
+                 MemoryPoolManager::kMaxPools>>;
 
   void createMMContainers(const PoolId pid, MMConfig config);
+
+  TierId getTierId(const Item& item) const;
+  TierId getTierId(const void* ptr) const;
 
   // acquire the MMContainer corresponding to the the Item's class and pool.
   //
@@ -1432,7 +1443,12 @@ class CacheAllocator : public CacheBase {
   // allocation from the memory allocator.
   MMContainer& getMMContainer(const Item& item) const noexcept;
 
-  MMContainer& getMMContainer(PoolId pid, ClassId cid) const noexcept;
+  MMContainer& getMMContainer(TierId tid, PoolId pid, ClassId cid) const noexcept;
+
+  // Get stats of the specified pid and cid.
+  // If such mmcontainer is not valid (pool id or cid out of bound)
+  // or the mmcontainer is not initialized, return an empty stat.
+  MMContainerStat getMMContainerStat(TierId tid, PoolId pid, ClassId cid) const noexcept;
 
   // create a new cache allocation. The allocation can be initialized
   // appropriately and made accessible through insert or insertOrReplace.
@@ -1465,6 +1481,18 @@ class CacheAllocator : public CacheBase {
                                uint32_t creationTime,
                                uint32_t expiryTime,
                                bool fromBgThread = false);
+
+  // create a new cache allocation on specific memory tier.
+  // For description see allocateInternal.
+  //
+  // @param tid id a memory tier
+  WriteHandle allocateInternalTier(TierId tid,
+                                   PoolId id,
+                                   Key key,
+                                   uint32_t size,
+                                   uint32_t creationTime,
+                                   uint32_t expiryTime,
+                                   bool fromBgThread);
 
   // Allocate a chained item
   //
@@ -1542,6 +1570,15 @@ class CacheAllocator : public CacheBase {
   // @return      the handle for the item or a handle to nullptr if the key does
   //              not exist.
   FOLLY_ALWAYS_INLINE WriteHandle findFastImpl(Key key, AccessMode mode);
+
+  // Moves a regular item to a different memory tier.
+  //
+  // @param oldItem     Reference to the item being moved
+  // @param newItemHdl  Reference to the handle of the new item being moved into
+  //
+  // @return true  If the move was completed, and the containers were updated
+  //               successfully.
+  bool moveRegularItemOnEviction(Item& oldItem, WriteHandle& newItemHdl);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
@@ -1715,15 +1752,17 @@ class CacheAllocator : public CacheBase {
   // Implementation to find a suitable eviction from the container. The
   // two parameters together identify a single container.
   //
+  // @param  tid  the id of the tier to look for evictions inside
   // @param  pid  the id of the pool to look for evictions inside
   // @param  cid  the id of the class to look for evictions inside
   // @return An evicted item or nullptr  if there is no suitable candidate found
   // within the configured number of attempts.
-  Item* findEviction(PoolId pid, ClassId cid);
+  Item* findEviction(TierId tid, PoolId pid, ClassId cid);
 
   // Get next eviction candidate from MMContainer, remove from AccessContainer,
   // MMContainer and insert into NVMCache if enabled.
   //
+  // @param tid  the id of the tier to look for evictions inside
   // @param pid  the id of the pool to look for evictions inside
   // @param cid  the id of the class to look for evictions inside
   // @param searchTries number of search attempts so far.
@@ -1731,7 +1770,8 @@ class CacheAllocator : public CacheBase {
   // @return pair of [candidate, toRecycle]. Pair of null if reached the end of
   // the eviction queue or no suitable candidate found
   // within the configured number of attempts
-  std::pair<Item*, Item*> getNextCandidate(PoolId pid,
+  std::pair<Item*, Item*> getNextCandidate(TierId tid,
+                                           PoolId pid,
                                            ClassId cid,
                                            unsigned int& searchTries);
 
@@ -1762,7 +1802,7 @@ class CacheAllocator : public CacheBase {
       const typename Item::PtrCompressor& compressor);
 
   unsigned int reclaimSlabs(PoolId id, size_t numSlabs) final {
-    return allocator_->reclaimSlabsAndGrow(id, numSlabs);
+    return allocator_[currentTier()]->reclaimSlabsAndGrow(id, numSlabs);
   }
 
   FOLLY_ALWAYS_INLINE EventTracker* getEventTracker() const {
@@ -1821,7 +1861,7 @@ class CacheAllocator : public CacheBase {
                    const void* hint = nullptr) final;
 
   // @param releaseContext  slab release context
-  void releaseSlabImpl(const SlabReleaseContext& releaseContext);
+  void releaseSlabImpl(TierId tid, const SlabReleaseContext& releaseContext);
 
   // @return  true when successfully marked as moving,
   //          fasle when this item has already been freed
@@ -1864,13 +1904,14 @@ class CacheAllocator : public CacheBase {
     // primitives. So we consciously exempt ourselves here from TSAN data race
     // detection.
     folly::annotate_ignore_thread_sanitizer_guard g(__FILE__, __LINE__);
-    auto slabsSkipped = allocator_->forEachAllocation(std::forward<Fn>(f));
+    auto slabsSkipped = allocator_[currentTier()]->forEachAllocation(std::forward<Fn>(f));
     stats().numReaperSkippedSlabs.add(slabsSkipped);
   }
 
   // exposed for the background evictor to iterate through the memory and evict
   // in batch. This should improve insertion path for tiered memory config
-  size_t traverseAndEvictItems(unsigned int /* pid */,
+  size_t traverseAndEvictItems(unsigned int /* tid */,
+                               unsigned int /* pid */,
                                unsigned int /* cid */,
                                size_t /* batch */) {
     throw std::runtime_error("Not supported yet!");
@@ -1878,7 +1919,8 @@ class CacheAllocator : public CacheBase {
 
   // exposed for the background promoter to iterate through the memory and
   // promote in batch. This should improve find latency
-  size_t traverseAndPromoteItems(unsigned int /* pid */,
+  size_t traverseAndPromoteItems(unsigned int /* tid */,
+                                 unsigned int /* pid */,
                                  unsigned int /* cid */,
                                  size_t /* batch */) {
     throw std::runtime_error("Not supported yet!");
@@ -1924,10 +1966,10 @@ class CacheAllocator : public CacheBase {
                   std::unique_ptr<T>& worker,
                   std::chrono::seconds timeout = std::chrono::seconds{0});
 
-  ShmSegmentOpts createShmCacheOpts();
-  std::unique_ptr<MemoryAllocator> createNewMemoryAllocator();
-  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator();
-  std::unique_ptr<CCacheManager> restoreCCacheManager();
+  ShmSegmentOpts createShmCacheOpts(TierId tid);
+  std::unique_ptr<MemoryAllocator> createNewMemoryAllocator(TierId tid);
+  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator(TierId tid);
+  std::unique_ptr<CCacheManager> restoreCCacheManager(TierId tid);
 
   PoolIds filterCompactCachePools(const PoolIds& poolIds) const;
 
@@ -1947,7 +1989,7 @@ class CacheAllocator : public CacheBase {
   }
 
   typename Item::PtrCompressor createPtrCompressor() const {
-    return allocator_->createPtrCompressor<Item>();
+    return allocator_[0 /* TODO */]->createPtrCompressor<Item>();
   }
 
   // helper utility to throttle and optionally log.
@@ -1970,9 +2012,14 @@ class CacheAllocator : public CacheBase {
 
   // @param type        the type of initialization
   // @return nullptr if the type is invalid
-  // @return pointer to memory allocator
+  // @return vector of pointers to memory allocator
   // @throw std::runtime_error if type is invalid
-  std::unique_ptr<MemoryAllocator> initAllocator(InitMemType type);
+  std::vector<std::unique_ptr<MemoryAllocator>> initAllocator(InitMemType type);
+
+  std::vector<std::unique_ptr<MemoryAllocator>> createPrivateAllocator();
+  std::vector<std::unique_ptr<MemoryAllocator>> createAllocators();
+  std::vector<std::unique_ptr<MemoryAllocator>> restoreAllocators();
+
   // @param type        the type of initialization
   // @return nullptr if the type is invalid
   // @return pointer to access container
@@ -2041,23 +2088,28 @@ class CacheAllocator : public CacheBase {
     return stats;
   }
 
-  std::map<PoolId, std::map<ClassId, uint64_t>> getBackgroundMoverClassStats(
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+  getBackgroundMoverClassStats(
       MoverDir direction) const {
-    std::map<PoolId, std::map<ClassId, uint64_t>> stats;
+    std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> stats;
 
     if (direction == MoverDir::Evict) {
       for (auto& bg : backgroundEvictor_) {
-        for (auto& pid : bg->getClassStats()) {
-          for (auto& cid : pid.second) {
-            stats[pid.first][cid.first] += cid.second;
+        for (auto &tid : bg->getClassStats()) {
+          for (auto& pid : tid.second) {
+            for (auto& cid : pid.second) {
+              stats[tid.first][pid.first][cid.first] += cid.second;
+            }
           }
         }
       }
     } else if (direction == MoverDir::Promote) {
       for (auto& bg : backgroundPromoter_) {
-        for (auto& pid : bg->getClassStats()) {
-          for (auto& cid : pid.second) {
-            stats[pid.first][cid.first] += cid.second;
+        for (auto &tid : bg->getClassStats()) {
+          for (auto& pid : tid.second) {
+            for (auto& cid : pid.second) {
+              stats[tid.first][pid.first][cid.first] += cid.second;
+            }
           }
         }
       }
@@ -2148,6 +2200,17 @@ class CacheAllocator : public CacheBase {
 
   // BEGIN private members
 
+  TierId currentTier() const {
+    // TODO: every function which calls this method should be refactored.
+    // We should go case by case and either make such function work on
+    // all tiers or expose separate parameter to describe the tier ID.
+    return 0;
+  }
+
+  unsigned getNumTiers() const {
+    return config_.memoryTierConfigs.size();
+  }
+
   // Whether the memory allocator for this cache allocator was created on shared
   // memory. The hash table, chained item hash table etc is also created on
   // shared memory except for temporary shared memory mode when they're created
@@ -2173,9 +2236,10 @@ class CacheAllocator : public CacheBase {
   const MMConfig mmConfig_{};
 
   // the memory allocator for allocating out of the available memory.
-  std::unique_ptr<MemoryAllocator> allocator_;
+  std::vector<std::unique_ptr<MemoryAllocator>> allocator_;
 
   // compact cache allocator manager
+  // TODO: per tier?
   std::unique_ptr<CCacheManager> compactCacheManager_;
 
   // compact cache instances reside here when user "add" or "attach" compact

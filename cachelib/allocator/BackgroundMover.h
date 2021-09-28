@@ -29,17 +29,19 @@ namespace cachelib {
 template <typename C>
 struct BackgroundMoverAPIWrapper {
   static size_t traverseAndEvictItems(C& cache,
+                                      unsigned int tid,
                                       unsigned int pid,
                                       unsigned int cid,
                                       size_t batch) {
-    return cache.traverseAndEvictItems(pid, cid, batch);
+    return cache.traverseAndEvictItems(tid, pid, cid, batch);
   }
 
   static size_t traverseAndPromoteItems(C& cache,
+                                        unsigned int tid,
                                         unsigned int pid,
                                         unsigned int cid,
                                         size_t batch) {
-    return cache.traverseAndPromoteItems(pid, cid, batch);
+    return cache.traverseAndPromoteItems(tid, pid, cid, batch);
   }
 };
 
@@ -62,16 +64,18 @@ class BackgroundMover : public PeriodicWorker {
   ~BackgroundMover() override;
 
   BackgroundMoverStats getStats() const noexcept;
-  std::map<PoolId, std::map<ClassId, uint64_t>> getClassStats() const noexcept;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+  getClassStats() const noexcept;
 
   void setAssignedMemory(std::vector<MemoryDescriptorType>&& assignedMemory);
 
   // return id of the worker responsible for promoting/evicting from particlar
   // pool and allocation calss (id is in range [0, numWorkers))
-  static size_t workerId(PoolId pid, ClassId cid, size_t numWorkers);
+  static size_t workerId(TierId tid, PoolId pid, ClassId cid, size_t numWorkers);
 
  private:
-  std::map<PoolId, std::map<ClassId, uint64_t>> movesPerClass_;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+      moves_per_class_;
   // cache allocator's interface for evicting
   using Item = typename Cache::Item;
 
@@ -79,7 +83,9 @@ class BackgroundMover : public PeriodicWorker {
   std::shared_ptr<BackgroundMoverStrategy> strategy_;
   MoverDir direction_;
 
-  std::function<size_t(Cache&, unsigned int, unsigned int, size_t)> moverFunc;
+  std::function<size_t(
+      Cache&, unsigned int, unsigned int, unsigned int, size_t)>
+      moverFunc;
 
   // implements the actual logic of running the background evictor
   void work() override final;

@@ -49,8 +49,8 @@ template <typename CacheT>
 void BackgroundMover<CacheT>::setAssignedMemory(
     std::vector<MemoryDescriptorType>&& assignedMemory) {
   XLOG(INFO, "Class assigned to background worker:");
-  for (auto [pid, cid] : assignedMemory) {
-    XLOGF(INFO, "Pid: {}, Cid: {}", pid, cid);
+  for (auto [tid, pid, cid] : assignedMemory) {
+    XLOGF(INFO, "Tid: {}, Pid: {}, Cid: {}", tid, pid, cid);
   }
 
   mutex_.lock_combine([this, &assignedMemory] {
@@ -68,18 +68,18 @@ void BackgroundMover<CacheT>::checkAndRun() {
   auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
 
   for (size_t i = 0; i < batches.size(); i++) {
-    const auto [pid, cid] = assignedMemory[i];
+    const auto [tid, pid, cid] = assignedMemory[i];
     const auto batch = batches[i];
 
     if (batch == 0) {
       continue;
     }
-
+    const auto& mpStats = cache_.getPoolByTid(pid, tid).getStats();
     // try moving BATCH items from the class in order to reach free target
-    auto moved = moverFunc(cache_, pid, cid, batch);
+    auto moved = moverFunc(cache_, tid, pid, cid, batch);
     moves += moved;
-    movesPerClass_[pid][cid] += moved;
-    totalBytesMoved_.add(moved * cache_.getPool(pid).getAllocSizes()[cid]);
+    moves_per_class_[tid][pid][cid] += moved;
+    totalBytesMoved_.add(moved * mpStats.acStats.at(cid).allocSize );
   }
 
   numTraversals_.inc();
@@ -97,19 +97,20 @@ BackgroundMoverStats BackgroundMover<CacheT>::getStats() const noexcept {
 }
 
 template <typename CacheT>
-std::map<PoolId, std::map<ClassId, uint64_t>>
+std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
 BackgroundMover<CacheT>::getClassStats() const noexcept {
-  return movesPerClass_;
+  return moves_per_class_;
 }
 
 template <typename CacheT>
-size_t BackgroundMover<CacheT>::workerId(PoolId pid,
+size_t BackgroundMover<CacheT>::workerId(TierId tid,
+                                         PoolId pid,
                                          ClassId cid,
                                          size_t numWorkers) {
   XDCHECK(numWorkers);
 
   // TODO: came up with some better sharding (use hashing?)
-  return (pid + cid) % numWorkers;
+  return (tid + pid + cid) % numWorkers;
 }
 
 } // namespace cachelib
