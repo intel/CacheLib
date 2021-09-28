@@ -141,6 +141,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
    * to be mapped to different addresses on shared memory.
    */
   using CompressedPtr = facebook::cachelib::CompressedPtr;
+  using SingleTierPtrCompressor = MemoryAllocator::SingleTierPtrCompressor<Item>;
   using PtrCompressor = MemoryAllocator::PtrCompressor<Item>;
 
   // Get the required size for a cache item given the size of memory
@@ -240,6 +241,14 @@ class CACHELIB_PACKED_ATTR CacheItem {
   void markNvmEvicted() noexcept;
   void unmarkNvmEvicted() noexcept;
   bool isNvmEvicted() const noexcept;
+
+  /**
+   * Marks that the item is migrating between memory tiers and
+   * not ready for access now. Accessing thread should wait.
+   */
+  void markIncomplete() noexcept;
+  void unmarkIncomplete() noexcept;
+  bool isIncomplete() const noexcept;
 
   /**
    * Function to set the timestamp for when to expire an item

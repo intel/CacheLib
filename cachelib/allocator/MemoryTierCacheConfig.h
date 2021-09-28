@@ -71,6 +71,7 @@ class MemoryTierCacheConfig {
   
   const ShmTypeOpts& getShmTypeOpts() const noexcept { return shmOpts; }
 
+private:
   // Ratio is a number of parts of the total cache size to be allocated for this
   // tier. E.g. if X is a total cache size, Yi are ratios specified for memory
   // tiers, and Y is the sum of all Yi, then size of the i-th tier
@@ -80,10 +81,6 @@ class MemoryTierCacheConfig {
 
   // Options specific to shm type
   ShmTypeOpts shmOpts;
-
- private:
-  // TODO: introduce a container for tier settings when adding support for
-  // file-mapped memory
 
   MemoryTierCacheConfig() = default;
 };

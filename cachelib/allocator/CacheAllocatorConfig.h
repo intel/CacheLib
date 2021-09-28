@@ -26,7 +26,6 @@
 #include <string>
 
 #include "cachelib/allocator/Cache.h"
-#include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/MM2Q.h"
 #include "cachelib/allocator/MemoryMonitor.h"
 #include "cachelib/allocator/MemoryTierCacheConfig.h"
@@ -380,7 +379,6 @@ class CacheAllocatorConfig {
   std::map<std::string, std::string> serialize() const;
 
   // The max number of memory cache tiers
-  // TODO: increase this number when multi-tier configs are enabled
   inline static const size_t kMaxCacheMemoryTiers = 2;
 
   // Cache name for users to indentify their own cache.
@@ -884,11 +882,6 @@ CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::configureMemoryTiers(
 template <typename T>
 const typename CacheAllocatorConfig<T>::MemoryTierConfigs&
 CacheAllocatorConfig<T>::getMemoryTierConfigs() const {
-  for (auto &tier_config: memoryTierConfigs) {
-    if (auto *v = std::get_if<PosixSysVSegmentOpts>(&tier_config.shmOpts)) {
-      const_cast<PosixSysVSegmentOpts*>(v)->usePosix = usePosixShm;
-    }
-  }
   return memoryTierConfigs;
 }
 

@@ -22,6 +22,8 @@
 #include <folly/ScopeGuard.h>
 #include <folly/logging/xlog.h>
 #include <folly/synchronization/SanitizeThread.h>
+#include <folly/hash/Hash.h>
+#include <folly/container/F14Map.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -806,7 +808,7 @@ class CacheAllocator : public CacheBase {
   // @param config    new config for the pool
   //
   // @throw std::invalid_argument if the poolId is invalid
-  void overridePoolConfig(PoolId pid, const MMConfig& config);
+  void overridePoolConfig(TierId tid, PoolId pid, const MMConfig& config);
 
   // update an existing pool's rebalance strategy
   //
@@ -847,8 +849,9 @@ class CacheAllocator : public CacheBase {
   // @return  true if the operation succeeded. false if the size of the pool is
   //          smaller than _bytes_
   // @throw   std::invalid_argument if the poolId is invalid.
+  // TODO: should call shrinkPool for specific tier?
   bool shrinkPool(PoolId pid, size_t bytes) {
-    return allocator_->shrinkPool(pid, bytes);
+    return allocator_[currentTier()]->shrinkPool(pid, bytes);
   }
 
   // grow an existing pool by _bytes_. This will fail if there is no
@@ -857,8 +860,9 @@ class CacheAllocator : public CacheBase {
   // @return    true if the pool was grown. false if the necessary number of
   //            bytes were not available.
   // @throw     std::invalid_argument if the poolId is invalid.
+  // TODO: should call growPool for specific tier?
   bool growPool(PoolId pid, size_t bytes) {
-    return allocator_->growPool(pid, bytes);
+    return allocator_[currentTier()]->growPool(pid, bytes);
   }
 
   // move bytes from one pool to another. The source pool should be at least
@@ -871,7 +875,7 @@ class CacheAllocator : public CacheBase {
   //          correct size to do the transfer.
   // @throw   std::invalid_argument if src or dest is invalid pool
   bool resizePools(PoolId src, PoolId dest, size_t bytes) override {
-    return allocator_->resizePools(src, dest, bytes);
+    return allocator_[currentTier()]->resizePools(src, dest, bytes);
   }
 
   // Add a new compact cache with given name and size
@@ -1076,12 +1080,13 @@ class CacheAllocator : public CacheBase {
   // @throw std::invalid_argument if the memory does not belong to this
   //        cache allocator
   AllocInfo getAllocInfo(const void* memory) const {
-    return allocator_->getAllocInfo(memory);
+    return allocator_[getTierId(memory)]->getAllocInfo(memory);
   }
 
   // return the ids for the set of existing pools in this cache.
   std::set<PoolId> getPoolIds() const override final {
-    return allocator_->getPoolIds();
+    // all tiers have the same pool ids. TODO: deduplicate
+    return allocator_[0]->getPoolIds();
   }
 
   // return a list of pool ids that are backing compact caches. This includes
@@ -1093,18 +1098,18 @@ class CacheAllocator : public CacheBase {
 
   // return the pool with speicified id.
   const MemoryPool& getPool(PoolId pid) const override final {
-    return allocator_->getPool(pid);
+    return allocator_[currentTier()]->getPool(pid);
   }
 
   // calculate the number of slabs to be advised/reclaimed in each pool
   PoolAdviseReclaimData calcNumSlabsToAdviseReclaim() override final {
     auto regularPoolIds = getRegularPoolIds();
-    return allocator_->calcNumSlabsToAdviseReclaim(regularPoolIds);
+    return allocator_[currentTier()]->calcNumSlabsToAdviseReclaim(regularPoolIds);
   }
 
   // update number of slabs to advise in the cache
   void updateNumSlabsToAdvise(int32_t numSlabsToAdvise) override final {
-    allocator_->updateNumSlabsToAdvise(numSlabsToAdvise);
+    allocator_[currentTier()]->updateNumSlabsToAdvise(numSlabsToAdvise);
   }
 
   // returns a valid PoolId corresponding to the name or kInvalidPoolId if the
@@ -1112,8 +1117,9 @@ class CacheAllocator : public CacheBase {
   PoolId getPoolId(folly::StringPiece name) const noexcept;
 
   // returns the pool's name by its poolId.
-  std::string getPoolName(PoolId poolId) const override {
-    return allocator_->getPoolName(poolId);
+  std::string getPoolName(PoolId poolId) const {
+    // all tiers have the same pool names.
+    return allocator_[0]->getPoolName(poolId);
   }
 
   // get stats related to all kinds of slab release events.
@@ -1158,6 +1164,9 @@ class CacheAllocator : public CacheBase {
 
   // whether it is object-cache
   bool isObjectCache() const override final { return false; }
+
+  // combined pool size for all memory tiers
+  size_t getPoolSize(PoolId pid) const;
 
   // pool stats by pool id
   PoolStats getPoolStats(PoolId pid) const override final;
@@ -1285,7 +1294,8 @@ class CacheAllocator : public CacheBase {
                  sizeof(typename RefcountWithFlags::Value) + sizeof(uint32_t) +
                  sizeof(uint32_t) + sizeof(KAllocation)) == sizeof(Item),
                 "vtable overhead");
-  static_assert(32 == sizeof(Item), "item overhead is 32 bytes");
+  // XXX: this will fail due to CompressedPtr change
+  // static_assert(32 == sizeof(Item), "item overhead is 32 bytes");
 
   // make sure there is no overhead in ChainedItem on top of a regular Item
   static_assert(sizeof(Item) == sizeof(ChainedItem),
@@ -1379,10 +1389,13 @@ class CacheAllocator : public CacheBase {
 
   using MMContainerPtr = std::unique_ptr<MMContainer>;
   using MMContainers =
-      std::array<std::array<MMContainerPtr, MemoryAllocator::kMaxClasses>,
-                 MemoryPoolManager::kMaxPools>;
+      std::vector<std::array<std::array<MMContainerPtr, MemoryAllocator::kMaxClasses>,
+                 MemoryPoolManager::kMaxPools>>;
 
   void createMMContainers(const PoolId pid, MMConfig config);
+
+  TierId getTierId(const Item& item) const;
+  TierId getTierId(const void* ptr) const;
 
   // acquire the MMContainer corresponding to the the Item's class and pool.
   //
@@ -1391,7 +1404,12 @@ class CacheAllocator : public CacheBase {
   // allocation from the memory allocator.
   MMContainer& getMMContainer(const Item& item) const noexcept;
 
-  MMContainer& getMMContainer(PoolId pid, ClassId cid) const noexcept;
+  MMContainer& getMMContainer(TierId tid, PoolId pid, ClassId cid) const noexcept;
+
+  // Get stats of the specified pid and cid.
+  // If such mmcontainer is not valid (pool id or cid out of bound)
+  // or the mmcontainer is not initialized, return an empty stat.
+  MMContainerStat getMMContainerStat(TierId tid, PoolId pid, ClassId cid) const noexcept;
 
   // create a new cache allocation. The allocation can be initialized
   // appropriately and made accessible through insert or insertOrReplace.
@@ -1422,6 +1440,17 @@ class CacheAllocator : public CacheBase {
                                uint32_t size,
                                uint32_t creationTime,
                                uint32_t expiryTime);
+
+  // create a new cache allocation on specific memory tier.
+  // For description see allocateInternal.
+  //
+  // @param tid id a memory tier
+  WriteHandle allocateInternalTier(TierId tid,
+                                   PoolId id,
+                                   Key key,
+                                   uint32_t size,
+                                   uint32_t creationTime,
+                                   uint32_t expiryTime);
 
   // Allocate a chained item
   //
@@ -1508,6 +1537,16 @@ class CacheAllocator : public CacheBase {
   //              not exist.
   FOLLY_ALWAYS_INLINE WriteHandle findFastImpl(Key key, AccessMode mode);
 
+  // Moves a regular item to a different memory tier.
+  //
+  // @param oldItem     Reference to the item being moved
+  // @param newItemHdl  Reference to the handle of the new item being moved into
+  //
+  // @return true  If the move was completed, and the containers were updated
+  //               successfully.
+  template <typename ItemPtr>
+  WriteHandle moveRegularItemOnEviction(ItemPtr& oldItem, WriteHandle& newItemHdl);
+
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
   // callback is responsible for copying the contents and fixing the semantics
@@ -1593,6 +1632,10 @@ class CacheAllocator : public CacheBase {
   //         false  if the item is not in MMContainer
   bool removeFromMMContainer(Item& item);
 
+  using EvictionIterator = typename MMContainer::Iterator;
+
+  WriteHandle acquire(EvictionIterator& it) { return acquire(it.get()); }
+
   // Replaces an item in the MMContainer with another item, at the same
   // position.
   //
@@ -1603,6 +1646,8 @@ class CacheAllocator : public CacheBase {
   //               destination item did not exist in the container, or if the
   //               source item already existed.
   bool replaceInMMContainer(Item& oldItem, Item& newItem);
+  bool replaceInMMContainer(Item* oldItem, Item& newItem);
+  bool replaceInMMContainer(EvictionIterator& oldItemIt, Item& newItem);
 
   // Replaces an item in the MMContainer with another item, at the same
   // position. Or, if the two chained items belong to two different MM
@@ -1659,9 +1704,7 @@ class CacheAllocator : public CacheBase {
   // @param  pid  the id of the pool to look for evictions inside
   // @param  cid  the id of the class to look for evictions inside
   // @return An evicted item or nullptr  if there is no suitable candidate.
-  Item* findEviction(PoolId pid, ClassId cid);
-
-  using EvictionIterator = typename MMContainer::Iterator;
+  Item* findEviction(TierId tid, PoolId pid, ClassId cid);
 
   // Advance the current iterator and try to evict a regular item
   //
@@ -1670,7 +1713,8 @@ class CacheAllocator : public CacheBase {
   //
   // @return  valid handle to regular item on success. This will be the last
   //          handle to the item. On failure an empty handle.
-  WriteHandle advanceIteratorAndTryEvictRegularItem(MMContainer& mmContainer,
+  WriteHandle advanceIteratorAndTryEvictRegularItem(TierId tid, PoolId pid,
+                                                    MMContainer& mmContainer,
                                                     EvictionIterator& itr);
 
   // Advance the current iterator and try to evict a chained item
@@ -1680,7 +1724,28 @@ class CacheAllocator : public CacheBase {
   //
   // @return  valid handle to the parent item on success. This will be the last
   //          handle to the item
-  WriteHandle advanceIteratorAndTryEvictChainedItem(EvictionIterator& itr);
+  WriteHandle advanceIteratorAndTryEvictChainedItem(TierId tid, PoolId pid, EvictionIterator& itr);
+
+  // Try to move the item down to the next memory tier
+  //
+  // @param tid current tier ID of the item
+  // @param pid the pool ID the item belong to.
+  // @param item the item to evict
+  //
+  // @return valid handle to the item. This will be the last
+  //         handle to the item. On failure an empty handle.
+  template <typename ItemPtr>
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, ItemPtr& item);
+
+  // Try to move the item down to the next memory tier
+  //
+  // @param item the item to evict
+  //
+  // @return valid handle to the item. This will be the last
+  //         handle to the item. On failure an empty handle. 
+  WriteHandle tryEvictToNextMemoryTier(Item* item);
+
+  size_t memoryTierSize(TierId tid) const;
 
   // Deserializer CacheAllocatorMetadata and verify the version
   //
@@ -1694,7 +1759,7 @@ class CacheAllocator : public CacheBase {
       const typename Item::PtrCompressor& compressor);
 
   unsigned int reclaimSlabs(PoolId id, size_t numSlabs) final {
-    return allocator_->reclaimSlabsAndGrow(id, numSlabs);
+    return allocator_[currentTier()]->reclaimSlabsAndGrow(id, numSlabs);
   }
 
   FOLLY_ALWAYS_INLINE EventTracker* getEventTracker() const {
@@ -1753,7 +1818,7 @@ class CacheAllocator : public CacheBase {
                    const void* hint = nullptr) final;
 
   // @param releaseContext  slab release context
-  void releaseSlabImpl(const SlabReleaseContext& releaseContext);
+  void releaseSlabImpl(TierId tid, const SlabReleaseContext& releaseContext);
 
   // @return  true when successfully marked as moving,
   //          fasle when this item has already been freed
@@ -1808,6 +1873,12 @@ class CacheAllocator : public CacheBase {
   // handle on failure. caller can retry.
   WriteHandle evictChainedItemForSlabRelease(ChainedItem& item);
 
+  // Helper function to remove a item if predicates is true.
+  //
+  // @return last handle to the item on success. empty handle on failure.
+  template <typename Fn>
+  WriteHandle removeIf(Item& item, Fn&& predicate);
+
   // Helper function to remove a item if expired.
   //
   // @return true if it item expire and removed successfully.
@@ -1825,7 +1896,7 @@ class CacheAllocator : public CacheBase {
     // primitives. So we consciously exempt ourselves here from TSAN data race
     // detection.
     folly::annotate_ignore_thread_sanitizer_guard g(__FILE__, __LINE__);
-    auto slabsSkipped = allocator_->forEachAllocation(std::forward<Fn>(f));
+    auto slabsSkipped = allocator_[currentTier()]->forEachAllocation(std::forward<Fn>(f));
     stats().numReaperSkippedSlabs.add(slabsSkipped);
   }
 
@@ -1869,11 +1940,11 @@ class CacheAllocator : public CacheBase {
                   std::unique_ptr<T>& worker,
                   std::chrono::seconds timeout = std::chrono::seconds{0});
 
-  ShmSegmentOpts createShmCacheOpts();
+  ShmSegmentOpts createShmCacheOpts(TierId tid);
 
-  std::unique_ptr<MemoryAllocator> createNewMemoryAllocator();
-  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator();
-  std::unique_ptr<CCacheManager> restoreCCacheManager();
+  std::unique_ptr<MemoryAllocator> createNewMemoryAllocator(TierId tid);
+  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator(TierId tid);
+  std::unique_ptr<CCacheManager> restoreCCacheManager(TierId tid);
 
   PoolIds filterCompactCachePools(const PoolIds& poolIds) const;
 
@@ -1893,7 +1964,7 @@ class CacheAllocator : public CacheBase {
   }
 
   typename Item::PtrCompressor createPtrCompressor() const {
-    return allocator_->createPtrCompressor<Item>();
+    return typename Item::PtrCompressor(allocator_);
   }
 
   // helper utility to throttle and optionally log.
@@ -1916,9 +1987,14 @@ class CacheAllocator : public CacheBase {
 
   // @param type        the type of initialization
   // @return nullptr if the type is invalid
-  // @return pointer to memory allocator
+  // @return vector of pointers to memory allocator
   // @throw std::runtime_error if type is invalid
-  std::unique_ptr<MemoryAllocator> initAllocator(InitMemType type);
+  std::vector<std::unique_ptr<MemoryAllocator>> initAllocator(InitMemType type);
+
+  std::vector<std::unique_ptr<MemoryAllocator>> createPrivateAllocator();
+  std::vector<std::unique_ptr<MemoryAllocator>> createAllocators();
+  std::vector<std::unique_ptr<MemoryAllocator>> restoreAllocators();
+
   // @param type        the type of initialization
   // @return nullptr if the type is invalid
   // @return pointer to access container
@@ -1981,6 +2057,95 @@ class CacheAllocator : public CacheBase {
 
   // BEGIN private members
 
+  TierId currentTier() const {
+    // TODO: every function which calls this method should be refactored.
+    // We should go case by case and either make such function work on
+    // all tiers or expose separate parameter to describe the tier ID.
+    return 0;
+  }
+
+  unsigned getNumTiers() const {
+    return memoryTierConfigs.size();
+  }
+
+  bool addWaitContextForMovingItem(
+      folly::StringPiece key, std::shared_ptr<WaitContext<ReadHandle>> waiter);
+
+  class MoveCtx {
+   public:
+    MoveCtx() {}
+
+    ~MoveCtx() {
+      // prevent any further enqueue to waiters
+      // Note: we don't need to hold locks since no one can enqueue
+      // after this point.
+      wakeUpWaiters();
+    }
+
+    // record the item handle. Upon destruction we will wake up the waiters
+    // and pass a clone of the handle to the callBack. By default we pass
+    // a null handle
+    void setItemHandle(WriteHandle _it) { it = std::move(_it); }
+
+    // enqueue a waiter into the waiter list
+    // @param  waiter       WaitContext
+    void addWaiter(std::shared_ptr<WaitContext<ReadHandle>> waiter) {
+      XDCHECK(waiter);
+      waiters.push_back(std::move(waiter));
+    }
+
+   private:
+    // notify all pending waiters that are waiting for the fetch.
+    void wakeUpWaiters() {
+      bool refcountOverflowed = false;
+      for (auto& w : waiters) {
+        // If refcount overflowed earlier, then we will return miss to
+        // all subsequent waitors.
+        if (refcountOverflowed) {
+          w->set(WriteHandle{});
+          continue;
+        }
+
+        try {
+          w->set(it.clone());
+        } catch (const exception::RefcountOverflow&) {
+          // We'll return a miss to the user's pending read,
+          // so we should enqueue a delete via NvmCache.
+          // TODO: cache.remove(it);
+          refcountOverflowed = true;
+        }
+      }
+    }
+
+    WriteHandle it; // will be set when Context is being filled
+    std::vector<std::shared_ptr<WaitContext<ReadHandle>>> waiters; // list of
+                                                                   // waiters
+  };
+  using MoveMap =
+      folly::F14ValueMap<folly::StringPiece,
+                         std::unique_ptr<MoveCtx>,
+                         folly::HeterogeneousAccessHash<folly::StringPiece>>;
+
+  static size_t getShardForKey(folly::StringPiece key) {
+    return folly::Hash()(key) % kShards;
+  }
+
+  MoveMap& getMoveMapForShard(size_t shard) {
+    return movesMap_[shard].movesMap_;
+  }
+
+  MoveMap& getMoveMap(folly::StringPiece key) {
+    return getMoveMapForShard(getShardForKey(key));
+  }
+
+  std::unique_lock<std::mutex> getMoveLockForShard(size_t shard) {
+    return std::unique_lock<std::mutex>(moveLock_[shard].moveLock_);
+  }
+
+  std::unique_lock<std::mutex> getMoveLock(folly::StringPiece key) {
+    return getMoveLockForShard(getShardForKey(key));
+  }
+
   // Whether the memory allocator for this cache allocator was created on shared
   // memory. The hash table, chained item hash table etc is also created on
   // shared memory except for temporary shared memory mode when they're created
@@ -2008,9 +2173,10 @@ class CacheAllocator : public CacheBase {
   const MMConfig mmConfig_{};
 
   // the memory allocator for allocating out of the available memory.
-  std::unique_ptr<MemoryAllocator> allocator_;
+  std::vector<std::unique_ptr<MemoryAllocator>> allocator_;
 
   // compact cache allocator manager
+  // TODO: per tier?
   std::unique_ptr<CCacheManager> compactCacheManager_;
 
   // compact cache instances reside here when user "add" or "attach" compact
@@ -2071,6 +2237,22 @@ class CacheAllocator : public CacheBase {
   // mutex protecting the creation and destruction of workers poolRebalancer_,
   // poolResizer_, poolOptimizer_, memMonitor_, reaper_
   mutable std::mutex workersMutex_;
+
+  static constexpr size_t kShards = 8192; // TODO: need to define right value
+
+  struct MovesMapShard {
+    alignas(folly::hardware_destructive_interference_size) MoveMap movesMap_;
+  };
+
+  struct MoveLock {
+    alignas(folly::hardware_destructive_interference_size) std::mutex moveLock_;
+  };
+
+  // a map of all pending moves
+  std::vector<MovesMapShard> movesMap_;
+
+  // a map of move locks for each shard
+  std::vector<MoveLock> moveLock_;
 
   // time when the ram cache was first created
   const uint32_t cacheCreationTime_{0};

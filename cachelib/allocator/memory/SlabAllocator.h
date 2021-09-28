@@ -312,8 +312,19 @@ class SlabAllocator {
   }
 
   template <typename PtrType>
-  PtrCompressor<PtrType, SlabAllocator> createPtrCompressor() const {
-    return PtrCompressor<PtrType, SlabAllocator>(*this);
+  SingleTierPtrCompressor<PtrType, SlabAllocator> createSingleTierPtrCompressor() const {
+    return SingleTierPtrCompressor<PtrType, SlabAllocator>(*this);
+  }
+
+  // returns starting address of memory we own.
+  const Slab* getSlabMemoryBegin() const noexcept {
+    return reinterpret_cast<Slab*>(memoryStart_);
+  }
+
+  // returns first byte after the end of memory region we own.
+  const Slab* getSlabMemoryEnd() const noexcept {
+    return reinterpret_cast<Slab*>(reinterpret_cast<uint8_t*>(memoryStart_) +
+                                   memorySize_);
   }
 
  private:
@@ -332,12 +343,6 @@ class SlabAllocator {
   //
   // @throw std::invalid_argument if the state is invalid.
   void checkState() const;
-
-  // returns first byte after the end of memory region we own.
-  const Slab* getSlabMemoryEnd() const noexcept {
-    return reinterpret_cast<Slab*>(reinterpret_cast<uint8_t*>(memoryStart_) +
-                                   memorySize_);
-  }
 
   // returns true if we have slabbed all the memory that is available to us.
   // false otherwise.
