@@ -22,6 +22,7 @@
 
 #include <fstream>
 #include <vector>
+#include <string>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
@@ -98,7 +99,7 @@ ShmManager::ShmManager(const std::string& dir, bool usePosix)
   // if file exists, init from it if needed.
   const bool reattach = dropSegments ? false : initFromFile();
   if (!reattach) {
-    DCHECK(nameToKey_.empty());
+    DCHECK(nameToOpts_.empty());
   }
   // Lock file for exclusive access
   lockMetadataFile(metaFile);
@@ -109,7 +110,7 @@ ShmManager::ShmManager(const std::string& dir, bool usePosix)
 }
 
 bool ShmManager::initFromFile() {
-  // restore the nameToKey_ map and destroy the contents of the file.
+  // restore the nameToOpts_ map and destroy the contents of the file.
   const std::string fileName = pathName(controlDir_, kMetaDataFile);
   std::ifstream f(fileName);
   SCOPE_EXIT { f.close(); };
@@ -139,9 +140,16 @@ bool ShmManager::initFromFile() {
   }
 
   for (const auto& kv : *object.nameToKeyMap()) {
-    nameToKey_.insert({kv.first, kv.second});
+    if (kv.second.get_path() == "") {
+      PosixSysVSegmentOpts type;
+      type.usePosix = kv.second.get_usePosix();
+      nameToOpts_.insert({kv.first, type});
+    } else {
+      FileShmSegmentOpts type;
+      type.path = kv.second.get_path();
+      nameToOpts_.insert({kv.first, type});
+    }
   }
-
   return true;
 }
 
@@ -157,7 +165,7 @@ typename ShmManager::ShutDownRes ShmManager::writeActiveSegmentsToFile() {
     return ShutDownRes::kFileDeleted;
   }
 
-  // write the shmtype, nameToKey_ map to the file.
+  // write the shmtype, nameToOpts_ map to the file.
   DCHECK(metadataStream_);
 
   serialization::ShmManagerObject object;
@@ -165,9 +173,20 @@ typename ShmManager::ShutDownRes ShmManager::writeActiveSegmentsToFile() {
   object.shmVal() = usePosix_ ? static_cast<int8_t>(ShmVal::SHM_POSIX)
                               : static_cast<int8_t>(ShmVal::SHM_SYS_V);
 
-  for (const auto& kv : nameToKey_) {
+  for (const auto& kv : nameToOpts_) {
     const auto& name = kv.first;
-    const auto& key = kv.second;
+    serialization::ShmTypeObject key;
+    if (const auto* opts = std::get_if<FileShmSegmentOpts>(&kv.second)) {
+      key.path_ref() = opts->path;
+    } else {
+      try {
+        const auto& v = std::get<PosixSysVSegmentOpts>(kv.second);
+        key.usePosix_ref() = v.usePosix;
+        key.path_ref() = "";
+      } catch(std::bad_variant_access&) {
+        throw std::invalid_argument(folly::sformat("Not a valid segment"));
+      }
+    }
     const auto it = segments_.find(name);
     // segment exists and is active.
     if (it != segments_.end() && it->second->isActive()) {
@@ -199,30 +218,40 @@ typename ShmManager::ShutDownRes ShmManager::shutDown() {
 
   // clear our data.
   segments_.clear();
-  nameToKey_.clear();
+  nameToOpts_.clear();
   return ret;
 }
 
 namespace {
 
-bool removeSegByName(bool posix, const std::string& uniqueName) {
-  return posix ? PosixShmSegment::removeByName(uniqueName)
-               : SysVShmSegment::removeByName(uniqueName);
+bool removeSegByName(ShmTypeOpts typeOpts, const std::string& uniqueName) {
+  if (const auto* v = std::get_if<FileShmSegmentOpts>(&typeOpts)) {
+    return FileShmSegment::removeByPath(v->path);
+  }
+
+  bool usePosix = std::get<PosixSysVSegmentOpts>(typeOpts).usePosix;
+  if (usePosix) {
+    return PosixShmSegment::removeByName(uniqueName);
+  } else {
+    return SysVShmSegment::removeByName(uniqueName);
+  }
 }
 
 } // namespace
 
 void ShmManager::removeByName(const std::string& dir,
                               const std::string& name,
-                              bool posix) {
-  removeSegByName(posix, uniqueIdForName(name, dir));
+                              ShmTypeOpts typeOpts) {
+  removeSegByName(typeOpts, uniqueIdForName(name, dir));
 }
 
 bool ShmManager::segmentExists(const std::string& cacheDir,
                                const std::string& shmName,
-                               bool posix) {
+                               ShmTypeOpts typeOpts) {
   try {
-    ShmSegment(ShmAttach, uniqueIdForName(shmName, cacheDir), posix);
+    ShmSegmentOpts opts;
+    opts.typeOpts = typeOpts;
+    ShmSegment(ShmAttach, uniqueIdForName(shmName, cacheDir), opts);
     return true;
   } catch (const std::exception& e) {
     return false;
@@ -230,10 +259,10 @@ bool ShmManager::segmentExists(const std::string& cacheDir,
 }
 
 std::unique_ptr<ShmSegment> ShmManager::attachShmReadOnly(
-    const std::string& dir, const std::string& name, bool posix, void* addr) {
+    const std::string& dir, const std::string& name, ShmTypeOpts typeOpts, void* addr) {
   ShmSegmentOpts opts{PageSizeT::NORMAL, true /* read only */};
-  auto shm = std::make_unique<ShmSegment>(ShmAttach, uniqueIdForName(name, dir),
-                                          posix, opts);
+  opts.typeOpts = typeOpts;
+  auto shm = std::make_unique<ShmSegment>(ShmAttach, uniqueIdForName(name, dir), opts);
   if (!shm->mapAddress(addr)) {
     throw std::invalid_argument(folly::sformat(
         "Error mapping shm {} under {}, addr: {}", name, dir, addr));
@@ -248,20 +277,20 @@ void ShmManager::cleanup(const std::string& dir, bool posix) {
 }
 
 void ShmManager::removeAllSegments() {
-  for (const auto& kv : nameToKey_) {
-    removeSegByName(usePosix_, uniqueIdForName(kv.first));
+  for (const auto& kv : nameToOpts_) {
+    removeSegByName(kv.second, uniqueIdForName(kv.first));
   }
-  nameToKey_.clear();
+  nameToOpts_.clear();
 }
 
 void ShmManager::removeUnAttachedSegments() {
-  auto it = nameToKey_.begin();
-  while (it != nameToKey_.end()) {
+  auto it = nameToOpts_.begin();
+  while (it != nameToOpts_.end()) {
     const auto name = it->first;
     // check if the segment is attached.
     if (segments_.find(name) == segments_.end()) { // not attached
-      removeSegByName(usePosix_, uniqueIdForName(name));
-      it = nameToKey_.erase(it);
+      removeSegByName(it->second, uniqueIdForName(name));
+      it = nameToOpts_.erase(it);
     } else {
       ++it;
     }
@@ -275,15 +304,24 @@ ShmAddr ShmManager::createShm(const std::string& shmName,
   // we are going to create a new segment most likely after trying to attach
   // to an old one. detach and remove any old ones if they have already been
   // attached or mapped
-  removeShm(shmName);
+  // TODO(SHM_FILE): should we try to remove the segment using all possible
+  // segment types?
+  removeShm(shmName, opts.typeOpts);
 
   DCHECK(segments_.find(shmName) == segments_.end());
-  DCHECK(nameToKey_.find(shmName) == nameToKey_.end());
+  DCHECK(nameToOpts_.find(shmName) == nameToOpts_.end());
+
+  const auto* v = std::get_if<PosixSysVSegmentOpts>(&opts.typeOpts);
+  if (v && usePosix_ != v->usePosix) {
+    throw std::invalid_argument(
+      folly::sformat("Expected {} but got {} segment",
+      usePosix_ ? "posix" : "SysV", usePosix_ ? "SysV" : "posix"));
+  }
 
   std::unique_ptr<ShmSegment> newSeg;
   try {
     newSeg = std::make_unique<ShmSegment>(ShmNew, uniqueIdForName(shmName),
-                                          size, usePosix_, opts);
+                                          size, opts);
   } catch (const std::system_error& e) {
     // if segment already exists by this key and we dont know about
     // it(EEXIST), its an invalid state.
@@ -305,17 +343,32 @@ ShmAddr ShmManager::createShm(const std::string& shmName,
   }
 
   auto ret = newSeg->getCurrentMapping();
-  nameToKey_.emplace(shmName, newSeg->getKeyStr());
+  if (v) {
+    PosixSysVSegmentOpts opts;
+    opts.usePosix = v->usePosix;
+    nameToOpts_.emplace(shmName, opts);
+  } else {
+    FileShmSegmentOpts opts;
+    opts.path = newSeg->getKeyStr();
+    nameToOpts_.emplace(shmName, opts);
+  }
   segments_.emplace(shmName, std::move(newSeg));
   return ret;
 }
 
 void ShmManager::attachNewShm(const std::string& shmName, ShmSegmentOpts opts) {
-  const auto keyIt = nameToKey_.find(shmName);
+  const auto keyIt = nameToOpts_.find(shmName);
   // if key is not known already, there is not much we can do to attach.
-  if (keyIt == nameToKey_.end()) {
+  if (keyIt == nameToOpts_.end()) {
     throw std::invalid_argument(
         folly::sformat("Unable to find any segment with name {}", shmName));
+  }
+
+  const auto* v = std::get_if<PosixSysVSegmentOpts>(&opts.typeOpts);
+  if (v && usePosix_ != v->usePosix) {
+    throw std::invalid_argument(
+      folly::sformat("Expected {} but got {} segment",
+      usePosix_ ? "posix" : "SysV", usePosix_ ? "SysV" : "posix"));
   }
 
   // This means the segment exists and we can try to attach it.
@@ -323,7 +376,7 @@ void ShmManager::attachNewShm(const std::string& shmName, ShmSegmentOpts opts) {
     segments_.emplace(shmName,
                       std::make_unique<ShmSegment>(ShmAttach,
                                                    uniqueIdForName(shmName),
-                                                   usePosix_, opts));
+                                                   opts));
   } catch (const std::system_error& e) {
     // we are trying to attach. nothing can get invalid if an error happens
     // here.
@@ -332,7 +385,17 @@ void ShmManager::attachNewShm(const std::string& shmName, ShmSegmentOpts opts) {
         shmName, e.what()));
   }
   DCHECK(segments_.find(shmName) != segments_.end());
-  DCHECK_EQ(segments_[shmName]->getKeyStr(), keyIt->second);
+  if (v) { // If it is a posix shm segment
+    // Comparison unnecessary since getKeyStr() retuns name_from ShmBase
+    // createKeyForShm also returns the same variable.
+  } else { // Else it is a file segment
+    try {
+      auto opts = std::get<FileShmSegmentOpts>(keyIt->second);
+      DCHECK_EQ(segments_[shmName]->getKeyStr(), opts.path);
+    } catch(std::bad_variant_access&) {
+      throw std::invalid_argument(folly::sformat("Not a valid segment"));
+    }
+  }
 }
 
 ShmAddr ShmManager::attachShm(const std::string& shmName,
@@ -357,7 +420,7 @@ ShmAddr ShmManager::attachShm(const std::string& shmName,
   return shm.getCurrentMapping();
 }
 
-bool ShmManager::removeShm(const std::string& shmName) {
+bool ShmManager::removeShm(const std::string& shmName, ShmTypeOpts typeOpts) {
   try {
     auto& shm = getShmByName(shmName);
     shm.detachCurrentMapping();
@@ -372,16 +435,16 @@ bool ShmManager::removeShm(const std::string& shmName) {
   } catch (const std::invalid_argument&) {
     // shm by this name is not attached.
     const bool wasPresent =
-        removeSegByName(usePosix_, uniqueIdForName(shmName));
+        removeSegByName(typeOpts, uniqueIdForName(shmName));
     if (!wasPresent) {
       DCHECK(segments_.end() == segments_.find(shmName));
-      DCHECK(nameToKey_.end() == nameToKey_.find(shmName));
+      DCHECK(nameToOpts_.end() == nameToOpts_.find(shmName));
       return false;
     }
   }
   // not mapped and already removed.
   segments_.erase(shmName);
-  nameToKey_.erase(shmName);
+  nameToOpts_.erase(shmName);
   return true;
 }
 
@@ -390,6 +453,16 @@ ShmSegment& ShmManager::getShmByName(const std::string& shmName) {
   if (it != segments_.end()) {
     DCHECK(it->second != nullptr);
     return *it->second.get();
+  } else {
+    throw std::invalid_argument(folly::sformat(
+        "shared memory segment does not exist: name: {}", shmName));
+  }
+}
+
+ShmTypeOpts& ShmManager::getShmTypeByName(const std::string& shmName) {
+  const auto it = nameToOpts_.find(shmName);
+  if (it != nameToOpts_.end()) {
+    return it->second;
   } else {
     throw std::invalid_argument(folly::sformat(
         "shared memory segment does not exist: name: {}", shmName));
