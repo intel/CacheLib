@@ -26,6 +26,7 @@
 #include <string>
 
 #include "cachelib/allocator/Cache.h"
+#include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/MM2Q.h"
 #include "cachelib/allocator/MemoryMonitor.h"
 #include "cachelib/allocator/MemoryTierCacheConfig.h"
@@ -194,12 +195,14 @@ class CacheAllocatorConfig {
   // This allows cache to be persisted across restarts. One example use case is
   // to preserve the cache when releasing a new version of your service. Refer
   // to our user guide for how to set up cache persistence.
+  // TODO: get rid of baseAddr or if set make sure all mapping are adjacent?
+  // We can also make baseAddr a per-tier configuration
   CacheAllocatorConfig& enableCachePersistence(std::string directory,
                                                void* baseAddr = nullptr);
 
-  // uses posix shm segments instead of the default sys-v shm segments.
-  // @throw std::invalid_argument if called without enabling
-  // cachePersistence()
+  // Uses posix shm segments instead of the default sys-v shm
+  // segments. @throw std::invalid_argument if called without enabling
+  // cachePersistence().
   CacheAllocatorConfig& usePosixForShm();
 
   // Configures cache memory tiers. Each tier represents a cache region inside
@@ -1085,7 +1088,7 @@ std::map<std::string, std::string> CacheAllocatorConfig<T>::serialize() const {
 
   configMap["size"] = std::to_string(size);
   configMap["cacheDir"] = cacheDir;
-  configMap["posixShm"] = usePosixShm ? "set" : "empty";
+  configMap["posixShm"] = isUsingPosixShm() ? "set" : "empty";
 
   configMap["defaultAllocSizes"] = "";
   // Stringify std::set

@@ -26,8 +26,16 @@ class MemoryTierCacheConfig {
  public:
   // Creates instance of MemoryTierCacheConfig for Posix/SysV Shared memory.
   static MemoryTierCacheConfig fromShm() {
-    // TODO: expand this method when adding support for file-mapped memory
     return MemoryTierCacheConfig();
+  }
+
+  // Creates instance of MemoryTierCacheConfig for file-backed memory.
+  // @param path to file which CacheLib will use to map memory from.
+  // TODO: add fromDirectory, fromAnonymousMemory
+  static MemoryTierCacheConfig fromFile(const std::string& _file) {
+    MemoryTierCacheConfig config;
+    config.path = _file;
+    return config;
   }
 
   // Specifies ratio of this memory tier to other tiers. Absolute size
@@ -43,7 +51,7 @@ class MemoryTierCacheConfig {
 
   size_t getRatio() const noexcept { return ratio; }
 
-  size_t calculateTierSize(size_t totalCacheSize, size_t partitionNum) {
+  size_t calculateTierSize(size_t totalCacheSize, size_t partitionNum) const {
     // TODO: Call this method when tiers are enabled in allocator
     // to calculate tier sizes in bytes.
     if (!partitionNum) {
@@ -58,6 +66,8 @@ class MemoryTierCacheConfig {
 
     return getRatio() * (totalCacheSize / partitionNum);
   }
+  
+  const std::string& getPath() const noexcept { return path; }
 
   // Ratio is a number of parts of the total cache size to be allocated for this
   // tier. E.g. if X is a total cache size, Yi are ratios specified for memory
@@ -66,9 +76,15 @@ class MemoryTierCacheConfig {
   // tier is a half of the total cache size, set both tiers' ratios to 1.
   size_t ratio{1};
 
+  // Path to file for file system-backed memory tier
+  // TODO: consider using variant<file, directory, NUMA> to support different
+  // memory sources
+  std::string path;
+
  private:
   // TODO: introduce a container for tier settings when adding support for
   // file-mapped memory
+
   MemoryTierCacheConfig() = default;
 };
 } // namespace cachelib
