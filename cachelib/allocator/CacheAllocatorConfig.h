@@ -194,12 +194,14 @@ class CacheAllocatorConfig {
   // This allows cache to be persisted across restarts. One example use case is
   // to preserve the cache when releasing a new version of your service. Refer
   // to our user guide for how to set up cache persistence.
+  // TODO: get rid of baseAddr or if set make sure all mapping are adjacent?
+  // We can also make baseAddr a per-tier configuration
   CacheAllocatorConfig& enableCachePersistence(std::string directory,
                                                void* baseAddr = nullptr);
 
-  // uses posix shm segments instead of the default sys-v shm segments.
-  // @throw std::invalid_argument if called without enabling
-  // cachePersistence()
+  // Uses posix shm segments instead of the default sys-v shm
+  // segments. @throw std::invalid_argument if called without enabling
+  // cachePersistence().
   CacheAllocatorConfig& usePosixForShm();
 
   // Configures cache memory tiers. Each tier represents a cache region inside
@@ -207,6 +209,9 @@ class CacheAllocatorConfig {
   // Accepts vector of MemoryTierCacheConfig. Each vector element describes
   // configuration for a single memory cache tier. Tier sizes are specified as
   // ratios, the number of parts of total cache size each tier would occupy.
+  // @throw std::invalid_argument if:
+  // - the size of configs is 0
+  // - the size of configs is greater than kMaxCacheMemoryTiers
   CacheAllocatorConfig& configureMemoryTiers(const MemoryTierConfigs& configs);
 
   // Return reference to MemoryTierCacheConfigs.
@@ -374,8 +379,7 @@ class CacheAllocatorConfig {
   std::map<std::string, std::string> serialize() const;
 
   // The max number of memory cache tiers
-  // TODO: increase this number when multi-tier configs are enabled
-  inline static const size_t kMaxCacheMemoryTiers = 1;
+  inline static const size_t kMaxCacheMemoryTiers = 2;
 
   // Cache name for users to indentify their own cache.
   std::string cacheName{""};
@@ -1085,7 +1089,7 @@ std::map<std::string, std::string> CacheAllocatorConfig<T>::serialize() const {
 
   configMap["size"] = std::to_string(size);
   configMap["cacheDir"] = cacheDir;
-  configMap["posixShm"] = usePosixShm ? "set" : "empty";
+  configMap["posixShm"] = isUsingPosixShm() ? "set" : "empty";
 
   configMap["defaultAllocSizes"] = "";
   // Stringify std::set

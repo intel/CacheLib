@@ -24,7 +24,6 @@ class MemoryTierCacheConfig {
  public:
   // Creates instance of MemoryTierCacheConfig for Posix/SysV Shared memory.
   static MemoryTierCacheConfig fromShm() {
-    // TODO: expand this method when adding support for file-mapped memory
     return MemoryTierCacheConfig();
   }
 
@@ -51,7 +50,7 @@ class MemoryTierCacheConfig {
     return numaNodes;
   }
 
-  size_t calculateTierSize(size_t totalCacheSize, size_t partitionNum) {
+  size_t calculateTierSize(size_t totalCacheSize, size_t partitionNum) const {
     // TODO: Call this method when tiers are enabled in allocator
     // to calculate tier sizes in bytes.
     if (!partitionNum) {
@@ -66,7 +65,7 @@ class MemoryTierCacheConfig {
 
     return getRatio() * (totalCacheSize / partitionNum);
   }
-
+  
  private:
   // Ratio is a number of parts of the total cache size to be allocated for this
   // tier. E.g. if X is a total cache size, Yi are ratios specified for memory
@@ -80,6 +79,7 @@ class MemoryTierCacheConfig {
 
   // TODO: introduce a container for tier settings when adding support for
   // file-mapped memory
+
   MemoryTierCacheConfig() = default;
 };
 } // namespace cachelib

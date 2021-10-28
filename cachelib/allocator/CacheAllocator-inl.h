@@ -53,12 +53,13 @@ CacheAllocator<CacheTrait>::CacheAllocator(
     : isOnShm_{type != InitMemType::kNone ? true
                                           : config.memMonitoringEnabled()},
       config_(config.validate()),
+      memoryTierConfigs(config.getMemoryTierConfigs()),
       tempShm_(type == InitMemType::kNone && isOnShm_
-                   ? std::make_unique<TempShmMapping>(config_.size)
+                   ? std::make_unique<TempShmMapping>(config_.getCacheSize())
                    : nullptr),
       shmManager_(type != InitMemType::kNone
                       ? std::make_unique<ShmManager>(config_.cacheDir,
-                                                     config_.usePosixShm)
+                                                     config_.isUsingPosixShm())
                       : nullptr),
       deserializer_(type == InitMemType::kMemAttach ? createDeserializer()
                                                     : nullptr),
@@ -112,7 +113,9 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts() {
   // TODO: we support single tier so far
   XDCHECK_EQ(memoryTierConfigs.size(), 1ul);
   opts.memBindNumaNodes = memoryTierConfigs[0].getMemBind();
-
+  if (memoryTierConfigs.size() > 1) {
+    throw std::invalid_argument("CacheLib only supports a single memory tier");
+  }
   return opts;
 }
 
@@ -122,10 +125,10 @@ CacheAllocator<CacheTrait>::createNewMemoryAllocator() {
   return std::make_unique<MemoryAllocator>(
       getAllocatorConfig(config_),
       shmManager_
-          ->createShm(detail::kShmCacheName, config_.size,
+          ->createShm(detail::kShmCacheName, config_.getCacheSize(),
                       config_.slabMemoryBaseAddr, createShmCacheOpts())
           .addr,
-      config_.size);
+      config_.getCacheSize());
 }
 
 template <typename CacheTrait>
@@ -135,9 +138,8 @@ CacheAllocator<CacheTrait>::restoreMemoryAllocator() {
       deserializer_->deserialize<MemoryAllocator::SerializationType>(),
       shmManager_
           ->attachShm(detail::kShmCacheName, config_.slabMemoryBaseAddr,
-                      createShmCacheOpts())
-          .addr,
-      config_.size,
+          createShmCacheOpts()).addr,
+      config_.getCacheSize(),
       config_.disableFullCoredump);
 }
 
@@ -243,10 +245,10 @@ std::unique_ptr<MemoryAllocator> CacheAllocator<CacheTrait>::initAllocator(
   if (type == InitMemType::kNone) {
     if (isOnShm_ == true) {
       return std::make_unique<MemoryAllocator>(
-          getAllocatorConfig(config_), tempShm_->getAddr(), config_.size);
+          getAllocatorConfig(config_), tempShm_->getAddr(), config_.getCacheSize());
     } else {
       return std::make_unique<MemoryAllocator>(getAllocatorConfig(config_),
-                                               config_.size);
+                                               config_.getCacheSize());
     }
   } else if (type == InitMemType::kMemNew) {
     return createNewMemoryAllocator();
@@ -2178,6 +2180,13 @@ const std::string CacheAllocator<CacheTrait>::getCacheName() const {
 }
 
 template <typename CacheTrait>
+size_t CacheAllocator<CacheTrait>::getPoolSize(PoolId poolId) const {
+  const auto& pool = allocator_->getPool(poolId);
+  size_t poolSize = pool.getPoolSize();
+  return poolSize;
+}
+
+template <typename CacheTrait>
 PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
   const auto& pool = allocator_->getPool(poolId);
   const auto& allocSizes = pool.getAllocSizes();
@@ -2251,7 +2260,7 @@ PoolEvictionAgeStats CacheAllocator<CacheTrait>::getPoolEvictionAgeStats(
 template <typename CacheTrait>
 CacheMetadata CacheAllocator<CacheTrait>::getCacheMetadata() const noexcept {
   return CacheMetadata{kCachelibVersion, kCacheRamFormatVersion,
-                       kCacheNvmFormatVersion, config_.size};
+                       kCacheNvmFormatVersion, config_.getCacheSize()};
 }
 
 template <typename CacheTrait>
