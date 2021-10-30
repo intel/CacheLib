@@ -22,6 +22,11 @@ namespace cachelib {
 template <typename CacheTrait>
 CacheAllocator<CacheTrait>::CacheAllocator(Config config)
     : CacheAllocator(InitMemType::kNone, config) {
+  // TODO(MEMORY_TIER)
+  if (memoryTierConfigs.size()) {
+    throw std::runtime_error(
+      "Using custom memory tier is only supported for Shared Memory.");
+  }
   initCommon(false);
 }
 
@@ -30,7 +35,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(SharedMemNewT, Config config)
     : CacheAllocator(InitMemType::kMemNew, config) {
   initCommon(false);
   shmManager_->removeShm(detail::kShmInfoName,
-    PosixSysVSegmentOpts(config_.usePosixShm));
+    PosixSysVSegmentOpts(config_.isUsingPosixShm()));
 }
 
 template <typename CacheTrait>
@@ -46,7 +51,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(SharedMemAttachT, Config config)
   // this info shm segment here and the new info shm segment's size is larger
   // than this one, creating new one will fail.
   shmManager_->removeShm(detail::kShmInfoName,
-    PosixSysVSegmentOpts(config_.usePosixShm));
+    PosixSysVSegmentOpts(config_.isUsingPosixShm()));
 }
 
 template <typename CacheTrait>
@@ -55,12 +60,13 @@ CacheAllocator<CacheTrait>::CacheAllocator(
     : isOnShm_{type != InitMemType::kNone ? true
                                           : config.memMonitoringEnabled()},
       config_(config.validate()),
+      memoryTierConfigs(config.getMemoryTierConfigs()),
       tempShm_(type == InitMemType::kNone && isOnShm_
                    ? std::make_unique<TempShmMapping>(config_.size)
                    : nullptr),
       shmManager_(type != InitMemType::kNone
                       ? std::make_unique<ShmManager>(config_.cacheDir,
-                                                     config_.usePosixShm)
+                                                     config_.isUsingPosixShm())
                       : nullptr),
       deserializer_(type == InitMemType::kMemAttach ? createDeserializer()
                                                     : nullptr),
@@ -76,12 +82,12 @@ CacheAllocator<CacheTrait>::CacheAllocator(
                         ? deserializeMMContainers(*deserializer_, compressor_)
                         : MMContainers{}),
       accessContainer_(initAccessContainer(
-          type, detail::kShmHashTableName, config.accessConfig, config_.usePosixShm)),
+          type, detail::kShmHashTableName, config.accessConfig, config_.isUsingPosixShm())),
       chainedItemAccessContainer_(
           initAccessContainer(type,
                               detail::kShmChainedItemHashTableName,
                               config.chainedItemAccessConfig,
-                              config_.usePosixShm)),
+                              config_.isUsingPosixShm())),
       chainedItemLocks_(config_.chainedItemsLockPower,
                         std::make_shared<MurmurHash2>()),
       cacheCreationTime_{
@@ -108,16 +114,35 @@ CacheAllocator<CacheTrait>::~CacheAllocator() {
 }
 
 template <typename CacheTrait>
-std::unique_ptr<MemoryAllocator>
-CacheAllocator<CacheTrait>::createNewMemoryAllocator() {
+ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts() {
+  if (memoryTierConfigs.size() > 1) {
+    throw std::invalid_argument("CacheLib only supports a single memory tier");
+  }
+
   ShmSegmentOpts opts;
   opts.alignment = sizeof(Slab);
-  opts.typeOpts = PosixSysVSegmentOpts(config_.usePosixShm);
+
+  // If memoryTierConfigs is empty, Fallback to Posix/SysV segment
+  // to keep legacy bahavior
+  // TODO(MEMORY_TIER) - guarantee there is always at least one mem
+  // layer inside Config
+  if (memoryTierConfigs.size()) {
+    opts.typeOpts = FileShmSegmentOpts(memoryTierConfigs[0].path);
+  } else {
+    opts.typeOpts = PosixSysVSegmentOpts(config_.isUsingPosixShm());
+  }
+
+  return opts;
+}
+
+template <typename CacheTrait>
+std::unique_ptr<MemoryAllocator>
+CacheAllocator<CacheTrait>::createNewMemoryAllocator() {
   return std::make_unique<MemoryAllocator>(
       getAllocatorConfig(config_),
       shmManager_
           ->createShm(detail::kShmCacheName, config_.size,
-                      config_.slabMemoryBaseAddr, opts)
+                      config_.slabMemoryBaseAddr, createShmCacheOpts())
           .addr,
       config_.size);
 }
@@ -125,14 +150,11 @@ CacheAllocator<CacheTrait>::createNewMemoryAllocator() {
 template <typename CacheTrait>
 std::unique_ptr<MemoryAllocator>
 CacheAllocator<CacheTrait>::restoreMemoryAllocator() {
-  ShmSegmentOpts opts;
-  opts.alignment = sizeof(Slab);
-  opts.typeOpts = PosixSysVSegmentOpts(config_.usePosixShm);
   return std::make_unique<MemoryAllocator>(
       deserializer_->deserialize<MemoryAllocator::SerializationType>(),
       shmManager_
-          ->attachShm(detail::kShmCacheName, config_.slabMemoryBaseAddr, opts)
-          .addr,
+          ->attachShm(detail::kShmCacheName, config_.slabMemoryBaseAddr,
+          createShmCacheOpts()).addr,
       config_.size,
       config_.disableFullCoredump);
 }
@@ -297,7 +319,7 @@ CacheAllocator<CacheTrait>::initAccessContainer(InitMemType type,
 template <typename CacheTrait>
 std::unique_ptr<Deserializer> CacheAllocator<CacheTrait>::createDeserializer() {
   auto infoAddr = shmManager_->attachShm(detail::kShmInfoName, nullptr,
-            ShmSegmentOpts(PageSizeT::NORMAL, false, config_.usePosixShm));
+            ShmSegmentOpts(PageSizeT::NORMAL, false, config_.isUsingPosixShm()));
   return std::make_unique<Deserializer>(
       reinterpret_cast<uint8_t*>(infoAddr.addr),
       reinterpret_cast<uint8_t*>(infoAddr.addr) + infoAddr.size);
@@ -3232,7 +3254,7 @@ void CacheAllocator<CacheTrait>::saveRamCache() {
   ioBuf->coalesce();
 
   ShmSegmentOpts opts;
-  opts.typeOpts = PosixSysVSegmentOpts(config_.usePosixShm);
+  opts.typeOpts = PosixSysVSegmentOpts(config_.isUsingPosixShm());
 
   void* infoAddr = shmManager_->createShm(detail::kShmInfoName, ioBuf->length(),
       nullptr, opts).addr;

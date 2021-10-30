@@ -16,6 +16,7 @@
 
 #include "cachelib/allocator/tests/BaseAllocatorTest.h"
 #include "cachelib/allocator/tests/TestBase.h"
+#include "cachelib/allocator/MemoryTierCacheConfig.h"
 
 namespace facebook {
 namespace cachelib {
@@ -226,6 +227,12 @@ TYPED_TEST(BaseAllocatorTest, ReaperSkippingSlabTraversalWhileSlabReleasing) {
 }
 
 TYPED_TEST(BaseAllocatorTest, ReaperShutDown) { this->testReaperShutDown(); }
+TYPED_TEST(BaseAllocatorTest, ReaperShutDownFile) {
+  this->testReaperShutDown({
+    MemoryTierCacheConfig::fromFile("/tmp/a" + std::to_string(::getpid()))
+      .setRatio(1)
+  });
+}
 
 TYPED_TEST(BaseAllocatorTest, ShutDownWithActiveHandles) {
   this->testShutDownWithActiveHandles();
