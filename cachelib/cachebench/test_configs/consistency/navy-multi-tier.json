@@ -1,8 +1,20 @@
 {
   "cache_config" : {
-    "cacheSizeMB" : 150,
+    "cacheSizeMB" : 300,
     "poolRebalanceIntervalSec" : 1,
     "moveOnSlabRelease" : true,
+
+    "cacheDir": "/tmp/mem-tier2",
+    "memoryTiers" : [
+      {
+        "ratio": 1,
+	"memBindNodes": 0
+      },
+      {
+        "ratio": 1,
+	"memBindNodes": 0
+      }
+    ],
 
     "numPools" : 2,
     "poolSizes" : [0.5, 0.5],
@@ -14,7 +26,7 @@
 
       "checkConsistency" : true,
 
-      "numOps" : 600000,
+      "numOps" : 60000,
       "numThreads" : 20,
       "numKeys" : 200000,
 

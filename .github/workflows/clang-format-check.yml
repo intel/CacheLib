@@ -1,6 +1,6 @@
 # From: https://github.com/marketplace/actions/clang-format-check#multiple-paths
 name: clang-format Check
-on: [pull_request]
+on: []
 jobs:
   formatting-check:
     name: Formatting Check
