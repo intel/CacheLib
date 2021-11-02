@@ -78,9 +78,8 @@ build_tests=
 show_help=
 many_jobs=
 verbose=
-PREFIX="$PWD/opt/cachelib/"
-
-while getopts :BSdhijtvp: param
+install_path=
+while getopts :BSdhijtvI: param
 do
   case $param in
     i) install=yes ;;
@@ -91,7 +90,7 @@ do
     v) verbose=yes ;;
     j) many_jobs=yes ;;
     t) build_tests=yes ;;
-    p) PREFIX=$OPTARG ;;
+    I) install_path=${OPTARG} ; install=yes ;;
     ?) die "unknown option. See -h for help."
   esac
 done
@@ -160,6 +159,7 @@ case "$1" in
     REPODIR=cachelib/external/$NAME
     SRCDIR=$REPODIR
     external_git_clone=yes
+    external_git_tag=8.0.1
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DFMT_TEST=YES"
@@ -276,6 +276,7 @@ test -d cachelib || die "expected 'cachelib' directory not found in $PWD"
 
 
 # After ensuring we are in the correct directory, set the installation prefix"
+PREFIX=${install_path:-"$PWD/opt/cachelib/"}
 CMAKE_PARAMS="$CMAKE_PARAMS -DCMAKE_INSTALL_PREFIX=$PREFIX"
 CMAKE_PREFIX_PATH="$PREFIX/lib/cmake:$PREFIX/lib64/cmake:$PREFIX/lib:$PREFIX/lib64:$PREFIX:${CMAKE_PREFIX_PATH:-}"
 export CMAKE_PREFIX_PATH
