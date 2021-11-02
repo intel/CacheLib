@@ -78,9 +78,8 @@ build_tests=
 show_help=
 many_jobs=
 verbose=
-PREFIX="$PWD/opt/cachelib/"
-
-while getopts :BSdhijtvp: param
+install_path=
+while getopts :BSdhijtvI: param
 do
   case $param in
     i) install=yes ;;
@@ -91,7 +90,7 @@ do
     v) verbose=yes ;;
     j) many_jobs=yes ;;
     t) build_tests=yes ;;
-    p) PREFIX=$OPTARG ;;
+    I) install_path=${OPTARG} ; install=yes ;;
     ?) die "unknown option. See -h for help."
   esac
 done
@@ -198,7 +197,6 @@ case "$1" in
   folly)
     NAME=folly
     SRCDIR=cachelib/external/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
@@ -210,7 +208,6 @@ case "$1" in
   fizz)
     NAME=fizz
     SRCDIR=cachelib/external/$NAME/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
@@ -222,7 +219,6 @@ case "$1" in
   wangle)
     NAME=wangle
     SRCDIR=cachelib/external/$NAME/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
@@ -241,7 +237,6 @@ case "$1" in
   fbthrift)
     NAME=fbthrift
     SRCDIR=cachelib/external/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     ;;
 
@@ -288,6 +283,7 @@ test -d cachelib || die "expected 'cachelib' directory not found in $PWD"
 
 
 # After ensuring we are in the correct directory, set the installation prefix"
+PREFIX=${install_path:-"$PWD/opt/cachelib/"}
 CMAKE_PARAMS="$CMAKE_PARAMS -DCMAKE_INSTALL_PREFIX=$PREFIX"
 CMAKE_PREFIX_PATH="$PREFIX/lib/cmake:$PREFIX/lib64/cmake:$PREFIX/lib:$PREFIX/lib64:$PREFIX:${CMAKE_PREFIX_PATH:-}"
 export CMAKE_PREFIX_PATH
