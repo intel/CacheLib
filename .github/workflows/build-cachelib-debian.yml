@@ -38,3 +38,6 @@ jobs:
         uses: actions/checkout@v2
       - name: "build CacheLib using build script"
         run: ./contrib/build.sh -j -v -T
+      - name: "run tests"
+        timeout-minutes: 60
+        run: cd opt/cachelib/tests && ../../../run_tests.sh
