@@ -26,7 +26,9 @@ class MemoryTierCacheConfig {
  public:
   // Creates instance of MemoryTierCacheConfig for Posix/SysV Shared memory.
   static MemoryTierCacheConfig fromShm() {
-    return MemoryTierCacheConfig();
+    MemoryTierCacheConfig config;
+    config.shmOpts = PosixSysVSegmentOpts();
+    return config;
   }
 
   // Creates instance of MemoryTierCacheConfig for file-backed memory.
@@ -34,7 +36,7 @@ class MemoryTierCacheConfig {
   // TODO: add fromDirectory, fromAnonymousMemory
   static MemoryTierCacheConfig fromFile(const std::string& _file) {
     MemoryTierCacheConfig config;
-    config.path = _file;
+    config.shmOpts = FileShmSegmentOpts(_file);
     return config;
   }
 
@@ -67,7 +69,7 @@ class MemoryTierCacheConfig {
     return getRatio() * (totalCacheSize / partitionNum);
   }
   
-  const std::string& getPath() const noexcept { return path; }
+  const ShmTypeOpts& getShmTypeOpts() const noexcept { return shmOpts; }
 
   // Ratio is a number of parts of the total cache size to be allocated for this
   // tier. E.g. if X is a total cache size, Yi are ratios specified for memory
@@ -76,10 +78,8 @@ class MemoryTierCacheConfig {
   // tier is a half of the total cache size, set both tiers' ratios to 1.
   size_t ratio{1};
 
-  // Path to file for file system-backed memory tier
-  // TODO: consider using variant<file, directory, NUMA> to support different
-  // memory sources
-  std::string path;
+  // Options specific to shm type
+  ShmTypeOpts shmOpts;
 
  private:
   // TODO: introduce a container for tier settings when adding support for

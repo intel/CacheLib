@@ -60,7 +60,8 @@ class MemoryTiersTest: public AllocatorTest<Allocator> {
 
       for(auto i = 0; i < configs.size(); ++i) {
         auto tierSize = configs[i].calculateTierSize(actualConfig.getCacheSize(), sum_ratios);
-        EXPECT_EQ(configs[i].getPath(), expectedPaths[i]);
+        auto &opt = std::get<FileShmSegmentOpts>(configs[i].getShmTypeOpts());
+        EXPECT_EQ(opt.path, expectedPaths[i]);
         EXPECT_GT(tierSize, 0);
         if (configs[i].getRatio() && (i < configs.size() - 1)) {
           EXPECT_EQ(tierSize, partition_size * configs[i].getRatio());
@@ -99,43 +100,43 @@ class MemoryTiersTest: public AllocatorTest<Allocator> {
 using LruMemoryTiersTest = MemoryTiersTest<LruAllocator>;
 
 TEST_F(LruMemoryTiersTest, TestValid1TierPmemRatioConfig) {
-  LruAllocatorConfig cfg = createTestCacheConfig({defaultPmemPath}).validate();
+  LruAllocatorConfig cfg = createTestCacheConfig({defaultPmemPath});
   basicCheck(cfg);
 }
 
 TEST_F(LruMemoryTiersTest, TestValid1TierDaxRatioConfig) {
-  LruAllocatorConfig cfg = createTestCacheConfig({defaultDaxPath}).validate();
+  LruAllocatorConfig cfg = createTestCacheConfig({defaultDaxPath});
   basicCheck(cfg, {defaultDaxPath});
 }
 
 TEST_F(LruMemoryTiersTest, TestValid2TierDaxPmemConfig) {
   LruAllocatorConfig cfg = createTestCacheConfig({defaultDaxPath, defaultPmemPath},
-                                                 {1, 1}).validate();
+                                                 {1, 1});
   basicCheck(cfg, {defaultDaxPath, defaultPmemPath});
 }
 
 TEST_F(LruMemoryTiersTest, TestValid2TierDaxPmemRatioConfig) {
   LruAllocatorConfig cfg = createTestCacheConfig({defaultDaxPath, defaultPmemPath},
-                                                 {5, 2}).validate();
+                                                 {5, 2});
   basicCheck(cfg, {defaultDaxPath, defaultPmemPath});
 }
 
 TEST_F(LruMemoryTiersTest, TestInvalid2TierConfigPosixShmNotSet) {
   LruAllocatorConfig cfg = createTestCacheConfig({defaultDaxPath, defaultPmemPath},
                                                  {1, 1},
-                                                  /* setPosixShm */ false).validate();
+                                                  /* setPosixShm */ false);
 }
 
 TEST_F(LruMemoryTiersTest, TestInvalid2TierConfigNumberOfPartitionsTooLarge) {
   EXPECT_THROW(createTestCacheConfig({defaultDaxPath, defaultPmemPath},
-                                     {defaultTotalCacheSize, 1}),
+                                     {defaultTotalCacheSize, 1}).validate(),
                std::invalid_argument);
 }
 
 TEST_F(LruMemoryTiersTest, TestInvalid2TierConfigRatiosCacheSizeNotSet) {
   EXPECT_THROW(createTestCacheConfig({defaultDaxPath, defaultPmemPath},
                                      {1, 1},
-                                     /* setPosixShm */ true, /* cacheSize */ 0),
+                                     /* setPosixShm */ true, /* cacheSize */ 0).validate(),
                std::invalid_argument);
 }
 
