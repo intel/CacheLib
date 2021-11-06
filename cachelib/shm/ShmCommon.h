@@ -73,7 +73,6 @@ enum PageSizeT {
 
 constexpr int kInvalidFD = -1;
 
-// TODO(SHM_FILE): maybe we could use this inside the Tier Config class?
 struct FileShmSegmentOpts {
   FileShmSegmentOpts(std::string path = ""): path(path) {}
   std::string path;

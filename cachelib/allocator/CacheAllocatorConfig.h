@@ -210,10 +210,13 @@ class CacheAllocatorConfig {
   // Accepts vector of MemoryTierCacheConfig. Each vector element describes
   // configuration for a single memory cache tier. Tier sizes are specified as
   // ratios, the number of parts of total cache size each tier would occupy.
+  // @throw std::invalid_argument if:
+  // - the size of configs is 0
+  // - the size of configs is greater than kMaxCacheMemoryTiers
   CacheAllocatorConfig& configureMemoryTiers(const MemoryTierConfigs& configs);
 
   // Return reference to MemoryTierCacheConfigs.
-  const MemoryTierConfigs& getMemoryTierConfigs();
+  const MemoryTierConfigs& getMemoryTierConfigs() const;
 
   // This turns on a background worker that periodically scans through the
   // access container and look for expired items and remove them.
@@ -378,7 +381,7 @@ class CacheAllocatorConfig {
 
   // The max number of memory cache tiers
   // TODO: increase this number when multi-tier configs are enabled
-  inline static const size_t kMaxCacheMemoryTiers = 1;
+  inline static const size_t kMaxCacheMemoryTiers = 2;
 
   // Cache name for users to indentify their own cache.
   std::string cacheName{""};
@@ -880,7 +883,12 @@ CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::configureMemoryTiers(
 
 template <typename T>
 const typename CacheAllocatorConfig<T>::MemoryTierConfigs&
-CacheAllocatorConfig<T>::getMemoryTierConfigs() {
+CacheAllocatorConfig<T>::getMemoryTierConfigs() const {
+  for (auto &tier_config: memoryTierConfigs) {
+    if (auto *v = std::get_if<PosixSysVSegmentOpts>(&tier_config.shmOpts)) {
+      const_cast<PosixSysVSegmentOpts*>(v)->usePosix = usePosixShm;
+    }
+  }
   return memoryTierConfigs;
 }
 

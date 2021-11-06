@@ -22,6 +22,7 @@ namespace tests {
 
 using LruAllocatorMemoryTiersTest = AllocatorMemoryTiersTest<LruAllocator>;
 
+// TODO(MEMORY_TIER): add more tests with different eviction policies
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiers) { this->testMultiTiers(); }
 
 } // end of namespace tests

@@ -23,7 +23,8 @@ template <typename CacheTrait>
 CacheAllocator<CacheTrait>::CacheAllocator(Config config)
     : CacheAllocator(InitMemType::kNone, config) {
   // TODO(MEMORY_TIER)
-  if (memoryTierConfigs.size()) {
+  if (std::holds_alternative<FileShmSegmentOpts>(
+      memoryTierConfigs[0].getShmTypeOpts())) {
     throw std::runtime_error(
       "Using custom memory tier is only supported for Shared Memory.");
   }
@@ -62,7 +63,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(
       config_(config.validate()),
       memoryTierConfigs(config.getMemoryTierConfigs()),
       tempShm_(type == InitMemType::kNone && isOnShm_
-                   ? std::make_unique<TempShmMapping>(config_.size)
+                   ? std::make_unique<TempShmMapping>(config_.getCacheSize())
                    : nullptr),
       shmManager_(type != InitMemType::kNone
                       ? std::make_unique<ShmManager>(config_.cacheDir,
@@ -121,16 +122,7 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts() {
 
   ShmSegmentOpts opts;
   opts.alignment = sizeof(Slab);
-
-  // If memoryTierConfigs is empty, Fallback to Posix/SysV segment
-  // to keep legacy bahavior
-  // TODO(MEMORY_TIER) - guarantee there is always at least one mem
-  // layer inside Config
-  if (memoryTierConfigs.size()) {
-    opts.typeOpts = FileShmSegmentOpts(memoryTierConfigs[0].path);
-  } else {
-    opts.typeOpts = PosixSysVSegmentOpts(config_.isUsingPosixShm());
-  }
+  opts.typeOpts = memoryTierConfigs[0].getShmTypeOpts();
 
   return opts;
 }
@@ -141,10 +133,10 @@ CacheAllocator<CacheTrait>::createNewMemoryAllocator() {
   return std::make_unique<MemoryAllocator>(
       getAllocatorConfig(config_),
       shmManager_
-          ->createShm(detail::kShmCacheName, config_.size,
+          ->createShm(detail::kShmCacheName, config_.getCacheSize(),
                       config_.slabMemoryBaseAddr, createShmCacheOpts())
           .addr,
-      config_.size);
+      config_.getCacheSize());
 }
 
 template <typename CacheTrait>
@@ -155,7 +147,7 @@ CacheAllocator<CacheTrait>::restoreMemoryAllocator() {
       shmManager_
           ->attachShm(detail::kShmCacheName, config_.slabMemoryBaseAddr,
           createShmCacheOpts()).addr,
-      config_.size,
+      config_.getCacheSize(),
       config_.disableFullCoredump);
 }
 
@@ -261,10 +253,10 @@ std::unique_ptr<MemoryAllocator> CacheAllocator<CacheTrait>::initAllocator(
   if (type == InitMemType::kNone) {
     if (isOnShm_ == true) {
       return std::make_unique<MemoryAllocator>(
-          getAllocatorConfig(config_), tempShm_->getAddr(), config_.size);
+          getAllocatorConfig(config_), tempShm_->getAddr(), config_.getCacheSize());
     } else {
       return std::make_unique<MemoryAllocator>(getAllocatorConfig(config_),
-                                               config_.size);
+                                               config_.getCacheSize());
     }
   } else if (type == InitMemType::kMemNew) {
     return createNewMemoryAllocator();
@@ -2270,7 +2262,7 @@ PoolEvictionAgeStats CacheAllocator<CacheTrait>::getPoolEvictionAgeStats(
 template <typename CacheTrait>
 CacheMetadata CacheAllocator<CacheTrait>::getCacheMetadata() const noexcept {
   return CacheMetadata{kCachelibVersion, kCacheRamFormatVersion,
-                       kCacheNvmFormatVersion, config_.size};
+                       kCacheNvmFormatVersion, config_.getCacheSize()};
 }
 
 template <typename CacheTrait>
