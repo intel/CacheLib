@@ -7,4 +7,8 @@ common-test-TimeTests
 common-test-UtilTests
 shm-test-test_page_size"
 
-find -type f \( -not -name "*bench*" -and -not -name "navy*" \) -executable | grep -vF "$BLACKLIST" | xargs -n1 bash -c
+if [ "$1" == "long" ]; then
+    find -type f -executable | grep -vF "$BLACKLIST" | xargs -n1 bash -c
+else
+    find -type f \( -not -name "*bench*" -and -not -name "navy*" \) -executable | grep -vF "$BLACKLIST" | xargs -n1 bash -c
+fi
