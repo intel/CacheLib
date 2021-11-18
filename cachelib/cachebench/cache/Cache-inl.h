@@ -80,6 +80,20 @@ Cache<Allocator>::Cache(const CacheConfig& config,
 
   allocatorConfig_.setCacheSize(config_.cacheSizeMB * (MB));
 
+  if (!cacheDir.empty()) {
+    allocatorConfig_.cacheDir = cacheDir;
+  } else if (!config_.persistedCacheDir.empty()) {
+      allocatorConfig_.enableCachePersistence(config_.persistedCacheDir);
+  }
+
+  if (config_.usePosixShm) {
+    allocatorConfig_.usePosixForShm();
+  }
+
+  if (config_.memoryTierConfigs.size()) {
+    allocatorConfig_.configureMemoryTiers(config_.memoryTierConfigs);
+  }
+
   auto cleanupGuard = folly::makeGuard([&] {
     if (!nvmCacheFilePath_.empty()) {
       util::removePath(nvmCacheFilePath_);
@@ -222,8 +236,7 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   allocatorConfig_.cacheName = "cachebench";
 
   bool isRecovered = false;
-  if (!cacheDir.empty()) {
-    allocatorConfig_.cacheDir = cacheDir;
+  if (!allocatorConfig_.cacheDir.empty()) {
     try {
       cache_ = std::make_unique<Allocator>(Allocator::SharedMemAttach,
                                            allocatorConfig_);

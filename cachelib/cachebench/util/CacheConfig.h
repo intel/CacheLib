@@ -41,6 +41,22 @@ class CacheMonitorFactory {
   virtual std::unique_ptr<CacheMonitor> create(Lru2QAllocator& cache) = 0;
 };
 
+struct MemoryTierConfig : public JSONConfig {
+  MemoryTierConfig() {}
+
+  explicit MemoryTierConfig(const folly::dynamic& configJson);
+  MemoryTierCacheConfig getMemoryTierCacheConfig() {
+    if (file.empty()) {
+      throw std::invalid_argument("Please specify valid path to memory mapped file.");
+    }
+    MemoryTierCacheConfig config = MemoryTierCacheConfig::fromFile(file).setRatio(ratio);
+    return config;
+  }
+
+  std::string file{""};
+  size_t ratio{0};
+};
+
 struct CacheConfig : public JSONConfig {
   // by defaullt, lru allocator. can be set to LRU-2Q.
   std::string allocator{"LRU"};
@@ -193,6 +209,13 @@ struct CacheConfig : public JSONConfig {
   // Don't write to flash if cache TTL is smaller than this value.
   // Not used when its value is 0.  In seconds.
   uint32_t memoryOnlyTTL{0};
+
+  // Directory for the cache to enable persistence across restarts.
+  std::string persistedCacheDir{""};
+
+  bool usePosixShm{false};
+
+  std::vector<MemoryTierCacheConfig> memoryTierConfigs{};
 
   // If enabled, we will use the timestamps from the trace file in the ticker
   // so that the cachebench will observe time based on timestamps from the trace
