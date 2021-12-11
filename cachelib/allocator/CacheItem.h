@@ -141,6 +141,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
    * to be mapped to different addresses on shared memory.
    */
   using CompressedPtr = facebook::cachelib::CompressedPtr;
+  using SingleTierPtrCompressor = MemoryAllocator::SingleTierPtrCompressor<Item>;
   using PtrCompressor = MemoryAllocator::PtrCompressor<Item>;
 
   // Get the required size for a cache item given the size of memory

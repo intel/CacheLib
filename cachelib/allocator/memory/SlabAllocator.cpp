@@ -527,6 +527,8 @@ serialization::SlabAllocatorObject SlabAllocator::saveState() {
 // for benchmarking purposes.
 const unsigned int kMarkerBits = 6;
 CompressedPtr SlabAllocator::compressAlt(const void* ptr) const {
+  // XXX: do we need to set tierId here?
+
   if (ptr == nullptr) {
     return CompressedPtr{};
   }
@@ -538,6 +540,8 @@ CompressedPtr SlabAllocator::compressAlt(const void* ptr) const {
 }
 
 void* SlabAllocator::unCompressAlt(const CompressedPtr cPtr) const {
+  // XXX: do we need to set tierId here?
+
   if (cPtr.isNull()) {
     return nullptr;
   }
