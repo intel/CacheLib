@@ -1,7 +1,7 @@
 name: build-cachelib-debian-10
 on:
-  push:
-  pull_request:
+  schedule:
+    - cron:  '30 5 * * 0,3'
 
 jobs:
   build-cachelib-debian-10:
