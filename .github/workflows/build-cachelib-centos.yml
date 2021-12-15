@@ -8,12 +8,8 @@ jobs:
     name: "CentOS/latest - Build CacheLib with all dependencies"
     runs-on: ubuntu-latest
     # Docker container image name
-    container: "centos:latest"
+    container: "ghcr.io/igchor/cachelib-deps:centos8"
     steps:
-      - name: "update packages"
-        run: dnf upgrade -y
-      - name: "install sudo,git"
-        run: dnf install -y sudo git cmake gcc
       - name: "System Information"
         run: |
           echo === uname ===
@@ -32,8 +28,10 @@ jobs:
           gcc -v
       - name: "checkout sources"
         uses: actions/checkout@v2
+      - name: "print workspace"
+        run: echo $GITHUB_WORKSPACE
       - name: "build CacheLib using build script"
-        run: ./contrib/build.sh -j -v -T
+        run: mkdir build && cd build && cmake ../cachelib -DBUILD_TESTS=ON -DCMAKE_INSTALL_PREFIX=/opt -DCMAKE_BUILD_TYPE=Debug && make install -j$(nproc)
       - name: "run tests"
         timeout-minutes: 60
-        run: cd opt/cachelib/tests && ../../../run_tests.sh
+        run: cd /opt/tests && $GITHUB_WORKSPACE/run_tests.sh
