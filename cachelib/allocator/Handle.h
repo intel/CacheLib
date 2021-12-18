@@ -481,7 +481,14 @@ struct ReadHandleImpl {
 
   // Handle which has the item already
   FOLLY_ALWAYS_INLINE ReadHandleImpl(Item* it, CacheT& alloc) noexcept
-      : alloc_(&alloc), it_(it) {}
+      : alloc_(&alloc), it_(it) {
+    if (it_ && it_->isIncomplete()) {
+      waitContext_ = std::make_shared<ItemWaitContext>(alloc);
+      if (!alloc_->addWaitContextForMovingItem(it->getKey(), waitContext_)) {
+        waitContext_.reset();
+      }
+    }
+  }
 
   // handle that has a wait context allocated. Used for async handles
   // In this case, the it_ will be filled in asynchronously and mulitple

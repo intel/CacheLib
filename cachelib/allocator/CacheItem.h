@@ -243,6 +243,14 @@ class CACHELIB_PACKED_ATTR CacheItem {
   bool isNvmEvicted() const noexcept;
 
   /**
+   * Marks that the item is migrating between memory tiers and
+   * not ready for access now. Accessing thread should wait.
+   */
+  void markIncomplete() noexcept;
+  void unmarkIncomplete() noexcept;
+  bool isIncomplete() const noexcept;
+
+  /**
    * Function to set the timestamp for when to expire an item
    *
    * This API will only succeed when an item is a regular item, and user
