@@ -130,6 +130,17 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts(TierId tid) {
 }
 
 template <typename CacheTrait>
+size_t CacheAllocator<CacheTrait>::memoryTierSize(TierId tid) const
+{
+  auto partitions = std::accumulate(memoryTierConfigs.begin(), memoryTierConfigs.end(), 0UL,
+  [](const size_t i, const MemoryTierCacheConfig& config){
+    return i + config.getRatio();
+  });
+
+  return memoryTierConfigs[tid].calculateTierSize(config_.getCacheSize(), partitions);
+}
+
+template <typename CacheTrait>
 std::vector<std::unique_ptr<MemoryAllocator>>
 CacheAllocator<CacheTrait>::createPrivateAllocator() {
   std::vector<std::unique_ptr<MemoryAllocator>> allocators;
@@ -150,14 +161,15 @@ CacheAllocator<CacheTrait>::createPrivateAllocator() {
 template <typename CacheTrait>
 std::unique_ptr<MemoryAllocator>
 CacheAllocator<CacheTrait>::createNewMemoryAllocator(TierId tid) {
+  size_t tierSize = memoryTierSize(tid);
   return std::make_unique<MemoryAllocator>(
       getAllocatorConfig(config_),
       shmManager_
           ->createShm(detail::kShmCacheName + std::to_string(tid),
-                      config_.getCacheSize(), config_.slabMemoryBaseAddr,
+                      tierSize, config_.slabMemoryBaseAddr,
                       createShmCacheOpts(tid))
           .addr,
-      config_.getCacheSize());
+      tierSize);
 }
 
 template <typename CacheTrait>
@@ -168,7 +180,7 @@ CacheAllocator<CacheTrait>::restoreMemoryAllocator(TierId tid) {
       shmManager_
           ->attachShm(detail::kShmCacheName + std::to_string(tid),
             config_.slabMemoryBaseAddr, createShmCacheOpts(tid)).addr,
-      config_.getCacheSize(),
+      memoryTierSize(tid),
       config_.disableFullCoredump);
 }
 
