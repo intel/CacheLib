@@ -409,6 +409,7 @@ TYPED_TEST(BaseAllocatorTest, RateMap) { this->testRateMap(); }
 TYPED_TEST(BaseAllocatorTest, StatSnapshotTest) {
   this->testStatSnapshotTest();
 }
+TYPED_TEST(BaseAllocatorTest, BasicMultiTier) {this->testBasicMultiTier(); }
 
 namespace { // the tests that cannot be done by TYPED_TEST.
 
