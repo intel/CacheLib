@@ -407,6 +407,8 @@ TYPED_TEST(BaseAllocatorTest, SlabReleaseStuck) {
   this->testSlabReleaseStuck();
 }
 
+TYPED_TEST(BaseAllocatorTest, BasicMultiTier) {this->testBasicMultiTier(); }
+
 namespace { // the tests that cannot be done by TYPED_TEST.
 
 using LruAllocatorTest = BaseAllocatorTest<LruAllocator>;
