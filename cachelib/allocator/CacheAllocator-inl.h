@@ -1516,10 +1516,16 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     // evict what we think as parent and see if the eviction of parent
     // recycles the child we intend to.
     {
-      auto toReleaseHandle =
-          itr->isChainedItem()
-              ? advanceIteratorAndTryEvictChainedItem(tid, pid, itr)
-              : advanceIteratorAndTryEvictRegularItem(tid, pid, mmContainer, itr);
+      auto toReleaseHandle = tryEvictToNextMemoryTier(tid, pid, itr);
+      bool movedToNextTier = false;
+      if(toReleaseHandle) {
+        movedToNextTier = true;
+      } else {
+        toReleaseHandle =
+            itr->isChainedItem()
+                ? advanceIteratorAndTryEvictChainedItem(tid, pid, itr)
+                : advanceIteratorAndTryEvictRegularItem(tid, pid, mmContainer, itr);
+      }
       // destroy toReleseHandle. The item won't be release to allocator
       // since we marked it as exclusive.
     }
