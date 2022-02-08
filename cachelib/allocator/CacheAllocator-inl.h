@@ -3815,7 +3815,10 @@ GlobalCacheStats CacheAllocator<CacheTrait>::getGlobalCacheStats() const {
 
 template <typename CacheTrait>
 CacheMemoryStats CacheAllocator<CacheTrait>::getCacheMemoryStats() const {
-  const auto totalCacheSize = allocator_[currentTier()]->getMemorySize();
+  size_t totalCacheSize = 0;
+  for(auto& allocator: allocator_) {
+    totalCacheSize += allocator->getMemorySize();
+  }
 
   auto addSize = [this](size_t a, PoolId pid) {
     return a + allocator_[currentTier()]->getPool(pid).getPoolSize();
