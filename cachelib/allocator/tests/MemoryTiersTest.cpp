@@ -52,10 +52,11 @@ class MemoryTiersTest: public AllocatorTest<Allocator> {
           [&](const size_t i, const MemoryTierCacheConfig& config) { return i + config.calculateTierSize(actualConfig.getCacheSize(), sum_ratios);});
       
 
-      EXPECT_EQ(sum_sizes, expectedTotalCacheSize);
-      size_t partition_size = 0, remaining_capacity = actualConfig.getCacheSize();
+      size_t partition_size = 0;
       if (sum_ratios) {
         partition_size = actualConfig.getCacheSize() / sum_ratios;
+        /* Sum of sizes can be lower due to rounding down to partition_size. */
+        EXPECT_GE(sum_sizes, expectedTotalCacheSize - partition_size);
       }
 
       for(auto i = 0; i < configs.size(); ++i) {
@@ -66,10 +67,7 @@ class MemoryTiersTest: public AllocatorTest<Allocator> {
         if (configs[i].getRatio() && (i < configs.size() - 1)) {
           EXPECT_EQ(tierSize, partition_size * configs[i].getRatio());
         }
-        remaining_capacity -= tierSize;
       }
-
-      EXPECT_EQ(remaining_capacity, 0);
     }
 
     LruAllocatorConfig createTestCacheConfig(
