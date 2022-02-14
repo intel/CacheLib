@@ -8,7 +8,7 @@ jobs:
     name: "CentOS/latest - Build CacheLib with all dependencies"
     runs-on: ubuntu-latest
     # Docker container image name
-    container: "ghcr.io/igchor/cachelib-deps:centos8"
+    container: "ghcr.io/igchor/cachelib-deps:streams8"
     steps:
       - name: "System Information"
         run: |
