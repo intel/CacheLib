@@ -402,6 +402,12 @@ struct ReadHandleImpl {
       }
     }
 
+   protected:
+    friend class ReadHandleImpl;
+    // Method used only by ReadHandleImpl ctor
+    void discard() {
+      it_.store(nullptr, std::memory_order_relaxed);
+    }
    private:
     // we are waiting on Item* to be set to a value. One of the valid values is
     // nullptr. So choose something that we dont expect to indicate a ptr
@@ -485,6 +491,7 @@ struct ReadHandleImpl {
     if (it_ && it_->isIncomplete()) {
       waitContext_ = std::make_shared<ItemWaitContext>(alloc);
       if (!alloc_->addWaitContextForMovingItem(it->getKey(), waitContext_)) {
+        waitContext_->discard();
         waitContext_.reset();
       }
     }
