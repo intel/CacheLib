@@ -246,23 +246,23 @@ class CACHELIB_PACKED_ATTR CacheItem {
    *
    * This API will only succeed when an item is a regular item, and user
    * has already inserted it into the cache (via @insert or @insertOrReplace).
-   * In addition, the item cannot be in a "moving" state.
+   * In addition, the item cannot be in a "exclusive" state.
    *
    * @param expiryTime the expiryTime value to update to
    *
    * @return boolean indicating whether expiry time was successfully updated
-   *         false when item is not linked in cache, or in moving state, or a
+   *         false when item is not linked in cache, or in exclusive state, or a
    *         chained item
    */
   bool updateExpiryTime(uint32_t expiryTimeSecs) noexcept;
 
   // Same as @updateExpiryTime, but sets expiry time to @ttl seconds from now.
   // It has the same restrictions as @updateExpiryTime. An item must be a
-  // regular item and is part of the cache and NOT in the moving state.
+  // regular item and is part of the cache and NOT in the exclusive state.
   //
   // @param ttl   TTL (from now)
   // @return boolean indicating whether expiry time was successfully updated
-  //         false when item is not linked in cache, or in moving state, or a
+  //         false when item is not linked in cache, or in exclusive state, or a
   //         chained item
   bool extendTTL(std::chrono::seconds ttl) noexcept;
 
@@ -305,12 +305,17 @@ class CACHELIB_PACKED_ATTR CacheItem {
    */
   RefcountWithFlags::Value getRefCountAndFlagsRaw() const noexcept;
 
-  FOLLY_ALWAYS_INLINE void incRef() {
-    if (LIKELY(ref_.incRef())) {
-      return;
+  // Increments item's ref count
+  //
+  // @return true on success, failure if item is marked as exclusive
+  // @throw exception::RefcountOverflow on ref count overflow
+  FOLLY_ALWAYS_INLINE bool incRef() {
+    try {
+      return ref_.incRef();
+    } catch (exception::RefcountOverflow& e) {
+      throw exception::RefcountOverflow(
+          folly::sformat("{} item: {}", e.what(), toString()));
     }
-    throw exception::RefcountOverflow(
-        folly::sformat("Refcount maxed out. item: {}", toString()));
   }
 
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef() {
@@ -320,15 +325,11 @@ class CACHELIB_PACKED_ATTR CacheItem {
   // Whether or not an item is completely drained of all references including
   // the internal ones. This means there is no access refcount bits and zero
   // admin bits set. I.e. refcount is 0 and the item is not linked, accessible,
-  // nor moving
+  // nor exclusive
   bool isDrained() const noexcept;
 
-  // Whether or not we hold the last exclusive access to this item
-  // Refcount is 1 and the item is not linked, accessible, nor moving
-  bool isExclusive() const noexcept;
-
   /**
-   * The following three functions correspond to the state of the allocation
+   * The following four functions correspond to the state of the allocation
    * in the memory management container. This is protected by the
    * MMContainer's internal locking. Inspecting this outside the mm
    * container will be racy.
@@ -336,6 +337,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
   void markInMMContainer() noexcept;
   void unmarkInMMContainer() noexcept;
   bool isInMMContainer() const noexcept;
+  bool isOnlyInMMContainer() const noexcept;
 
   /**
    * The following three functions correspond to the state of the allocation
@@ -348,21 +350,39 @@ class CACHELIB_PACKED_ATTR CacheItem {
 
   /**
    * The following two functions corresond to whether or not an item is
-   * currently in the process of being moved. This happens during a slab
-   * rebalance or resize operation.
+   * currently in the process of being evicted.
    *
-   * An item can only be marked moving when `isInMMContainer` returns true.
+   * An item can only be marked exclusive when `isInMMContainer` returns true
+   * and item is not already exclusive nor moving and the ref count is 0.
    * This operation is atomic.
    *
+   * Unmarking exclusive does not depend on `isInMMContainer`
+   */
+  bool markExclusive() noexcept;
+  RefcountWithFlags::Value unmarkExclusive() noexcept;
+  bool isExclusive() const noexcept;
+
+  /**
+   * The following functions correspond to whether or not an item is
+   * currently in the processed of being moved. When moving, ref count
+   * is always >= 1.
+   *
+   * An item can only be marked moving when `isInMMContainer` returns true
+   * and item is not already exclusive nor moving.
+   *
    * User can also query if an item "isOnlyMoving". This returns true only
-   * if the refcount is 0 and only the moving bit is set.
+   * if the refcount is one and only the moving bit is set.
    *
    * Unmarking moving does not depend on `isInMMContainer`
    */
-  bool markMoving() noexcept;
-  void unmarkMoving() noexcept;
+  bool markMoving();
+  RefcountWithFlags::Value unmarkMoving() noexcept;
   bool isMoving() const noexcept;
   bool isOnlyMoving() const noexcept;
+
+  /** This function attempts to mark item as exclusive.
+   * Can only be called on the item that is moving.*/
+  bool markExclusiveWhenMoving();
 
   /**
    * Item cannot be marked both chained allocation and
