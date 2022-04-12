@@ -465,7 +465,9 @@ inline typename LruAllocator::MMConfig makeMMConfig(CacheConfig const& config) {
                                 config.lruUpdateOnWrite,
                                 config.lruUpdateOnRead,
                                 config.tryLockUpdate,
-                                static_cast<uint8_t>(config.lruIpSpec));
+                                static_cast<uint8_t>(config.lruIpSpec),
+                                0,
+                                config.useCombinedLockForIterators);
 }
 
 // LRU
