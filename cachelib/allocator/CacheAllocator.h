@@ -1542,10 +1542,11 @@ class CacheAllocator : public CacheBase {
   // @param oldItem     Reference to the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
-  template <typename ItemPtr>
-  WriteHandle moveRegularItemOnEviction(ItemPtr& oldItem, WriteHandle& newItemHdl);
+  // @return            the handle to the oldItem if the move was completed
+  //                    and the oldItem can be recycled.
+  //                    Otherwise an empty handle is returned.
+  template <typename P>
+  WriteHandle moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl, P&& predicate);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
@@ -1706,26 +1707,6 @@ class CacheAllocator : public CacheBase {
   // @return An evicted item or nullptr  if there is no suitable candidate.
   Item* findEviction(TierId tid, PoolId pid, ClassId cid);
 
-  // Advance the current iterator and try to evict a regular item
-  //
-  // @param  mmContainer  the container to look for evictions.
-  // @param  itr          iterator holding the item
-  //
-  // @return  valid handle to regular item on success. This will be the last
-  //          handle to the item. On failure an empty handle.
-  WriteHandle advanceIteratorAndTryEvictRegularItem(TierId tid, PoolId pid,
-                                                    MMContainer& mmContainer,
-                                                    EvictionIterator& itr);
-
-  // Advance the current iterator and try to evict a chained item
-  // Iterator may also be reset during the course of this function
-  //
-  // @param  itr          iterator holding the item
-  //
-  // @return  valid handle to the parent item on success. This will be the last
-  //          handle to the item
-  WriteHandle advanceIteratorAndTryEvictChainedItem(TierId tid, PoolId pid, EvictionIterator& itr);
-
   // Try to move the item down to the next memory tier
   //
   // @param tid current tier ID of the item
@@ -1734,8 +1715,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  template <typename ItemPtr>
-  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, ItemPtr& item);
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item);
 
   // Try to move the item down to the next memory tier
   //
@@ -1743,7 +1723,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle. 
-  WriteHandle tryEvictToNextMemoryTier(Item* item);
+  WriteHandle tryEvictToNextMemoryTier(Item& item);
 
   size_t memoryTierSize(TierId tid) const;
 
@@ -1864,7 +1844,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return last handle for corresponding to item on success. empty handle on
   // failure. caller can retry if needed.
-  WriteHandle evictNormalItemForSlabRelease(Item& item);
+  WriteHandle evictNormalItem(Item& item, bool skipIfTokenInvalid = false);
 
   // Helper function to evict a child item for slab release
   // As a side effect, the parent item is also evicted
