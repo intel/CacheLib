@@ -1302,7 +1302,7 @@ class CacheAllocator : public CacheBase {
 
  private:
   // wrapper around Item's refcount and active handle tracking
-  FOLLY_ALWAYS_INLINE void incRef(Item& it);
+  FOLLY_ALWAYS_INLINE bool incRef(Item& it);
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef(Item& it);
 
   // drops the refcount and if needed, frees the allocation back to the memory
@@ -1334,24 +1334,27 @@ class CacheAllocator : public CacheBase {
   //
   // @param it    item to be released.
   // @param ctx   removal context
-  // @param toRecycle  An item that will be recycled, this item is to be
-  //                   ignored if it's found in the process of freeing
-  //                   a chained allocation
+  // @param toRelease  An item that is expected to be released by
+  //                   freeing _it_
+  // @param recycle    Whether item will be reused without returning
+  //                   to the allocator
   //
-  // @return One of ReleaseRes. In all cases, _it_ is always released back to
-  // the allocator unless an exception is thrown
   //
+  // @return whether releasing _it_ frees toRelease as well. _it_ is always
+  // freed
   // @throw   runtime_error if _it_ has pending refs or is not a regular item.
   //          runtime_error if parent->chain is broken
-  enum class ReleaseRes {
-    kRecycled,    // _it_ was released and _toRecycle_ was recycled
-    kNotRecycled, // _it_ was released and _toRecycle_ was not recycled
-    kReleased,    // toRecycle == nullptr and it was released
-  };
-  ReleaseRes releaseBackToAllocator(Item& it,
-                                    RemoveContext ctx,
-                                    bool nascent = false,
-                                    const Item* toRecycle = nullptr);
+  bool releaseBackToAllocator(Item& it,
+                              RemoveContext ctx,
+                              bool callDestructor = true,
+                              const Item* toRelease = nullptr,
+                              bool recycle = false);
+
+  // Must be called by the thread which called markExclusive and
+  // succeeded. After this call, the item is unlinked from Access and
+  // MM Containers. The item is no longer marked as exclusive and it's
+  // ref count is 0 - it's available for recycling.
+  void unlinkItemExclusive(Item& it);
 
   // acquires an handle on the item. returns an empty handle if it is null.
   // @param it    pointer to an item
@@ -1453,11 +1456,13 @@ class CacheAllocator : public CacheBase {
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
   //
-  // @param oldItem    the item we want to allocate a new item for
+  // @param oldItem      the item we want to allocate a new item for
+  // @param parentHandle handle to parent if oldItem is a chained item
   //
   // @return  handle to the newly allocated item
   //
-  WriteHandle allocateNewItemForOldItem(const Item& oldItem);
+  WriteHandle allocateNewItemForOldItem(const Item& oldItem,
+                                        WriteHandle& parentHandle);
 
   // internal helper that grabs a refcounted handle to the item. This does
   // not record the access to reflect in the mmContainer.
@@ -1507,16 +1512,16 @@ class CacheAllocator : public CacheBase {
   FOLLY_ALWAYS_INLINE WriteHandle findFastImpl(Key key, AccessMode mode);
 
   // Moves a regular item to a different slab. This should only be used during
-  // slab release after the item's moving bit has been set. The user supplied
+  // slab release after the item's exclusive bit has been set. The user supplied
   // callback is responsible for copying the contents and fixing the semantics
   // of chained item.
   //
-  // @param oldItem     Reference to the item being moved
+  // @param oldItemHdl  Reference to the handle of the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveRegularItem(Item& oldItem, WriteHandle& newItemHdl);
+  bool moveRegularItem(WriteHandle&& oldItemHdl, WriteHandle& newItemHdl);
 
   // template class for viewAsChainedAllocs that takes either ReadHandle or
   // WriteHandle
@@ -1530,7 +1535,7 @@ class CacheAllocator : public CacheBase {
   folly::IOBuf convertToIOBufT(Handle& handle);
 
   // Moves a chained item to a different slab. This should only be used during
-  // slab release after the item's moving bit has been set. The user supplied
+  // slab release after the item's exclusive bit has been set. The user supplied
   // callback is responsible for copying the contents and fixing the semantics
   // of chained item.
   //
@@ -1543,7 +1548,9 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveChainedItem(ChainedItem& oldItem, WriteHandle& newItemHdl);
+  bool moveChainedItem(ChainedItem& oldItem,
+                       WriteHandle&& parentHandle,
+                       WriteHandle& newItemHdl);
 
   // Transfers the chain ownership from parent to newParent. Parent
   // will be unmarked as having chained allocations. Parent will not be null
@@ -1661,25 +1668,6 @@ class CacheAllocator : public CacheBase {
 
   using EvictionIterator = typename MMContainer::Iterator;
 
-  // Advance the current iterator and try to evict a regular item
-  //
-  // @param  mmContainer  the container to look for evictions.
-  // @param  itr          iterator holding the item
-  //
-  // @return  valid handle to regular item on success. This will be the last
-  //          handle to the item. On failure an empty handle.
-  WriteHandle advanceIteratorAndTryEvictRegularItem(MMContainer& mmContainer,
-                                                    EvictionIterator& itr);
-
-  // Advance the current iterator and try to evict a chained item
-  // Iterator may also be reset during the course of this function
-  //
-  // @param  itr          iterator holding the item
-  //
-  // @return  valid handle to the parent item on success. This will be the last
-  //          handle to the item
-  WriteHandle advanceIteratorAndTryEvictChainedItem(EvictionIterator& itr);
-
   // Deserializer CacheAllocatorMetadata and verify the version
   //
   // @param  deserializer   Deserializer object
@@ -1753,24 +1741,19 @@ class CacheAllocator : public CacheBase {
   // @param releaseContext  slab release context
   void releaseSlabImpl(const SlabReleaseContext& releaseContext);
 
-  // @return  true when successfully marked as moving,
-  //          fasle when this item has already been freed
-  bool markMovingForSlabRelease(const SlabReleaseContext& ctx,
-                                void* alloc,
-                                util::Throttler& throttler);
-
   // "Move" (by copying) the content in this item to another memory
   // location by invoking the move callback.
   //
   //
   // @param ctx         slab release context
-  // @param item        old item to be moved elsewhere
+  // @param oldItem     old item to be moved elsewhere
+  // @param handle      handle to the item or to it's parent (if chained)
   // @param throttler   slow this function down as not to take too much cpu
   //
   // @return    true  if the item has been moved
   //            false if we have exhausted moving attempts
   bool moveForSlabRelease(const SlabReleaseContext& ctx,
-                          Item& item,
+                          Item& oldItem,
                           util::Throttler& throttler);
 
   // "Move" (by copying) the content in this item to another memory
@@ -1781,7 +1764,9 @@ class CacheAllocator : public CacheBase {
   //
   // @return    true  if the item has been moved
   //            false if we have exhausted moving attempts
-  bool tryMovingForSlabRelease(Item& item, WriteHandle& newItemHdl);
+  bool tryMovingForSlabRelease(Item& oldItem,
+                               WriteHandle&& handle,
+                               WriteHandle& newItemHdl);
 
   // Evict an item from access and mm containers and
   // ensure it is safe for freeing.
@@ -1789,22 +1774,11 @@ class CacheAllocator : public CacheBase {
   // @param ctx         slab release context
   // @param item        old item to be moved elsewhere
   // @param throttler   slow this function down as not to take too much cpu
-  void evictForSlabRelease(const SlabReleaseContext& ctx,
-                           Item& item,
+  bool evictForSlabRelease(const SlabReleaseContext& ctx,
+                           Item& toRelease,
                            util::Throttler& throttler);
 
-  // Helper function to evict a normal item for slab release
-  //
-  // @return last handle for corresponding to item on success. empty handle on
-  // failure. caller can retry if needed.
-  WriteHandle evictNormalItemForSlabRelease(Item& item);
-
-  // Helper function to evict a child item for slab release
-  // As a side effect, the parent item is also evicted
-  //
-  // @return  last handle to the parent item of the child on success. empty
-  // handle on failure. caller can retry.
-  WriteHandle evictChainedItemForSlabRelease(ChainedItem& item);
+  typename NvmCacheT::PutToken createPutToken(Item& item);
 
   // Helper function to remove a item if expired.
   //
@@ -1926,12 +1900,8 @@ class CacheAllocator : public CacheBase {
   std::optional<bool> saveNvmCache();
   void saveRamCache();
 
-  static bool itemMovingPredicate(const Item& item) {
-    return item.getRefCount() == 0;
-  }
-
-  static bool itemEvictionPredicate(const Item& item) {
-    return item.getRefCount() == 0 && !item.isMoving();
+  static bool itemSlabReleasePredicate(const Item& item) {
+    return item.getRefCount() == 1;
   }
 
   static bool itemExpiryPredicate(const Item& item) {
@@ -1939,7 +1909,7 @@ class CacheAllocator : public CacheBase {
   }
 
   static bool parentEvictForSlabReleasePredicate(const Item& item) {
-    return item.getRefCount() == 1 && !item.isMoving();
+    return item.getRefCount() == 1 && !item.isExclusive();
   }
 
   std::unique_ptr<Deserializer> createDeserializer();

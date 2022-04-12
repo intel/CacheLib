@@ -82,7 +82,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
 
     // this flag indicates the allocation is being moved elsewhere
     // (can be triggered by a resize or reblanace operation)
-    kMoving,
+    kExclusive,
   };
 
   /**
@@ -119,7 +119,8 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
     // Unused. This is just to indciate the maximum number of flags
     kFlagMax,
   };
-  static_assert(static_cast<uint8_t>(kMMFlag0) > static_cast<uint8_t>(kMoving),
+  static_assert(static_cast<uint8_t>(kMMFlag0) >
+                    static_cast<uint8_t>(kExclusive),
                 "Flags and control bits cannot overlap in bit range.");
   static_assert(kFlagMax <= NumBits<Value>::value, "Too many flags.");
 
@@ -133,15 +134,21 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // Bumps up the reference count only if the new count will be strictly less
   // than or equal to the maxCount.
   // @return true if refcount is bumped. false otherwise.
-  FOLLY_ALWAYS_INLINE bool incRef() noexcept {
+  FOLLY_ALWAYS_INLINE bool incRef() {
     Value* const refPtr = &refCount_;
     unsigned int nCASFailures = 0;
     constexpr bool isWeak = false;
+
+    Value bitMask = getAdminRef<kExclusive>();
     Value oldVal = __atomic_load_n(refPtr, __ATOMIC_RELAXED);
 
     while (true) {
+      const bool alreadyExclusive = oldVal & bitMask;
       const Value newCount = oldVal + static_cast<Value>(1);
       if (UNLIKELY((oldVal & kAccessRefMask) == (kAccessRefMask))) {
+        throw exception::RefcountOverflow("Refcount maxed out.");
+      }
+      if (alreadyExclusive) {
         return false;
       }
 
@@ -225,6 +232,9 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   bool isInMMContainer() const noexcept {
     return getRaw() & getAdminRef<kLinked>();
   }
+  bool isOnlyInMMContainer() const noexcept {
+    return getRefWithAccessAndAdmin() == getAdminRef<kLinked>();
+  }
 
   /**
    * The following three functions correspond to the state of the allocation
@@ -247,18 +257,15 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   /**
    * The following four functions are used to track whether or not
    * an item is currently in the process of being moved. This happens during a
-   * slab rebalance or resize operation.
+   * slab rebalance or resize operation or during eviction.
    *
-   * An item can only be marked moving when `isInMMContainer` returns true.
-   * This operation is atomic.
+   * An item can only be marked exclusive when `isInMMContainer` returns true
+   * and the item is not yet marked as exclusive. This operation is atomic.
    *
-   * User can also query if an item "isOnlyMoving". This returns true only
-   * if the refcount is 0 and only the moving bit is set.
-   *
-   * Unmarking moving does not depend on `isInMMContainer`
+   * Unmarking exclusive does not depend on `isInMMContainer`
    */
-  bool markMoving() noexcept {
-    Value bitMask = getAdminRef<kMoving>();
+  bool markExclusive() noexcept {
+    Value bitMask = getAdminRef<kExclusive>();
     Value conditionBitMask = getAdminRef<kLinked>();
 
     Value* const refPtr = &refCount_;
@@ -267,7 +274,15 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
     Value curValue = __atomic_load_n(refPtr, __ATOMIC_RELAXED);
     while (true) {
       const bool flagSet = curValue & conditionBitMask;
-      if (!flagSet) {
+      const bool alreadyExclusive = curValue & bitMask;
+      const bool accessible = curValue & getAdminRef<kAccessible>();
+      if (!flagSet || alreadyExclusive) {
+        return false;
+      }
+      if ((curValue & kAccessRefMask) != 0) {
+        return false;
+      }
+      if (!accessible) {
         return false;
       }
 
@@ -275,6 +290,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
       if (__atomic_compare_exchange_n(refPtr, &curValue, newValue, isWeak,
                                       __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         XDCHECK(newValue & conditionBitMask);
+        XDCHECK(getAccessRef() == 0);
         return true;
       }
 
@@ -286,21 +302,12 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
       }
     }
   }
-  void unmarkMoving() noexcept {
-    Value bitMask = ~getAdminRef<kMoving>();
-    __atomic_and_fetch(&refCount_, bitMask, __ATOMIC_ACQ_REL);
+  Value unmarkExclusive() noexcept {
+    Value bitMask = ~getAdminRef<kExclusive>();
+    return __atomic_and_fetch(&refCount_, bitMask, __ATOMIC_ACQ_REL) & kRefMask;
   }
-  bool isMoving() const noexcept { return getRaw() & getAdminRef<kMoving>(); }
-  bool isOnlyMoving() const noexcept {
-    // An item is only moving when its refcount is zero and only the moving bit
-    // among all the control bits is set. This indicates an item is already on
-    // its way out of cache and does not need to be moved.
-    auto ref = getRefWithAccessAndAdmin();
-    bool anyOtherBitSet = ref & ~getAdminRef<kMoving>();
-    if (anyOtherBitSet) {
-      return false;
-    }
-    return ref & getAdminRef<kMoving>();
+  bool isExclusive() const noexcept {
+    return getRaw() & getAdminRef<kExclusive>();
   }
 
   /**
@@ -330,12 +337,8 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   bool isNvmEvicted() const noexcept { return isFlagSet<kNvmEvicted>(); }
 
   // Whether or not an item is completely drained of access
-  // Refcount is 0 and the item is not linked, accessible, nor moving
+  // Refcount is 0 and the item is not linked, accessible, nor exclusive
   bool isDrained() const noexcept { return getRefWithAccessAndAdmin() == 0; }
-
-  // Whether or not we hold the last exclusive access to this item
-  // Refcount is 1 and the item is not linked, accessible, nor moving
-  bool isExclusive() const noexcept { return getRefWithAccessAndAdmin() == 1; }
 
   /**
    * Functions to set, unset and check flag presence. This is exposed

@@ -4119,15 +4119,16 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
   // Check that item is in the expected container.
   bool findItem(AllocatorT& allocator, typename AllocatorT::Item* item) {
     auto& container = allocator.getMMContainer(*item);
-    auto itr = container.getEvictionIterator();
     bool found = false;
-    while (itr) {
-      if (itr.get() == item) {
-        found = true;
-        break;
+    container.withEvictionIterator([&found, &item](auto&& itr) {
+      while (itr) {
+        if (itr.get() == item) {
+          found = true;
+          break;
+        }
+        ++itr;
       }
-      ++itr;
-    }
+    });
     return found;
   }
 
@@ -5287,7 +5288,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
 
     EXPECT_EQ(numMoves, 1);
     auto slabReleaseStats = alloc.getSlabReleaseStats();
-    EXPECT_EQ(slabReleaseStats.numMoveAttempts, 2);
+    EXPECT_EQ(slabReleaseStats.numMoveAttempts, 3);
     EXPECT_EQ(slabReleaseStats.numMoveSuccesses, 1);
 
     auto handle = alloc.find(movingKey);
@@ -5515,8 +5516,12 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
       ASSERT_TRUE(big->isInMMContainer());
 
       auto& mmContainer = alloc.getMMContainer(*big);
-      auto itr = mmContainer.getEvictionIterator();
-      ASSERT_EQ(big.get(), &(*itr));
+
+      typename AllocatorT::Item* evictionCandidate = nullptr;
+      mmContainer.withEvictionIterator(
+          [&evictionCandidate](auto&& itr) { evictionCandidate = itr.get(); });
+
+      ASSERT_EQ(big.get(), evictionCandidate);
 
       alloc.remove("hello");
     }
@@ -5530,8 +5535,11 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
       ASSERT_TRUE(small2->isInMMContainer());
 
       auto& mmContainer = alloc.getMMContainer(*small2);
-      auto itr = mmContainer.getEvictionIterator();
-      ASSERT_EQ(small2.get(), &(*itr));
+
+      typename AllocatorT::Item* evictionCandidate = nullptr;
+      mmContainer.withEvictionIterator(
+          [&evictionCandidate](auto&& itr) { evictionCandidate = itr.get(); });
+      ASSERT_EQ(small2.get(), evictionCandidate);
 
       alloc.remove("hello");
     }
