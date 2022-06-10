@@ -3328,15 +3328,14 @@ bool CacheAllocator<CacheTrait>::markExclusiveForSlabRelease(
   // At first, we assume this item was already freed
   bool itemFreed = true;
   bool markedMoving = false;
-  TierId tid = 0;
-  const auto fn = [&markedMoving, &itemFreed, &tid, this /* TODO - necessary for getTierId */](void* memory) {
+  TierId tid = getTierId(alloc);
+  const auto fn = [&markedMoving, &itemFreed](void* memory) {
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);
     if (item->markExclusive()) {
       markedMoving = true;
     }
-    tid = getTierId(*item);
   };
 
   auto startTime = util::getCurrentTimeSec();
