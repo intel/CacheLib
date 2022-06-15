@@ -203,7 +203,7 @@ struct StressorConfig : public JSONConfig {
 
   // If enabled, each value will be read on find. This is useful for measuring
   // performance of value access.
-  bool touchValue{false};
+  bool touchValue{true};
 
   uint64_t numOps{0};     // operation per thread
   uint64_t numThreads{0}; // number of threads that will run
