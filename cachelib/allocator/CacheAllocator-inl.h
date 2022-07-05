@@ -125,6 +125,9 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts(TierId tid) {
   ShmSegmentOpts opts;
   opts.alignment = sizeof(Slab);
   opts.typeOpts = memoryTierConfigs[tid].getShmTypeOpts();
+  if (auto *v = std::get_if<PosixSysVSegmentOpts>(&opts.typeOpts)) {
+    v->usePosix = config_.usePosixShm;
+  }
 
   return opts;
 }
@@ -2546,6 +2549,16 @@ std::set<PoolId> CacheAllocator<CacheTrait>::getRegularPoolIdsForResize()
 template <typename CacheTrait>
 const std::string CacheAllocator<CacheTrait>::getCacheName() const {
   return config_.cacheName;
+}
+
+template <typename CacheTrait>
+size_t CacheAllocator<CacheTrait>::getPoolSize(PoolId poolId) const {
+  size_t poolSize = 0;
+  for (auto& allocator: allocator_) {
+    const auto& pool = allocator->getPool(poolId);
+    poolSize += pool.getPoolSize();
+  }
+  return poolSize;
 }
 
 template <typename CacheTrait>
