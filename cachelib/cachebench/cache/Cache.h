@@ -44,6 +44,7 @@
 #include "cachelib/cachebench/util/NandWrites.h"
 
 DECLARE_bool(report_api_latency);
+DECLARE_string(report_ac_memory_usage_stats);
 
 namespace facebook {
 namespace cachelib {
@@ -323,6 +324,10 @@ class Cache {
 
   // return the stats for the pool.
   PoolStats getPoolStats(PoolId pid) const { return cache_->getPoolStats(pid); }
+
+  ACStats getACStats(PoolId pid, ClassId cid) const {
+    return cache_->getACStats(pid, cid);
+  }
 
   // return the total number of inconsistent operations detected since start.
   unsigned int getInconsistencyCount() const {
