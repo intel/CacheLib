@@ -2291,6 +2291,14 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
 }
 
 template <typename CacheTrait>
+ACStats CacheAllocator<CacheTrait>::getACStats(PoolId poolId,
+                                               ClassId classId) const {
+  const auto& pool = allocator_->getPool(poolId);
+  const auto& ac = pool.getAllocationClass(classId);
+  return ac.getStats();
+}
+
+template <typename CacheTrait>
 PoolEvictionAgeStats CacheAllocator<CacheTrait>::getPoolEvictionAgeStats(
     PoolId pid, unsigned int slabProjectionLength) const {
   PoolEvictionAgeStats stats;
