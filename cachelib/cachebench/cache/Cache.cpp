@@ -20,6 +20,10 @@ DEFINE_bool(report_api_latency,
             false,
             "Enable reporting cache API latency tracking");
 
+DEFINE_bool(report_memory_usage_stats,
+            false,
+            "Enable reporting statistics for each allocation class");
+
 namespace facebook {
 namespace cachelib {
 namespace cachebench {} // namespace cachebench

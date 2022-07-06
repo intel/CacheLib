@@ -95,6 +95,17 @@ struct MMContainerStat {
   uint64_t numTailAccesses;
 };
 
+struct AllocationClassBaseStat {
+  // size of allocation class
+  size_t allocSize{0};
+
+  // size of memory assigned to this allocation class
+  size_t memorySize{0};
+
+  // percent of free memory in this class
+  double approxFreePercent{0.0};
+};
+
 // cache related stats for a given allocation class.
 struct CacheStat {
   // allocation size for this container.
@@ -548,6 +559,9 @@ struct CacheMemoryStats {
 
   // rss size of the process
   size_t memRssSize{0};
+
+  // percentage of free slabs
+  std::vector<double> slabsApproxFreePercentages{0.0};
 };
 
 // Stats for compact cache

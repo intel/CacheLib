@@ -620,10 +620,22 @@ Stats Cache<Allocator>::getStats() const {
     aggregate += poolStats;
   }
 
+  std::map<TierId, std::map<PoolId, std::map<ClassId, AllocationClassBaseStat>>> allocationClassStats{};
+
+  for (size_t pid = 0; pid < pools_.size(); pid++) {
+    auto cids = cache_->getPoolStats(static_cast<PoolId>(pid)).getClassIds();
+    for (TierId tid = 0; tid < cache_->getNumTiers(); tid++) {
+      for (auto cid : cids)
+        allocationClassStats[tid][pid][cid] = cache_->getAllocationClassStats(tid, pid, cid);
+    }
+  }
+
   const auto cacheStats = cache_->getGlobalCacheStats();
   const auto rebalanceStats = cache_->getSlabReleaseStats();
   const auto navyStats = cache_->getNvmCacheStatsMap();
 
+  ret.slabsApproxFreePercentages = cache_->getCacheMemoryStats().slabsApproxFreePercentages;
+  ret.allocationClassStats = allocationClassStats;
   ret.numEvictions = aggregate.numEvictions();
   ret.numItems = aggregate.numItems();
   ret.evictAttempts = cacheStats.evictionAttempts;
