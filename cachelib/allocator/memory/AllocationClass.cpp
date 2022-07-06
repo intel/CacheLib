@@ -51,6 +51,7 @@ AllocationClass::AllocationClass(ClassId classId,
       allocationSize_(allocSize),
       slabAlloc_(s),
       freedAllocations_{slabAlloc_.createSingleTierPtrCompressor<FreeAlloc>()} {
+  curAllocatedSlabs_ = allocatedSlabs_.size();
   checkState();
 }
 
@@ -87,6 +88,12 @@ void AllocationClass::checkState() const {
         "Current allocation slab {} is not in allocated slabs list",
         currSlab_));
   }
+
+  if (curAllocatedSlabs_ != allocatedSlabs_.size()) {
+    throw std::invalid_argument(folly::sformat(
+      "Mismatch in allocated slabs numbers"
+    ));
+  }
 }
 
 // TODO(stuclar): Add poolId to the metadata to be serialized when cache shuts
@@ -116,10 +123,12 @@ AllocationClass::AllocationClass(
     freeSlabs_.push_back(slabAlloc_.getSlabForIdx(freeSlabIdx));
   }
 
+  curAllocatedSlabs_ = allocatedSlabs_.size();
   checkState();
 }
 
 void AllocationClass::addSlabLocked(Slab* slab) {
+  curAllocatedSlabs_.fetch_add(1, std::memory_order_relaxed);
   canAllocate_ = true;
   auto header = slabAlloc_.getSlabHeader(slab);
   header->classId = classId_;
@@ -168,6 +177,7 @@ void* AllocationClass::allocateLocked() {
   }
 
   XDCHECK(canAllocate_);
+  curAllocatedSize_.fetch_add(getAllocSize(), std::memory_order_relaxed);
 
   // grab from the free list if possible.
   if (!freedAllocations_.empty()) {
@@ -270,6 +280,7 @@ SlabReleaseContext AllocationClass::startSlabRelease(
                          slab, getId()));
     }
     *allocIt = allocatedSlabs_.back();
+    curAllocatedSlabs_.fetch_sub(1, std::memory_order_relaxed);
     allocatedSlabs_.pop_back();
 
     // if slab is being carved currently, then update slabReleaseAllocMap
@@ -510,6 +521,7 @@ void AllocationClass::abortSlabRelease(const SlabReleaseContext& context) {
     }
     slabReleaseAllocMap_.erase(slabPtrVal);
     allocatedSlabs_.push_back(const_cast<Slab*>(slab));
+    curAllocatedSlabs_.fetch_add(1, std::memory_order_relaxed);
     // restore the classId and allocSize
     header->classId = classId_;
     header->allocSize = allocationSize_;
@@ -660,6 +672,8 @@ void AllocationClass::free(void* memory) {
     freedAllocations_.insert(*reinterpret_cast<FreeAlloc*>(memory));
     canAllocate_ = true;
   });
+
+  curAllocatedSize_.fetch_sub(getAllocSize(), std::memory_order_relaxed);
 }
 
 serialization::AllocationClassObject AllocationClass::saveState() const {
@@ -721,4 +735,13 @@ std::vector<bool>& AllocationClass::getSlabReleaseAllocMapLocked(
     const Slab* slab) {
   const auto slabPtrVal = getSlabPtrValue(slab);
   return slabReleaseAllocMap_.at(slabPtrVal);
+}
+
+double AllocationClass::approxFreePercentage() const {
+  if (getNumSlabs() == 0) {
+    return 100.0;
+  }
+
+  return 100.0 - 100.0 * static_cast<double>(curAllocatedSize_.load(std::memory_order_relaxed)) /
+    static_cast<double>(getNumSlabs() * Slab::kSize);
 }

@@ -416,6 +416,14 @@ class MemoryAllocator {
     return memoryPoolManager_.getPoolIds();
   }
 
+  double approxFreeSlabsPercentage() const {
+    if (slabAllocator_.getNumUsableAndAdvisedSlabs() == 0)
+      return 100.0;
+  
+    return 100.0 - 100.0 * static_cast<double>(slabAllocator_.approxNumSlabsAllocated()) /
+     slabAllocator_.getNumUsableAndAdvisedSlabs();
+  }
+
   // fetches the memory pool for the id if one exists. This is purely to get
   // information out of the pool.
   //

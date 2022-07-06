@@ -359,6 +359,8 @@ Slab* SlabAllocator::makeNewSlab(PoolId id) {
     return nullptr;
   }
 
+  numSlabsAllocated_.fetch_add(1, std::memory_order_relaxed);
+
   memoryPoolSize_[id] += sizeof(Slab);
   // initialize the header for the slab.
   initializeHeader(slab, id);
@@ -374,6 +376,8 @@ void SlabAllocator::freeSlab(Slab* slab) {
   }
 
   memoryPoolSize_[header->poolId] -= sizeof(Slab);
+  numSlabsAllocated_.fetch_sub(1, std::memory_order_relaxed);
+
   // grab the lock
   LockHolder l(lock_);
   freeSlabs_.push_back(slab);

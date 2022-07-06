@@ -2611,6 +2611,44 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
 }
 
 template <typename CacheTrait>
+double CacheAllocator<CacheTrait>::slabsApproxFreePercentage(TierId tid) const
+{
+  return allocator_[tid]->approxFreeSlabsPercentage();
+}
+
+template <typename CacheTrait>
+AllocationClassBaseStat CacheAllocator<CacheTrait>::getAllocationClassStats(
+  TierId tid, PoolId pid, ClassId cid) const {
+  const auto &ac = allocator_[tid]->getPool(pid).getAllocationClass(cid);
+
+  AllocationClassBaseStat stats{};
+  stats.allocSize = ac.getAllocSize();
+  stats.memorySize = ac.getNumSlabs() * Slab::kSize;
+
+  if (slabsApproxFreePercentage(tid) > 0.0) {
+    auto totalMemory = MemoryAllocator::getMemorySize(memoryTierSize(tid));
+    auto freeMemory = static_cast<double>(totalMemory) * slabsApproxFreePercentage(tid) / 100.0;
+
+    // amount of free memory which has the same ratio to entire free memory as
+    // this allocation class memory size has to used memory
+    auto scaledFreeMemory = static_cast<size_t>(freeMemory * stats.memorySize / totalMemory);
+
+    auto acAllocatedMemory = (100.0 - ac.approxFreePercentage()) / 100.0 * ac.getNumSlabs() * Slab::kSize;
+    auto acMaxAvailableMemory = ac.getNumSlabs() * Slab::kSize + scaledFreeMemory;
+
+    if (acMaxAvailableMemory == 0) {
+      stats.approxFreePercent = 100.0;
+    } else {
+      stats.approxFreePercent = 100.0 - 100.0 * acAllocatedMemory / acMaxAvailableMemory;
+    }
+  } else {
+    stats.approxFreePercent = ac.approxFreePercentage();
+  }
+
+  return stats;
+}
+
+template <typename CacheTrait>
 PoolEvictionAgeStats CacheAllocator<CacheTrait>::getPoolEvictionAgeStats(
     PoolId pid, unsigned int slabProjectionLength) const {
   PoolEvictionAgeStats stats;
@@ -3721,6 +3759,10 @@ CacheMemoryStats CacheAllocator<CacheTrait>::getCacheMemoryStats() const {
   size_t compactCacheSize = std::accumulate(
       ccCachePoolIds.begin(), ccCachePoolIds.end(), 0ULL, addSize);
 
+  std::vector<double> slabsApproxFreePercentages;
+  for (TierId tid = 0; tid < getNumTiers(); ++tid)
+    slabsApproxFreePercentages.push_back(slabsApproxFreePercentage(tid));
+
   return CacheMemoryStats{totalCacheSize,
                           regularCacheSize,
                           compactCacheSize,
@@ -3729,7 +3771,8 @@ CacheMemoryStats CacheAllocator<CacheTrait>::getCacheMemoryStats() const {
                           allocator_[currentTier()]->getUnreservedMemorySize(),
                           nvmCache_ ? nvmCache_->getSize() : 0,
                           util::getMemAvailable(),
-                          util::getRSSBytes()};
+                          util::getRSSBytes(),
+                          slabsApproxFreePercentages};
 }
 
 template <typename CacheTrait>
