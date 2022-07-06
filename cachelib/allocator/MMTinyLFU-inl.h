@@ -228,6 +228,13 @@ MMTinyLFU::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
   fun(Iterator{LockHolder{}, *this});
 }
 
+template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
+template <typename F>
+void
+MMTinyLFU::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
+  throw std::runtime_error("Not supported");
+}
+
 
 template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
 void MMTinyLFU::Container<T, HookPtr>::removeLocked(T& node) noexcept {

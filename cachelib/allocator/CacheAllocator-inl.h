@@ -340,6 +340,18 @@ void CacheAllocator<CacheTrait>::initWorkers() {
                           config_.poolOptimizeStrategy,
                           config_.ccacheOptimizeStepSizePercent);
   }
+
+  if (config_.backgroundEvictorEnabled()) {
+      startNewBackgroundEvictor(config_.backgroundEvictorInterval,
+                                config_.backgroundEvictorStrategy,
+                                config_.backgroundEvictorThreads);
+  }
+
+  if (config_.backgroundPromoterEnabled()) {
+    startNewBackgroundPromoter(config_.backgroundPromoterInterval,
+                                config_.backgroundPromoterStrategy,
+                                config_.backgroundPromoterThreads);
+  }
 }
 
 template <typename CacheTrait>
@@ -362,7 +374,24 @@ CacheAllocator<CacheTrait>::allocate(PoolId poolId,
     creationTime = util::getCurrentTimeSec();
   }
   return allocateInternal(poolId, key, size, creationTime,
-                          ttlSecs == 0 ? 0 : creationTime + ttlSecs);
+                          ttlSecs == 0 ? 0 : creationTime + ttlSecs, false);
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(TierId tid, PoolId pid, ClassId cid)
+{
+  // TODO: should we also work on lower tiers? should we have separate set of params?
+  if (tid == 1) return false;
+  return getAllocationClassStats(tid, pid, cid).approxFreePercent <= config_.lowEvictionAcWatermark;
+}
+
+template <typename CacheTrait>
+size_t CacheAllocator<CacheTrait>::backgroundWorkerId(TierId tid, PoolId pid, ClassId cid, size_t numWorkers)
+{
+  XDCHECK(numWorkers);
+
+  // TODO: came up with some better sharding (use some hashing)
+  return (tid + pid + cid) % numWorkers;
 }
 
 template <typename CacheTrait>
@@ -372,7 +401,8 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
                                              typename Item::Key key,
                                              uint32_t size,
                                              uint32_t creationTime,
-                                             uint32_t expiryTime) {
+                                             uint32_t expiryTime,
+                                             bool fromEvictorThread) {
   util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
@@ -387,14 +417,31 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   // TODO: per-tier
   (*stats_.allocAttempts)[pid][cid].inc();
 
-  void* memory = allocator_[tid]->allocate(pid, requiredSize);
+  void *memory = nullptr;
+
+  if (tid == 0 && config_.acTopTierEvictionWatermark > 0.0
+    && getAllocationClassStats(tid, pid, cid)
+      .approxFreePercent < config_.acTopTierEvictionWatermark) {
+    memory = findEviction(tid, pid, cid);
+  } 
+  
+  if (memory == nullptr) {
+    // TODO: should we try allocate item even if this will result in violating
+    // acTopTierEvictionWatermark?
+    memory = allocator_[tid]->allocate(pid, requiredSize);
+  }
+
+  if (backgroundEvictor_.size() && !fromEvictorThread && (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
+    backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
+  }
+
   // TODO: Today disableEviction means do not evict from memory (DRAM).
   //       Should we support eviction between memory tiers (e.g. from DRAM to PMEM)?
   if (memory == nullptr && !config_.disableEviction) {
     memory = findEviction(tid, pid, cid);
   }
 
-  ItemHandle handle;
+  WriteHandle handle;
   if (memory != nullptr) {
     // At this point, we have a valid memory allocation that is ready for use.
     // Ensure that when we abort from here under any circumstances, we free up
@@ -431,18 +478,71 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
 }
 
 template <typename CacheTrait>
+TierId
+CacheAllocator<CacheTrait>::getTargetTierForItem(PoolId pid,
+                                             typename Item::Key key,
+                                             uint32_t size,
+                                             uint32_t creationTime,
+                                             uint32_t expiryTime) {
+  if (numTiers_ == 1)
+    return 0;
+
+  if (config_.forceAllocationTier != UINT64_MAX) {
+    return config_.forceAllocationTier;
+  }
+
+  const TierId defaultTargetTier = 0;
+
+  const auto requiredSize = Item::getRequiredSize(key, size);
+  const auto cid = allocator_[defaultTargetTier]->getAllocationClassId(pid, requiredSize);
+
+  auto freePercentage = getAllocationClassStats(defaultTargetTier, pid, cid).approxFreePercent;
+
+  // TODO: COULD we implement BG worker which would move slabs around
+  // so that there is similar amount of free space in each pool/ac.
+  // Should this be responsibility of BG evictor?
+
+  if (freePercentage >= config_.maxAcAllocationWatermark)
+    return defaultTargetTier;
+
+  if (freePercentage <= config_.minAcAllocationWatermark)
+    return defaultTargetTier + 1;
+
+  // TODO: we can even think about creating different allocation classes for PMEM
+  // and we could look at possible fragmentation when deciding where to put the item
+  if (config_.sizeThresholdPolicy)
+    return requiredSize < config_.sizeThresholdPolicy ? defaultTargetTier : defaultTargetTier + 1;
+
+  // TODO: (e.g. always put chained items to PMEM)
+  // if (chainedItemsPolicy)
+  //  return item.isChainedItem() ? defaultTargetTier + 1 : defaultTargetTier;
+
+  // TODO:
+  // if (expiryTimePolicy)
+  //   return (expiryTime - creationTime) < expiryTimePolicy ? defaultTargetTier : defaultTargetTier + 1;
+
+  // TODO:
+  // if (keyPolicy) // this can be based on key length or some other properties
+  //  return getTargetTierForKey(key);
+
+  // TODO:
+  // if (compressabilityPolicy) // if compresses well store in PMEM? latency will be higher anyway
+  //  return TODO;
+
+  // TODO: only works for 2 tiers
+  return (folly::Random::rand32() % 100) < config_.defaultTierChancePercentage ? defaultTargetTier : defaultTargetTier + 1;
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              typename Item::Key key,
                                              uint32_t size,
                                              uint32_t creationTime,
-                                             uint32_t expiryTime) {
-  auto tid = 0; /* TODO: consult admission policy */
-  for(TierId tid = 0; tid < numTiers_; ++tid) {
-    auto handle = allocateInternalTier(tid, pid, key, size, creationTime, expiryTime);
-    if (handle) return handle;
-  }
-  return {};
+                                             uint32_t expiryTime,
+                                             bool fromEvictorThread) {
+  auto tid = getTargetTierForItem(pid, key, size, creationTime, expiryTime);
+  return allocateInternalTier(tid, pid, key, size, creationTime, expiryTime, fromEvictorThread);
 }
 
 template <typename CacheTrait>
@@ -1175,7 +1275,7 @@ CacheAllocator<CacheTrait>::insertOrReplace(const ItemHandle& handle) {
 /* Next two methods are used to asynchronously move Item between memory tiers.
  *
  * The thread, which moves Item, allocates new Item in the tier we are moving to
- * and calls moveRegularItemOnEviction() method. This method does the following:
+ * and calls moveRegularItemwithSync() method. This method does the following:
  *  1. Create MoveCtx and put it to the movesMap.
  *  2. Update the access container with the new item from the tier we are
  *     moving to. This Item has kIncomplete flag set.
@@ -1204,9 +1304,10 @@ bool CacheAllocator<CacheTrait>::addWaitContextForMovingItem(
 }
 
 template <typename CacheTrait>
+template <typename P>
 typename CacheAllocator<CacheTrait>::ItemHandle
-CacheAllocator<CacheTrait>::moveRegularItemOnEviction(
-    Item& oldItem, ItemHandle& newItemHdl) {
+CacheAllocator<CacheTrait>::moveRegularItemwithSync(
+    Item& oldItem, ItemHandle& newItemHdl, P&& predicate) {
   XDCHECK(oldItem.isMoving());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
@@ -1266,7 +1367,7 @@ CacheAllocator<CacheTrait>::moveRegularItemOnEviction(
   // it is unsafe to replace the old item with a new one, so we should
   // also abort.
   if (!accessContainer_->replaceIf(oldItem, *newItemHdl,
-                                   itemMovingPredicate)) {
+                                   predicate)) {
     return {};
   }
 
@@ -1609,25 +1710,38 @@ bool CacheAllocator<CacheTrait>::shouldWriteToNvmCacheExclusive(
 }
 
 template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::shouldEvictToNextMemoryTier(
+    TierId sourceTierId, TierId targetTierId, PoolId pid, Item& item)
+{
+  if (config_.disableEvictionToMemory)
+    return false;
+
+  // TODO: implement more advanced admission policies for memory tiers
+  return true;
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
-    TierId tid, PoolId pid, Item& item) {
-  if(item.isChainedItem()) return {}; // TODO: We do not support ChainedItem yet
+    TierId tid, PoolId pid, Item& item, bool fromEvictorThread) {
   if(item.isExpired()) return acquire(&item);
 
-  TierId nextTier = tid; // TODO - calculate this based on some admission policy
+  TierId nextTier = tid;
   while (++nextTier < numTiers_) { // try to evict down to the next memory tiers
+    if (!shouldEvictToNextMemoryTier(tid, nextTier, pid, item))
+      continue;
+
     // allocateInternal might trigger another eviction
     auto newItemHdl = allocateInternalTier(nextTier, pid,
                      item.getKey(),
                      item.getSize(),
                      item.getCreationTime(),
-                     item.getExpiryTime());
+                     item.getExpiryTime(),
+                     fromEvictorThread);
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-
-      return moveRegularItemOnEviction(item, newItemHdl);
+      return moveRegularItemwithSync(item, newItemHdl, itemMovingPredicate);
     }
   }
 
@@ -1635,11 +1749,50 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 }
 
 template <typename CacheTrait>
+bool
+CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(
+    TierId tid, PoolId pid, Item& item, bool fromEvictorThread) {
+  TierId nextTier = tid;
+  while (nextTier > 0) { // try to evict down to the next memory tiers
+    auto toPromoteTier = nextTier - 1;
+    --nextTier;
+
+    // allocateInternal might trigger another eviction
+    auto newItemHdl = allocateInternalTier(toPromoteTier, pid,
+                     item.getKey(),
+                     item.getSize(),
+                     item.getCreationTime(),
+                     item.getExpiryTime(),
+                     fromEvictorThread);
+
+    if (newItemHdl) {
+      XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
+      auto predicate = [&](const Item& item){
+        return item.getRefCount() == 0 || config_.numDuplicateElements > 0;
+      };
+      if (moveRegularItemwithSync(item, newItemHdl, predicate)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item) {
+CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item, bool fromEvictorThread) {
     auto tid = getTierId(item);
     auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
-    return tryEvictToNextMemoryTier(tid, pid, item);
+    return tryEvictToNextMemoryTier(tid, pid, item, fromEvictorThread);
+}
+
+template <typename CacheTrait>
+bool
+CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(Item& item, bool fromBgThread) {
+    auto tid = getTierId(item);
+    auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
+    return tryPromoteToNextMemoryTier(tid, pid, item, fromBgThread);
 }
 
 template <typename CacheTrait>
@@ -2297,6 +2450,16 @@ PoolId CacheAllocator<CacheTrait>::addPool(
   setRebalanceStrategy(pid, std::move(rebalanceStrategy));
   setResizeStrategy(pid, std::move(resizeStrategy));
 
+  if (backgroundEvictor_.size()) {
+    for (size_t id = 0; id < backgroundEvictor_.size(); id++)
+      backgroundEvictor_[id]->setAssignedMemory(getAssignedMemoryToBgWorker(id, backgroundEvictor_.size(), 0));
+  }
+
+  if (backgroundPromoter_.size()) {
+    for (size_t id = 0; id < backgroundPromoter_.size(); id++)
+      backgroundPromoter_[id]->setAssignedMemory(getAssignedMemoryToBgWorker(id, backgroundPromoter_.size(), 1));
+  }
+
   return pid;
 }
 
@@ -2361,6 +2524,10 @@ void CacheAllocator<CacheTrait>::createMMContainers(const PoolId pid,
                   .getAllocsPerSlab()
             : 0);
     for (TierId tid = 0; tid < numTiers_; tid++) {
+      if constexpr (std::is_same_v<MMConfig, MMLru::Config> || std::is_same_v<MMConfig, MM2Q::Config>) {
+        config.lruInsertionPointSpec  = config_.memoryTierConfigs[tid].lruInsertionPointSpec ;
+        config.markUsefulChance = config_.memoryTierConfigs[tid].markUsefulChance;
+      }
       mmContainers_[tid][pid][cid].reset(new MMContainer(config, compressor_));
     }
   }
@@ -2415,7 +2582,7 @@ std::set<PoolId> CacheAllocator<CacheTrait>::getRegularPoolIds() const {
   folly::SharedMutex::ReadHolder r(poolsResizeAndRebalanceLock_);
   // TODO - get rid of the duplication - right now, each tier
   // holds pool objects with mostly the same info
-  return filterCompactCachePools(allocator_[0]->getPoolIds());
+  return filterCompactCachePools(allocator_[currentTier()]->getPoolIds());
 }
 
 template <typename CacheTrait>
@@ -2828,7 +2995,8 @@ CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
                                      oldItem.getKey(),
                                      oldItem.getSize(),
                                      oldItem.getCreationTime(),
-                                     oldItem.getExpiryTime());
+                                     oldItem.getExpiryTime(),
+                                     false);
   if (!newItemHdl) {
     return {};
   }
@@ -2961,14 +3129,14 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::ItemHandle
 CacheAllocator<CacheTrait>::evictNormalItem(Item& item,
-                                            bool skipIfTokenInvalid) {
+                                            bool skipIfTokenInvalid, bool fromEvictorThread) {
   XDCHECK(item.isMoving());
 
   if (item.isOnlyMoving()) {
     return ItemHandle{};
   }
 
-  auto evictHandle = tryEvictToNextMemoryTier(item);
+  auto evictHandle = tryEvictToNextMemoryTier(item, fromEvictorThread);
   if(evictHandle) return evictHandle;
 
   auto predicate = [](const Item& it) { return it.getRefCount() == 0; };
@@ -3353,6 +3521,8 @@ bool CacheAllocator<CacheTrait>::stopWorkers(std::chrono::seconds timeout) {
   success &= stopPoolResizer(timeout);
   success &= stopMemMonitor(timeout);
   success &= stopReaper(timeout);
+  success &= stopBackgroundEvictor(timeout);
+  success &= stopBackgroundPromoter(timeout);
   return success;
 }
 
@@ -3633,6 +3803,8 @@ GlobalCacheStats CacheAllocator<CacheTrait>::getGlobalCacheStats() const {
   ret.nvmCacheEnabled = nvmCache_ ? nvmCache_->isEnabled() : false;
   ret.nvmUpTime = currTime - getNVMCacheCreationTime();
   ret.reaperStats = getReaperStats();
+  ret.evictionStats = getBackgroundEvictorStats();
+  ret.promotionStats = getBackgroundPromoterStats();
   ret.numActiveHandles = getNumActiveHandles();
 
   return ret;
@@ -3736,6 +3908,7 @@ bool CacheAllocator<CacheTrait>::startNewPoolRebalancer(
                         freeAllocThreshold);
 }
 
+
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::startNewPoolResizer(
     std::chrono::milliseconds interval,
@@ -3774,6 +3947,64 @@ bool CacheAllocator<CacheTrait>::startNewReaper(
 }
 
 template <typename CacheTrait>
+auto CacheAllocator<CacheTrait>::getAssignedMemoryToBgWorker(size_t evictorId, size_t numWorkers, TierId tid)
+{
+  std::vector<std::tuple<TierId, PoolId, ClassId>> asssignedMemory;
+  // TODO: for now, only evict from tier 0
+  auto pools = filterCompactCachePools(allocator_[tid]->getPoolIds());
+  for (const auto pid : pools) {
+    const auto& mpStats = getPoolByTid(pid,tid).getStats();
+    for (const auto cid : mpStats.classIds) {
+      if (backgroundWorkerId(tid, pid, cid, numWorkers) == evictorId) {
+        asssignedMemory.emplace_back(tid, pid, cid);
+      }
+    }
+  }
+  return asssignedMemory;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::startNewBackgroundEvictor(
+    std::chrono::milliseconds interval,
+    std::shared_ptr<BackgroundEvictorStrategy> strategy,
+    size_t threads) {
+  XDCHECK(threads > 0);
+  backgroundEvictor_.resize(threads);
+  bool result = true;
+
+  for (size_t i = 0; i < threads; i++) {
+    auto ret = startNewWorker("BackgroundEvictor" + std::to_string(i), backgroundEvictor_[i], interval, strategy);
+    result = result && ret;
+
+    if (result) {
+      backgroundEvictor_[i]->setAssignedMemory(getAssignedMemoryToBgWorker(i, backgroundEvictor_.size(), 0));
+    }
+  }
+  return result;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::startNewBackgroundPromoter(
+    std::chrono::milliseconds interval,
+    std::shared_ptr<BackgroundEvictorStrategy> strategy,
+    size_t threads) {
+  XDCHECK(threads > 0);
+  XDCHECK(numTiers_ > 1);
+  backgroundPromoter_.resize(threads);
+  bool result = true;
+
+  for (size_t i = 0; i < threads; i++) {
+    auto ret = startNewWorker("BackgroundPromoter" + std::to_string(i), backgroundPromoter_[i], interval, strategy);
+    result = result && ret;
+
+    if (result) {
+      backgroundPromoter_[i]->setAssignedMemory(getAssignedMemoryToBgWorker(i, backgroundPromoter_.size(), 1));
+    }
+  }
+  return result;
+}
+
+template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopPoolRebalancer(
     std::chrono::seconds timeout) {
   return stopWorker("PoolRebalancer", poolRebalancer_, timeout);
@@ -3798,6 +4029,28 @@ bool CacheAllocator<CacheTrait>::stopMemMonitor(std::chrono::seconds timeout) {
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopReaper(std::chrono::seconds timeout) {
   return stopWorker("Reaper", reaper_, timeout);
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::stopBackgroundEvictor(
+    std::chrono::seconds timeout) {  
+  bool result = true;
+  for (size_t i = 0; i < backgroundEvictor_.size(); i++) {
+    auto ret = stopWorker("BackgroundEvictor" + std::to_string(i), backgroundEvictor_[i], timeout);
+    result = result && ret;
+  }
+  return result;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::stopBackgroundPromoter(
+    std::chrono::seconds timeout) {  
+  bool result = true;
+  for (size_t i = 0; i < backgroundPromoter_.size(); i++) {
+    auto ret = stopWorker("BackgroundPromoter" + std::to_string(i), backgroundPromoter_[i], timeout);
+    result = result && ret;
+  }
+  return result;
 }
 
 template <typename CacheTrait>
