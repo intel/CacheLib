@@ -21,7 +21,7 @@
 #include "cachelib/common/PercentileStats.h"
 
 DECLARE_bool(report_api_latency);
-DECLARE_bool(report_memory_usage_stats);
+DECLARE_string(report_memory_usage_stats);
 
 namespace facebook {
 namespace cachelib {
@@ -136,12 +136,16 @@ struct Stats {
           << std::endl;
     }
 
-    if (FLAGS_report_memory_usage_stats) {
+    if (FLAGS_report_memory_usage_stats != "") {
       for (TierId tid = 0; tid < slabsApproxFreePercentages.size(); tid++) {
         out << folly::sformat("tid{:2} free slabs : {:.2f}%", tid, slabsApproxFreePercentages[tid]) << std::endl;
       }
 
-      auto formatMemory = [](size_t bytes) -> std::tuple<std::string, double> {
+      auto formatMemory = [&](size_t bytes) -> std::tuple<std::string, double> {
+        if (FLAGS_report_memory_usage_stats == "raw") {
+          return {"B", bytes};
+        }
+
         constexpr double KB = 1024.0;
         constexpr double MB = 1024.0 * 1024;
         constexpr double GB = 1024.0 * 1024 * 1024;

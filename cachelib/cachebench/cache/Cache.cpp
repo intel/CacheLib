@@ -20,9 +20,10 @@ DEFINE_bool(report_api_latency,
             false,
             "Enable reporting cache API latency tracking");
 
-DEFINE_bool(report_memory_usage_stats,
-            false,
-            "Enable reporting statistics for each allocation class");
+DEFINE_string(report_memory_usage_stats,
+            "",
+            "Enable reporting statistics for each allocation class. Set to"
+            "'human_readable' to print KB/MB/GB or to 'raw' to print in bytes.");
 
 namespace facebook {
 namespace cachelib {
