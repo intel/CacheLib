@@ -25,6 +25,7 @@
 #include "cachelib/allocator/memory/Slab.h"
 #include "cachelib/common/FastStats.h"
 #include "cachelib/common/PercentileStats.h"
+#include "cachelib/common/RollingStats.h"
 #include "cachelib/common/Time.h"
 
 namespace facebook {
