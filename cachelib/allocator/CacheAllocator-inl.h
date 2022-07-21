@@ -324,7 +324,9 @@ CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
   const auto requiredSize = Item::getRequiredSize(key, size);
 
   // the allocation class in our memory allocator.
-  const auto cid = allocator_->getAllocationClassId(pid, requiredSize);
+  const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
+  util::RollingLatencyTracker rollTracker{
+      (*stats_.classAllocLatency)[tid][pid][cid]};
 
   (*stats_.allocAttempts)[pid][cid].inc();
 
@@ -402,6 +404,11 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(
   const auto pid = allocator_->getAllocInfo(parent->getMemory()).poolId;
   const auto cid = allocator_->getAllocationClassId(pid, requiredSize);
 
+  util::RollingLatencyTracker rollTracker{
+      (*stats_.classAllocLatency)[tid][pid][cid]};
+
+  // TODO: per-tier? Right now stats_ are not used in any public periodic
+  // worker
   (*stats_.allocAttempts)[pid][cid].inc();
 
   void* memory = allocator_->allocate(pid, requiredSize);
@@ -2218,6 +2225,49 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
   ret.evictionAgeSecs = stats_.perPoolEvictionAgeSecs_[poolId].estimate();
 
   return ret;
+}
+
+template <typename CacheTrait>
+double CacheAllocator<CacheTrait>::slabsApproxFreePercentage(TierId tid) const {
+  return allocator_[tid]->approxFreeSlabsPercentage();
+}
+
+template <typename CacheTrait>
+AllocationClassBaseStat CacheAllocator<CacheTrait>::getAllocationClassStats(
+    TierId tid, PoolId pid, ClassId cid) const {
+  const auto& ac = allocator_[tid]->getPool(pid).getAllocationClass(cid);
+
+  AllocationClassBaseStat stats{};
+  stats.allocSize = ac.getAllocSize();
+  stats.memorySize = ac.getNumSlabs() * Slab::kSize;
+
+  if (slabsApproxFreePercentage(tid) > 0.0) {
+    auto totalMemory = MemoryAllocator::getMemorySize(memoryTierSize(tid));
+    auto freeMemory = static_cast<double>(totalMemory) *
+                      slabsApproxFreePercentage(tid) / 100.0;
+
+    // amount of free memory which has the same ratio to entire free memory as
+    // this allocation class memory size has to used memory
+    auto scaledFreeMemory =
+        static_cast<size_t>(freeMemory * stats.memorySize / totalMemory);
+
+    auto acAllocatedMemory = (100.0 - ac.approxFreePercentage()) / 100.0 *
+                             ac.getNumSlabs() * Slab::kSize;
+    auto acMaxAvailableMemory =
+        ac.getNumSlabs() * Slab::kSize + scaledFreeMemory;
+
+    if (acMaxAvailableMemory == 0) {
+      stats.approxFreePercent = 100.0;
+    } else {
+      stats.approxFreePercent =
+          100.0 - 100.0 * acAllocatedMemory / acMaxAvailableMemory;
+    }
+  } else {
+    stats.approxFreePercent = ac.approxFreePercentage();
+  }
+  stats.allocLatencyNs = (*stats_.classAllocLatency)[tid][pid][cid];
+
+  return stats;
 }
 
 template <typename CacheTrait>

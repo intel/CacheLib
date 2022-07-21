@@ -25,6 +25,7 @@
 #include "cachelib/allocator/memory/Slab.h"
 #include "cachelib/common/FastStats.h"
 #include "cachelib/common/PercentileStats.h"
+#include "cachelib/common/RollingStats.h"
 #include "cachelib/common/Time.h"
 
 namespace facebook {
@@ -93,6 +94,20 @@ struct MMContainerStat {
   uint64_t numColdAccesses;
   uint64_t numWarmAccesses;
   uint64_t numTailAccesses;
+};
+
+struct AllocationClassBaseStat {
+  // size of allocation class
+  size_t allocSize{0};
+
+  // size of memory assigned to this allocation class
+  size_t memorySize{0};
+
+  // percent of free memory in this class
+  double approxFreePercent{0.0};
+
+  // Rolling allocation latency (in ns)
+  util::RollingStats allocLatencyNs;
 };
 
 // cache related stats for a given allocation class.

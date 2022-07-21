@@ -100,6 +100,11 @@ struct Stats {
   uint64_t invalidDestructorCount{0};
   int64_t unDestructedItemCount{0};
 
+  std::map<TierId, std::map<PoolId, std::map<ClassId, AllocationClassBaseStat>>>
+      allocationClassStats;
+
+  std::vector<double> slabsApproxFreePercentages;
+
   // populate the counters related to nvm usage. Cache implementation can decide
   // what to populate since not all of those are interesting when running
   // cachebench.
@@ -129,6 +134,56 @@ struct Stats {
       out << folly::sformat("Fraction of pool {:,} used : {:.2f}", pid,
                             poolUsageFraction[pid])
           << std::endl;
+    }
+
+    if (FLAGS_report_memory_usage_stats != "") {
+      for (TierId tid = 0; tid < slabsApproxFreePercentages.size(); tid++) {
+        out << folly::sformat("tid{:2} free slabs : {:.2f}%", tid,
+                              slabsApproxFreePercentages[tid])
+            << std::endl;
+      }
+
+      auto formatMemory = [&](size_t bytes) -> std::tuple<std::string, double> {
+        if (FLAGS_report_memory_usage_stats == "raw") {
+          return {"B", bytes};
+        }
+
+        constexpr double KB = 1024.0;
+        constexpr double MB = 1024.0 * 1024;
+        constexpr double GB = 1024.0 * 1024 * 1024;
+
+        if (bytes >= GB) {
+          return {"GB", static_cast<double>(bytes) / GB};
+        } else if (bytes >= MB) {
+          return {"MB", static_cast<double>(bytes) / MB};
+        } else if (bytes >= KB) {
+          return {"KB", static_cast<double>(bytes) / KB};
+        } else {
+          return {"B", bytes};
+        }
+      };
+
+      auto foreachAC = [&](auto cb) {
+        for (auto& tidStats : allocationClassStats) {
+          for (auto& pidStat : tidStats.second) {
+            for (auto& cidStat : pidStat.second) {
+              cb(tidStats.first, pidStat.first, cidStat.first, cidStat.second);
+            }
+          }
+        }
+      };
+
+      foreachAC([&](auto tid, auto pid, auto cid, auto stats) {
+        auto [allocSizeSuffix, allocSize] = formatMemory(stats.allocSize);
+        auto [memorySizeSuffix, memorySize] = formatMemory(stats.memorySize);
+        out << folly::sformat(
+                   "tid{:2} pid{:2} cid{:4} {:8.2f}{} memorySize:{:8.2f}{} "
+                   "free:{:4.2f}% rollingAvgAllocLatency:{:8.2f}ns",
+                   tid, pid, cid, allocSize, allocSizeSuffix, memorySize,
+                   memorySizeSuffix, stats.approxFreePercent,
+                   stats.allocLatencyNs.estimate())
+            << std::endl;
+      });
     }
 
     if (numCacheGets > 0) {
