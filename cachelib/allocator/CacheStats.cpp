@@ -43,6 +43,8 @@ void Stats::init() {
   initToZero(*fragmentationSize);
   initToZero(*chainedItemEvictions);
   initToZero(*regularItemEvictions);
+
+  classAllocLatency = std::make_unique<PerPoolClassRollingStats>();
 }
 
 template <int>
