@@ -25,6 +25,7 @@
 #include "cachelib/allocator/memory/Slab.h"
 #include "cachelib/common/FastStats.h"
 #include "cachelib/common/PercentileStats.h"
+#include "cachelib/common/RollingStats.h"
 #include "cachelib/common/Time.h"
 
 namespace facebook {
@@ -104,6 +105,9 @@ struct AllocationClassBaseStat {
 
   // percent of free memory in this class
   double approxFreePercent{0.0};
+
+  // Rolling allocation latency (in ns)
+  util::RollingStats allocLatencyNs;
 };
 
 // cache related stats for a given allocation class.
