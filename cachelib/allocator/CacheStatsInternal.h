@@ -230,12 +230,13 @@ struct Stats {
   std::unique_ptr<PerPoolClassAtomicCounters> chainedItemEvictions{};
   std::unique_ptr<PerPoolClassAtomicCounters> regularItemEvictions{};
 
-  using PerPoolClassRollingStats =
+  using PerTierPoolClassRollingStats = std::array<
       std::array<std::array<util::RollingStats, MemoryAllocator::kMaxClasses>,
-                 MemoryPoolManager::kMaxPools>;
+                 MemoryPoolManager::kMaxPools>,
+      CacheBase::kMaxTiers>;
 
   // rolling latency tracking for every alloc class in every pool
-  std::unique_ptr<PerPoolClassRollingStats> classAllocLatency{};
+  std::unique_ptr<PerTierPoolClassRollingStats> classAllocLatency{};
 
   // Eviction failures due to parent cannot be removed from access container
   AtomicCounter evictFailParentAC{0};
