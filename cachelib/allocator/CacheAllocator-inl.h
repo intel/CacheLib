@@ -404,7 +404,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   // the allocation class in our memory allocator.
   const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
   util::RollingLatencyTracker rollTracker{
-      (*stats_.classAllocLatency)[pid][cid]};
+      (*stats_.classAllocLatency)[tid][pid][cid]};
 
   // TODO: per-tier
   (*stats_.allocAttempts)[pid][cid].inc();
@@ -511,8 +511,10 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(const Item& parent,
   const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
 
   util::RollingLatencyTracker rollTracker{
-      (*stats_.classAllocLatency)[pid][cid]};
-
+      (*stats_.classAllocLatency)[tid][pid][cid]};
+  
+  // TODO: per-tier? Right now stats_ are not used in any public periodic
+  // worker
   (*stats_.allocAttempts)[pid][cid].inc();
 
   void* memory = allocator_[tid]->allocate(pid, requiredSize);
@@ -2536,7 +2538,7 @@ ACStats CacheAllocator<CacheTrait>::getACStats(TierId tid,
   const auto& ac = pool.getAllocationClass(classId);
 
   auto stats = ac.getStats();
-  stats.allocLatencyNs = (*stats_.classAllocLatency)[poolId][classId];
+  stats.allocLatencyNs = (*stats_.classAllocLatency)[tid][poolId][classId];
   return stats;
 }
 
