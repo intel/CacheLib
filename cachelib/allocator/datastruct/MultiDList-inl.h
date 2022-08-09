@@ -25,12 +25,26 @@ void MultiDList<T, HookPtr>::Iterator::goForward() noexcept {
   }
   // Move iterator forward
   ++currIter_;
-  // If we land at the rend of this list, move to the previous list.
-  while (index_ != kInvalidIndex &&
-         currIter_ == mlist_.lists_[index_]->rend()) {
-    --index_;
-    if (index_ != kInvalidIndex) {
-      currIter_ = mlist_.lists_[index_]->rbegin();
+
+  if (currIter_.getDirection() == DListIterator::Direction::FROM_HEAD) {
+    // If we land at the rend of this list, move to the previous list.
+    while (index_ != kInvalidIndex && index_ != mlist_.lists_.size() &&
+           currIter_ == mlist_.lists_[index_]->end()) {
+      ++index_;
+      if (index_ != kInvalidIndex && index_ != mlist_.lists_.size()) {
+        currIter_ = mlist_.lists_[index_]->begin();
+      } else {
+          return;
+      }
+    }
+  } else {
+    // If we land at the rend of this list, move to the previous list.
+    while (index_ != kInvalidIndex &&
+           currIter_ == mlist_.lists_[index_]->rend()) {
+      --index_;
+      if (index_ != kInvalidIndex) {
+        currIter_ = mlist_.lists_[index_]->rbegin();
+      }
     }
   }
 }
@@ -72,6 +86,25 @@ void MultiDList<T, HookPtr>::Iterator::initToValidRBeginFrom(
 }
 
 template <typename T, DListHook<T> T::*HookPtr>
+void MultiDList<T, HookPtr>::Iterator::initToValidBeginFrom(
+    size_t listIdx) noexcept {
+  // Find the first non-empty list.
+  index_ = listIdx;
+  while (index_ != mlist_.lists_.size() &&
+         mlist_.lists_[index_]->size() == 0) {
+    ++index_;
+  }
+  if (index_ == mlist_.lists_.size()) {
+    //we reached the end - we should get set to
+    //invalid index
+    index_ = std::numeric_limits<size_t>::max();
+  }
+  currIter_ = index_ == std::numeric_limits<size_t>::max()
+                  ? mlist_.lists_[0]->begin()
+                  : mlist_.lists_[index_]->begin();
+}
+
+template <typename T, DListHook<T> T::*HookPtr>
 typename MultiDList<T, HookPtr>::Iterator&
 MultiDList<T, HookPtr>::Iterator::operator++() noexcept {
   goForward();
@@ -97,7 +130,16 @@ typename MultiDList<T, HookPtr>::Iterator MultiDList<T, HookPtr>::rbegin(
   if (listIdx >= lists_.size()) {
     throw std::invalid_argument("Invalid list index for MultiDList iterator.");
   }
-  return MultiDList<T, HookPtr>::Iterator(*this, listIdx);
+  return MultiDList<T, HookPtr>::Iterator(*this, listIdx, false);
+}
+
+template <typename T, DListHook<T> T::*HookPtr>
+typename MultiDList<T, HookPtr>::Iterator MultiDList<T, HookPtr>::begin(
+    size_t listIdx) const {
+  if (listIdx >= lists_.size()) {
+    throw std::invalid_argument("Invalid list index for MultiDList iterator.");
+  }
+  return MultiDList<T, HookPtr>::Iterator(*this, listIdx, true);
 }
 
 template <typename T, DListHook<T> T::*HookPtr>
