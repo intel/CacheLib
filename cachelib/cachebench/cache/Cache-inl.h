@@ -613,13 +613,15 @@ Stats Cache<Allocator>::getStats() const {
   const auto rebalanceStats = cache_->getSlabReleaseStats();
   const auto navyStats = cache_->getNvmCacheStatsMap().toMap();
 
-  ret.numEvictions = aggregate.numEvictions();
-  ret.numItems = aggregate.numItems();
-  ret.evictAttempts = cacheStats.evictionAttempts;
-  ret.allocAttempts = cacheStats.allocAttempts;
-  ret.allocFailures = cacheStats.allocFailures;
+  ret.backgndEvicStats.nEvictedItems = cacheStats.evictionStats.numMovedItems;
+  ret.backgndEvicStats.nTraversals = cacheStats.evictionStats.runCount;
+  ret.backgndEvicStats.nClasses = cacheStats.evictionStats.totalClasses;
+  ret.backgndEvicStats.evictionSize = cacheStats.evictionStats.totalBytesMoved;
 
-  ret.numCacheGets = cacheStats.numCacheGets;
+  ret.backgndPromoStats.nPromotedItems =
+      cacheStats.promotionStats.numMovedItems;
+  ret.backgndPromoStats.nTraversals = cacheStats.promotionStats.runCount;
+
   ret.numCacheGetMiss = cacheStats.numCacheGetMiss;
   ret.numCacheEvictions = cacheStats.numCacheEvictions;
   ret.numRamDestructorCalls = cacheStats.numRamDestructorCalls;
@@ -665,6 +667,11 @@ Stats Cache<Allocator>::getStats() const {
   if (config_.printNvmCounters) {
     ret.nvmCounters = cache_->getNvmCacheStatsMap().toMap();
   }
+
+  ret.backgroundEvictionClasses =
+      cache_->getBackgroundMoverClassStats(MoverDir::Evict);
+  ret.backgroundPromotionClasses =
+      cache_->getBackgroundMoverClassStats(MoverDir::Promote);
 
   // nvm stats from navy
   if (!isRamOnly() && !navyStats.empty()) {

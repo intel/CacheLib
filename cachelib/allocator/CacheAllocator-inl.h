@@ -226,6 +226,18 @@ void CacheAllocator<CacheTrait>::initWorkers() {
                           config_.poolOptimizeStrategy,
                           config_.ccacheOptimizeStepSizePercent);
   }
+
+  if (config_.backgroundEvictorEnabled()) {
+    startNewBackgroundEvictor(config_.backgroundEvictorInterval,
+                              config_.backgroundEvictorStrategy,
+                              config_.backgroundEvictorThreads);
+  }
+
+  if (config_.backgroundPromoterEnabled()) {
+    startNewBackgroundPromoter(config_.backgroundPromoterInterval,
+                               config_.backgroundPromoterStrategy,
+                               config_.backgroundPromoterThreads);
+  }
 }
 
 template <typename CacheTrait>
@@ -310,12 +322,29 @@ CacheAllocator<CacheTrait>::allocate(PoolId poolId,
 }
 
 template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(PoolId pid,
+                                                       ClassId cid) {
+  return false;
+}
+
+template <typename CacheTrait>
+size_t CacheAllocator<CacheTrait>::backgroundWorkerId(PoolId pid,
+                                                      ClassId cid,
+                                                      size_t numWorkers) {
+  XDCHECK(numWorkers);
+
+  // TODO: came up with some better sharding (use hashing?)
+  return (pid + cid) % numWorkers;
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              typename Item::Key key,
                                              uint32_t size,
                                              uint32_t creationTime,
-                                             uint32_t expiryTime) {
+                                             uint32_t expiryTime,
+                                             bool fromBgThread) {
   util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
@@ -329,6 +358,13 @@ CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
   (*stats_.allocAttempts)[pid][cid].inc();
 
   void* memory = allocator_->allocate(pid, requiredSize);
+
+  if (backgroundEvictor_.size() && !fromBgThread &&
+      (memory == nullptr || shouldWakeupBgEvictor(pid, cid))) {
+    backgroundEvictor_[backgroundWorkerId(pid, cid, backgroundEvictor_.size())]
+        ->wakeUp();
+  }
+
   if (memory == nullptr) {
     memory = findEviction(pid, cid);
   }
@@ -2021,6 +2057,19 @@ PoolId CacheAllocator<CacheTrait>::addPool(
   createMMContainers(pid, std::move(config));
   setRebalanceStrategy(pid, std::move(rebalanceStrategy));
   setResizeStrategy(pid, std::move(resizeStrategy));
+
+  if (backgroundEvictor_.size()) {
+    for (size_t id = 0; id < backgroundEvictor_.size(); id++)
+      backgroundEvictor_[id]->setAssignedMemory(
+          getAssignedMemoryToBgWorker(id, backgroundEvictor_.size()));
+  }
+
+  if (backgroundPromoter_.size()) {
+    for (size_t id = 0; id < backgroundPromoter_.size(); id++)
+      backgroundPromoter_[id]->setAssignedMemory(
+          getAssignedMemoryToBgWorker(id, backgroundPromoter_.size()));
+  }
+
   return pid;
 }
 
@@ -2517,7 +2566,8 @@ CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
                                      oldItem.getKey(),
                                      oldItem.getSize(),
                                      oldItem.getCreationTime(),
-                                     oldItem.getExpiryTime());
+                                     oldItem.getExpiryTime(),
+                                     false);
   if (!newItemHdl) {
     return {};
   }
@@ -3139,6 +3189,8 @@ bool CacheAllocator<CacheTrait>::stopWorkers(std::chrono::seconds timeout) {
   success &= stopPoolResizer(timeout);
   success &= stopMemMonitor(timeout);
   success &= stopReaper(timeout);
+  success &= stopBackgroundEvictor(timeout);
+  success &= stopBackgroundPromoter(timeout);
   return success;
 }
 
@@ -3394,6 +3446,8 @@ GlobalCacheStats CacheAllocator<CacheTrait>::getGlobalCacheStats() const {
   ret.nvmUpTime = currTime - nvmCacheState_.getCreationTime();
   ret.nvmCacheEnabled = nvmCache_ ? nvmCache_->isEnabled() : false;
   ret.reaperStats = getReaperStats();
+  ret.evictionStats = getBackgroundMoverStats(MoverDir::Evict);
+  ret.promotionStats = getBackgroundMoverStats(MoverDir::Promote);
   ret.numActiveHandles = getNumActiveHandles();
 
   ret.isNewRamCache = cacheCreationTime_ == cacheInstanceCreationTime_;
@@ -3576,6 +3630,68 @@ bool CacheAllocator<CacheTrait>::startNewReaper(
 }
 
 template <typename CacheTrait>
+auto CacheAllocator<CacheTrait>::getAssignedMemoryToBgWorker(
+    size_t evictorId, size_t numWorkers) {
+  std::vector<MemoryDescriptorType> asssignedMemory;
+  auto pools = filterCompactCachePools(allocator_->getPoolIds());
+  for (const auto pid : pools) {
+    const auto& mpStats = getPool(pid).getStats();
+    for (const auto cid : mpStats.classIds) {
+      if (backgroundWorkerId(pid, cid, numWorkers) == evictorId) {
+        asssignedMemory.emplace_back(pid, cid);
+      }
+    }
+  }
+  return asssignedMemory;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::startNewBackgroundEvictor(
+    std::chrono::milliseconds interval,
+    std::shared_ptr<BackgroundMoverStrategy> strategy,
+    size_t threads) {
+  XDCHECK(threads > 0);
+  backgroundEvictor_.resize(threads);
+  bool result = true;
+
+  for (size_t i = 0; i < threads; i++) {
+    auto ret = startNewWorker("BackgroundEvictor" + std::to_string(i),
+                              backgroundEvictor_[i], interval, strategy,
+                              MoverDir::Evict);
+    result = result && ret;
+
+    if (result) {
+      backgroundEvictor_[i]->setAssignedMemory(
+          getAssignedMemoryToBgWorker(i, backgroundEvictor_.size()));
+    }
+  }
+  return result;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::startNewBackgroundPromoter(
+    std::chrono::milliseconds interval,
+    std::shared_ptr<BackgroundMoverStrategy> strategy,
+    size_t threads) {
+  XDCHECK(threads > 0);
+  backgroundPromoter_.resize(threads);
+  bool result = true;
+
+  for (size_t i = 0; i < threads; i++) {
+    auto ret = startNewWorker("BackgroundPromoter" + std::to_string(i),
+                              backgroundPromoter_[i], interval, strategy,
+                              MoverDir::Promote);
+    result = result && ret;
+
+    if (result) {
+      backgroundPromoter_[i]->setAssignedMemory(
+          getAssignedMemoryToBgWorker(i, backgroundPromoter_.size()));
+    }
+  }
+  return result;
+}
+
+template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopPoolRebalancer(
     std::chrono::seconds timeout) {
   return stopWorker("PoolRebalancer", poolRebalancer_, timeout);
@@ -3600,6 +3716,29 @@ bool CacheAllocator<CacheTrait>::stopMemMonitor(std::chrono::seconds timeout) {
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopReaper(std::chrono::seconds timeout) {
   return stopWorker("Reaper", reaper_, timeout);
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::stopBackgroundEvictor(
+    std::chrono::seconds timeout) {
+  bool result = true;
+  for (size_t i = 0; i < backgroundEvictor_.size(); i++) {
+    auto ret = stopWorker("BackgroundEvictor", backgroundEvictor_[i], timeout);
+    result = result && ret;
+  }
+  return result;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::stopBackgroundPromoter(
+    std::chrono::seconds timeout) {
+  bool result = true;
+  for (size_t i = 0; i < backgroundPromoter_.size(); i++) {
+    auto ret =
+        stopWorker("BackgroundPromoter", backgroundPromoter_[i], timeout);
+    result = result && ret;
+  }
+  return result;
 }
 
 template <typename CacheTrait>
