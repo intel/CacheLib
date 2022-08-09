@@ -110,14 +110,18 @@ class MultiDList {
     }
 
     explicit Iterator(const MultiDList<T, HookPtr>& mlist,
-                      size_t listIdx) noexcept
+                      size_t listIdx, bool head) noexcept
         : currIter_(mlist.lists_[mlist.lists_.size() - 1]->rbegin()),
           mlist_(mlist) {
       XDCHECK_LT(listIdx, mlist.lists_.size());
-      initToValidRBeginFrom(listIdx);
+      if (head) {
+        initToValidBeginFrom(listIdx);
+      } else {
+        initToValidRBeginFrom(listIdx);
+      }
       // We should either point to an element or the end() iterator
       // which has an invalid index_.
-      XDCHECK(index_ == kInvalidIndex || currIter_.get() != nullptr);
+      XDCHECK(index_ == kInvalidIndex || index_ == mlist.lists_.size() || currIter_.get() != nullptr);
     }
     virtual ~Iterator() = default;
 
@@ -169,6 +173,9 @@ class MultiDList {
 
     // reset iterator to the beginning of a speicific queue
     void initToValidRBeginFrom(size_t listIdx) noexcept;
+    
+    // reset iterator to the head of a specific queue
+    void initToValidBeginFrom(size_t listIdx) noexcept;
 
     // Index of current list
     size_t index_{0};
@@ -184,6 +191,9 @@ class MultiDList {
 
   // provides an iterator starting from the tail of a specific list.
   Iterator rbegin(size_t idx) const;
+  
+  // provides an iterator starting from the head of a specific list.
+  Iterator begin(size_t idx) const;
 
   // Iterator to compare against for the end.
   Iterator rend() const noexcept;
