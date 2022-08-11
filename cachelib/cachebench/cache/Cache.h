@@ -183,7 +183,7 @@ class Cache {
   }
 
   // read entire value on find.
-  void touchValue(const ItemHandle& it) const;
+  void touchValue(const ReadHandle& it) const;
 
   // returns the size of the item, taking into account ItemRecords could be
   // enabled.

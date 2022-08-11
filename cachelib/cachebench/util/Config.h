@@ -192,6 +192,10 @@ struct StressorConfig : public JSONConfig {
   // Mutually exclusive with validateValue
   bool checkConsistency{false};
 
+  // If enabled, stressor will check whether nvm cache has been warmed up and
+  // output stats after warmup.
+  bool checkNvmCacheWarmUp{false};
+
   // If enable, stressos will verify if value read is equal to value written.
   // Mutually exclusive with checkConsistency
   bool validateValue{false};

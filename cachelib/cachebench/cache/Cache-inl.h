@@ -247,9 +247,21 @@ Cache<Allocator>::Cache(const CacheConfig& config,
 
   allocatorConfig_.cacheName = "cachebench";
 
-  if (!allocatorConfig_.cacheDir.empty()) {
-    cache_ =
-        std::make_unique<Allocator>(Allocator::SharedMemNew, allocatorConfig_);
+  bool isRecovered = false;
+  if (!cacheDir.empty()) {
+    allocatorConfig_.cacheDir = cacheDir;
+    try {
+      cache_ = std::make_unique<Allocator>(Allocator::SharedMemAttach,
+                                           allocatorConfig_);
+      XLOG(INFO, folly::sformat(
+                     "Successfully attached to existing cache. Cache dir: {}",
+                     cacheDir));
+      isRecovered = true;
+    } catch (const std::exception& ex) {
+      XLOG(INFO, folly::sformat("Failed to attach for reason: {}", ex.what()));
+      cache_ = std::make_unique<Allocator>(Allocator::SharedMemNew,
+                                           allocatorConfig_);
+    }
   } else {
     cache_ = std::make_unique<Allocator>(allocatorConfig_);
   }
@@ -431,7 +443,7 @@ typename Cache<Allocator>::WriteHandle Cache<Allocator>::insertOrReplace(
 }
 
 template <typename Allocator>
-void Cache<Allocator>::touchValue(const ItemHandle& it) const {
+void Cache<Allocator>::touchValue(const ReadHandle& it) const {
   XDCHECK(touchValueEnabled());
 
   auto ptr = reinterpret_cast<const uint8_t*>(getMemory(it));
@@ -443,8 +455,7 @@ void Cache<Allocator>::touchValue(const ItemHandle& it) const {
 }
 
 template <typename Allocator>
-typename Cache<Allocator>::ItemHandle Cache<Allocator>::find(Key key,
-                                                             AccessMode mode) {
+typename Cache<Allocator>::ReadHandle Cache<Allocator>::find(Key key) {
   auto findFn = [&]() {
     util::LatencyTracker tracker;
     if (FLAGS_report_api_latency) {
@@ -528,9 +539,10 @@ bool Cache<Allocator>::checkGet(ValueTracker::Index opId,
 template <typename Allocator>
 Stats Cache<Allocator>::getStats() const {
   PoolStats aggregate = cache_->getPoolStats(0);
+  Stats ret;
   for (size_t pid = 1; pid < pools_.size(); pid++) {
     auto poolStats = cache_->getPoolStats(static_cast<PoolId>(pid));
-    usageFraction = 1.0 - (static_cast<double>(poolStats.freeMemoryBytes())) /
+    auto usageFraction = 1.0 - (static_cast<double>(poolStats.freeMemoryBytes())) /
                               poolStats.poolUsableSize;
     ret.poolUsageFraction.push_back(usageFraction);
     aggregate += poolStats;
@@ -550,7 +562,6 @@ Stats Cache<Allocator>::getStats() const {
   const auto rebalanceStats = cache_->getSlabReleaseStats();
   const auto navyStats = cache_->getNvmCacheStatsMap();
 
-  Stats ret;
   ret.slabsApproxFreePercentages = cache_->getCacheMemoryStats().slabsApproxFreePercentages;
   ret.allocationClassStats = allocationClassStats;
   ret.numEvictions = aggregate.numEvictions();

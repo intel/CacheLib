@@ -140,13 +140,13 @@ bool ShmManager::initFromFile() {
   }
 
   for (const auto& kv : *object.nameToKeyMap_ref()) {
-    if (kv.second.path == "") {
+    if (kv.second.get_path() == "") {
       PosixSysVSegmentOpts type;
-      type.usePosix = kv.second.usePosix;
+      type.usePosix = kv.second.get_usePosix();
       nameToOpts_.insert({kv.first, type});
     } else {
       FileShmSegmentOpts type;
-      type.path = kv.second.path;
+      type.path = kv.second.get_path();
       nameToOpts_.insert({kv.first, type});
     }
   }
@@ -177,12 +177,12 @@ typename ShmManager::ShutDownRes ShmManager::writeActiveSegmentsToFile() {
     const auto& name = kv.first;
     serialization::ShmTypeObject key;
     if (const auto* opts = std::get_if<FileShmSegmentOpts>(&kv.second)) {
-      key.path = opts->path;
+      key.set_path(opts->path);
     } else {
       try {
         const auto& v = std::get<PosixSysVSegmentOpts>(kv.second);
-        key.usePosix = v.usePosix;
-        key.path = "";
+        key.set_usePosix(v.usePosix);
+        key.set_path("");
       } catch(std::bad_variant_access&) {
         throw std::invalid_argument(folly::sformat("Not a valid segment"));
       }

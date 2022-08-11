@@ -22,8 +22,8 @@ namespace detail {
 // pending for this, because the contract of ObjectCache is that user must
 // hold an outstanding refcount (via an ItemHandle or ObjectHandle) at any
 // time when they're accessing the data structures backed by the item.
-template <typename ItemHandle, typename Item, typename Cache>
-ItemHandle* objcacheInitializeZeroRefcountHandle(void* handleStorage,
+template <typename WriteHandle, typename Item, typename Cache>
+WriteHandle* objcacheInitializeZeroRefcountHandle(void* handleStorage,
                                                  Item* it,
                                                  Cache& alloc) {
   return new (handleStorage) typename Cache::WriteHandle{it, alloc};

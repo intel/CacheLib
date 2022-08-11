@@ -620,10 +620,6 @@ class CacheAllocatorConfig {
   std::string stringifyRebalanceStrategy(
       const std::shared_ptr<RebalanceStrategy>& strategy) const;
 
-  // Configuration for memory tiers.
-  MemoryTierConfigs memoryTierConfigs{
-      {MemoryTierCacheConfig::fromShm().setRatio(1)}};
-
   // if turned on, cache allocator will not evict any item when the
   // system is out of memory. The user must free previously allocated
   // items to make more room.

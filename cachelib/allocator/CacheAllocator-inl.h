@@ -37,11 +37,11 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config config)
       accessContainer_(std::make_unique<AccessContainer>(
           config_.accessConfig,
           compressor_,
-          [this](Item* it) -> ItemHandle { return acquire(it); })),
+          [this](Item* it) -> WriteHandle { return acquire(it); })),
       chainedItemAccessContainer_(std::make_unique<AccessContainer>(
           config_.chainedItemAccessConfig,
           compressor_,
-          [this](Item* it) -> ItemHandle { return acquire(it); })),
+          [this](Item* it) -> WriteHandle { return acquire(it); })),
       chainedItemLocks_(config_.chainedItemsLockPower,
                         std::make_shared<MurmurHash2>()),
       movesMap_(kShards),
@@ -117,7 +117,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(SharedMemNewT, Config config)
                               false, config_.isUsingPosixShm()))
               .addr,
           compressor_,
-          [this](Item* it) -> ItemHandle { return acquire(it); })),
+          [this](Item* it) -> WriteHandle { return acquire(it); })),
       chainedItemAccessContainer_(std::make_unique<AccessContainer>(
           config_.chainedItemAccessConfig,
           shmManager_
@@ -129,7 +129,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(SharedMemNewT, Config config)
                               false, config_.isUsingPosixShm()))
               .addr,
           compressor_,
-          [this](Item* it) -> ItemHandle { return acquire(it); })),
+          [this](Item* it) -> WriteHandle { return acquire(it); })),
       chainedItemLocks_(config_.chainedItemsLockPower,
                         std::make_shared<MurmurHash2>()),
       movesMap_(kShards),
@@ -160,14 +160,14 @@ CacheAllocator<CacheTrait>::CacheAllocator(SharedMemAttachT, Config config)
           shmManager_->attachShm(detail::kShmHashTableName, nullptr,
             ShmSegmentOpts(PageSizeT::NORMAL, false, config_.isUsingPosixShm())),
           compressor_,
-          [this](Item* it) -> ItemHandle { return acquire(it); })),
+          [this](Item* it) -> WriteHandle { return acquire(it); })),
       chainedItemAccessContainer_(std::make_unique<AccessContainer>(
           deserializer_->deserialize<AccessSerializationType>(),
           config_.chainedItemAccessConfig,
           shmManager_->attachShm(detail::kShmChainedItemHashTableName, nullptr,
             ShmSegmentOpts(PageSizeT::NORMAL, false, config_.isUsingPosixShm())),
           compressor_,
-          [this](Item* it) -> ItemHandle { return acquire(it); })),
+          [this](Item* it) -> WriteHandle { return acquire(it); })),
       chainedItemLocks_(config_.chainedItemsLockPower,
                         std::make_shared<MurmurHash2>()),
       movesMap_(kShards),
@@ -186,53 +186,6 @@ CacheAllocator<CacheTrait>::CacheAllocator(SharedMemAttachT, Config config)
   shmManager_->removeShm(detail::kShmInfoName,
     PosixSysVSegmentOpts(config_.isUsingPosixShm()));
 }
-
-template <typename CacheTrait>
-CacheAllocator<CacheTrait>::CacheAllocator(
-    typename CacheAllocator<CacheTrait>::InitMemType type, Config config)
-    : isOnShm_{type != InitMemType::kNone ? true
-                                          : config.memMonitoringEnabled()},
-      config_(config.validate()),
-      tempShm_(type == InitMemType::kNone && isOnShm_
-                   ? std::make_unique<TempShmMapping>(config_.size)
-                   : nullptr),
-      shmManager_(type != InitMemType::kNone
-                      ? std::make_unique<ShmManager>(config_.cacheDir,
-                                                     config_.usePosixShm)
-                      : nullptr),
-      deserializer_(type == InitMemType::kMemAttach ? createDeserializer()
-                                                    : nullptr),
-      metadata_{type == InitMemType::kMemAttach
-                    ? deserializeCacheAllocatorMetadata(*deserializer_)
-                    : serialization::CacheAllocatorMetadata{}},
-      allocator_(initAllocator(type)),
-      compactCacheManager_(type != InitMemType::kMemAttach
-                               ? std::make_unique<CCacheManager>(*allocator_)
-                               : restoreCCacheManager()),
-      compressor_(createPtrCompressor()),
-      mmContainers_(type == InitMemType::kMemAttach
-                        ? deserializeMMContainers(*deserializer_, compressor_)
-                        : MMContainers{}),
-      accessContainer_(initAccessContainer(
-          type, detail::kShmHashTableName, config.accessConfig)),
-      chainedItemAccessContainer_(
-          initAccessContainer(type,
-                              detail::kShmChainedItemHashTableName,
-                              config.chainedItemAccessConfig)),
-      chainedItemLocks_(config_.chainedItemsLockPower,
-                        std::make_shared<MurmurHash2>()),
-      cacheCreationTime_{
-          type != InitMemType::kMemAttach
-              ? util::getCurrentTimeSec()
-              : static_cast<uint32_t>(*metadata_.cacheCreationTime())},
-      cacheInstanceCreationTime_{type != InitMemType::kMemAttach
-                                     ? cacheCreationTime_
-                                     : util::getCurrentTimeSec()},
-      // Pass in cacheInstnaceCreationTime_ as the current time to keep
-      // nvmCacheState's current time in sync
-      nvmCacheState_{cacheInstanceCreationTime_, config_.cacheDir,
-                     config_.isNvmCacheEncryptionEnabled(),
-                     config_.isNvmCacheTruncateAllocSizeEnabled()} {}
 
 template <typename CacheTrait>
 CacheAllocator<CacheTrait>::~CacheAllocator() {
@@ -333,7 +286,8 @@ void CacheAllocator<CacheTrait>::initNvmCache(bool dramCacheAttached) {
     return;
   }
 
-  nvmCacheState_.emplace(NvmCacheState(config_.cacheDir, config_.isNvmCacheEncryptionEnabled(),
+  nvmCacheState_.emplace(NvmCacheState(cacheCreationTime_, config_.cacheDir,
+                                       config_.isNvmCacheEncryptionEnabled(),
                                        config_.isNvmCacheTruncateAllocSizeEnabled()));
 
   // for some usecases that create pools, restoring nvmcache when dram cache
@@ -390,29 +344,6 @@ void CacheAllocator<CacheTrait>::initWorkers() {
                           config_.poolOptimizeStrategy,
                           config_.ccacheOptimizeStepSizePercent);
   }
-}
-
-template <typename CacheTrait>
-std::unique_ptr<MemoryAllocator> CacheAllocator<CacheTrait>::initAllocator(
-    InitMemType type) {
-  if (type == InitMemType::kNone) {
-    if (isOnShm_ == true) {
-      return std::make_unique<MemoryAllocator>(
-          getAllocatorConfig(config_), tempShm_->getAddr(), config_.size);
-    } else {
-      return std::make_unique<MemoryAllocator>(getAllocatorConfig(config_),
-                                               config_.size);
-    }
-  } else if (type == InitMemType::kMemNew) {
-    return createNewMemoryAllocator();
-  } else if (type == InitMemType::kMemAttach) {
-    return restoreMemoryAllocator();
-  }
-
-  // Invalid type
-  throw std::runtime_error(folly::sformat(
-      "Cannot initialize memory allocator, unknown InitMemType: {}.",
-      static_cast<int>(type)));
 }
 
 template <typename CacheTrait>
@@ -475,7 +406,7 @@ CacheAllocator<CacheTrait>::allocate(PoolId poolId,
 }
 
 template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::ItemHandle
+typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
                                              PoolId pid,
                                              typename Item::Key key,
@@ -1314,9 +1245,9 @@ bool CacheAllocator<CacheTrait>::addWaitContextForMovingItem(
 }
 
 template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::ItemHandle
+typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::moveRegularItemOnEviction(
-    Item& oldItem, ItemHandle& newItemHdl) {
+    Item& oldItem, WriteHandle& newItemHdl) {
   XDCHECK(oldItem.isMoving());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
@@ -1348,7 +1279,7 @@ CacheAllocator<CacheTrait>::moveRegularItemOnEviction(
     ctx = res.first->second.get();
   }
 
-  auto resHdl = ItemHandle{};
+  auto resHdl = WriteHandle{};
   auto guard = folly::makeGuard([key, this, ctx, shard, &resHdl]() {
     auto& movesMap = getMoveMapForShard(shard);
     if (resHdl)
@@ -1390,7 +1321,7 @@ CacheAllocator<CacheTrait>::moveRegularItemOnEviction(
     // should be fine for it to be left in an inconsistent state.
     config_.moveCb(oldItem, *newItemHdl, nullptr);
   } else {
-    std::memcpy(newItemHdl->getWritableMemory(), oldItem.getMemory(),
+    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
                 oldItem.getSize());
   }
 
@@ -3114,7 +3045,7 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
 }
 
 template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::ItemHandle
+typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::evictNormalItem(Item& item,
                                             bool skipIfTokenInvalid) {
   XDCHECK(item.isMoving());
@@ -3134,7 +3065,7 @@ CacheAllocator<CacheTrait>::evictNormalItem(Item& item,
 
   if (skipIfTokenInvalid && evictToNvmCache && !token.isValid()) {
     stats_.evictFailConcurrentFill.inc();
-    return ItemHandle{};
+    return WriteHandle{};
   }
 
   // We remove the item from both access and mm containers. It doesn't matter
@@ -3784,16 +3715,16 @@ GlobalCacheStats CacheAllocator<CacheTrait>::getGlobalCacheStats() const {
   ret.numItems = accessContainer_->getStats().numKeys;
 
   const uint64_t currTime = util::getCurrentTimeSec();
-  ret.cacheInstanceUpTime = currTime - cacheInstanceCreationTime_;
+  ret.cacheInstanceUpTime = currTime - cacheCreationTime_;
   ret.ramUpTime = currTime - cacheCreationTime_;
   ret.nvmCacheEnabled = nvmCache_ ? nvmCache_->isEnabled() : false;
   ret.nvmUpTime = currTime - getNVMCacheCreationTime();
   ret.reaperStats = getReaperStats();
   ret.numActiveHandles = getNumActiveHandles();
 
-  ret.isNewRamCache = cacheCreationTime_ == cacheInstanceCreationTime_;
+  ret.isNewRamCache = cacheCreationTime_ == cacheCreationTime_;
   ret.isNewNvmCache =
-      nvmCacheState_.getCreationTime() == cacheInstanceCreationTime_;
+      nvmCacheState_.value().getCreationTime() == cacheCreationTime_;
 
   return ret;
 }

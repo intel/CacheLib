@@ -1106,6 +1106,9 @@ class CacheAllocator : public CacheBase {
   // get cache name
   const std::string getCacheName() const override final;
 
+  // whether it is object-cache
+  bool isObjectCache() const override final { return false; }
+
   // combined pool size for all memory tiers
   size_t getPoolSize(PoolId pid) const;
 
@@ -1401,7 +1404,7 @@ class CacheAllocator : public CacheBase {
   // For description see allocateInternal.
   //
   // @param tid id a memory tier
-  ItemHandle allocateInternalTier(TierId tid,
+  WriteHandle allocateInternalTier(TierId tid,
                               PoolId id,
                               Key key,
                               uint32_t size,
@@ -1500,7 +1503,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  ItemHandle moveRegularItemOnEviction(Item& oldItem, ItemHandle& newItemHdl);
+  WriteHandle moveRegularItemOnEviction(Item& oldItem, WriteHandle& newItemHdl);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's moving bit has been set. The user supplied
@@ -1589,7 +1592,7 @@ class CacheAllocator : public CacheBase {
 
   using EvictionIterator = typename MMContainer::Iterator;
 
-  ItemHandle acquire(EvictionIterator& it) { return acquire(it.get()); }
+  WriteHandle acquire(EvictionIterator& it) { return acquire(it.get()); }
 
   // Replaces an item in the MMContainer with another item, at the same
   // position.
@@ -1691,6 +1694,14 @@ class CacheAllocator : public CacheBase {
   MMContainers deserializeMMContainers(
       Deserializer& deserializer,
       const typename Item::PtrCompressor& compressor);
+
+  // Create a copy of empty MMContainers according to the configs of
+  // mmContainers_ This function is used when serilizing for persistence for the
+  // reason of backward compatibility. A copy of empty MMContainers from
+  // mmContainers_ will be created and serialized as unevictable mm containers
+  // and written to metadata so that previous CacheLib versions can restore from
+  // such a serialization. This function will be removed in the next version.
+  MMContainers createEmptyMMContainers();
 
   unsigned int reclaimSlabs(PoolId id, size_t numSlabs) final {
     return allocator_[currentTier()]->reclaimSlabsAndGrow(id, numSlabs);
@@ -1798,7 +1809,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return last handle for corresponding to item on success. empty handle on
   // failure. caller can retry if needed.
-  ItemHandle evictNormalItem(Item& item, bool skipIfTokenInvalid = false);
+  WriteHandle evictNormalItem(Item& item, bool skipIfTokenInvalid = false);
 
   // Helper function to evict a child item for slab release
   // As a side effect, the parent item is also evicted
@@ -1914,11 +1925,6 @@ class CacheAllocator : public CacheBase {
 
   // @param type        the type of initialization
   // @return nullptr if the type is invalid
-  // @return pointer to memory allocator
-  // @throw std::runtime_error if type is invalid
-  std::unique_ptr<MemoryAllocator> initAllocator(InitMemType type);
-  // @param type        the type of initialization
-  // @return nullptr if the type is invalid
   // @return pointer to access container
   // @throw std::runtime_error if type is invalid
   std::unique_ptr<AccessContainer> initAccessContainer(InitMemType type,
@@ -2002,7 +2008,7 @@ class CacheAllocator : public CacheBase {
     // record the item handle. Upon destruction we will wake up the waiters
     // and pass a clone of the handle to the callBack. By default we pass
     // a null handle
-    void setItemHandle(ItemHandle _it) { it = std::move(_it); }
+    void setItemHandle(WriteHandle _it) { it = std::move(_it); }
 
     // enqueue a waiter into the waiter list
     // @param  waiter       WaitContext
@@ -2019,7 +2025,7 @@ class CacheAllocator : public CacheBase {
         // If refcount overflowed earlier, then we will return miss to
         // all subsequent waitors.
         if (refcountOverflowed) {
-          w->set(ItemHandle{});
+          w->set(WriteHandle{});
           continue;
         }
 
@@ -2034,7 +2040,7 @@ class CacheAllocator : public CacheBase {
       }
     }
 
-    ItemHandle it; // will be set when Context is being filled
+    WriteHandle it; // will be set when Context is being filled
     std::vector<std::shared_ptr<WaitContext<ReadHandle>>> waiters; // list of
                                                                    // waiters
   };
@@ -2175,14 +2181,11 @@ class CacheAllocator : public CacheBase {
   // a map of move locks for each shard
   std::vector<MoveLock> moveLock_;
 
-  // time when the ram cache was first created
-  const uint32_t cacheCreationTime_{0};
-
   // time when CacheAllocator structure is created. Whenever a process restarts
   // and even if cache content is persisted, this will be reset. It's similar
   // to process uptime. (But alternatively if user explicitly shuts down and
   // re-attach cache, this will be reset as well)
-  const uint32_t cacheInstanceCreationTime_{0};
+  const uint32_t cacheCreationTime_{0};
 
   // thread local accumulation of handle counts
   mutable util::FastStats<int64_t> handleCount_{};
