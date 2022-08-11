@@ -20,6 +20,7 @@
 
 #include "cachelib/allocator/CacheAllocator.h"
 #include "cachelib/allocator/RebalanceStrategy.h"
+#include "cachelib/allocator/BackgroundEvictorStrategy.h"
 #include "cachelib/cachebench/util/JSONConfig.h"
 #include "cachelib/common/Ticker.h"
 #include "cachelib/navy/common/Device.h"
@@ -48,11 +49,16 @@ struct MemoryTierConfig : public JSONConfig {
   MemoryTierCacheConfig getMemoryTierCacheConfig() {
     MemoryTierCacheConfig config = memoryTierCacheConfigFromSource();
     config.setRatio(ratio);
+    config.markUsefulChance = markUsefulChance;
+    config.lruInsertionPointSpec = lruInsertionPointSpec;
     return config;
   }
 
   std::string file{""};
   size_t ratio{0};
+
+  double markUsefulChance{100.0}; // call mark useful only with this
+  uint32_t lruInsertionPointSpec{0};
 
 private:
   MemoryTierCacheConfig memoryTierCacheConfigFromSource() {
@@ -70,7 +76,10 @@ struct CacheConfig : public JSONConfig {
 
   uint64_t cacheSizeMB{0};
   uint64_t poolRebalanceIntervalSec{0};
+  uint64_t backgroundEvictorIntervalMilSec{0};
+  uint64_t backgroundPromoterIntervalMilSec{0};
   std::string rebalanceStrategy;
+  std::string backgroundEvictorStrategy;
   uint64_t rebalanceMinSlabs{1};
   double rebalanceDiffRatio{0.25};
   bool moveOnSlabRelease{false};
@@ -282,11 +291,41 @@ struct CacheConfig : public JSONConfig {
   // this verifies whether the feature affects throughputs.
   bool enableItemDestructor{false};
 
+  bool disableEvictionToMemory{false};
+
+  double promotionAcWatermark{4.0};
+  double lowEvictionAcWatermark{2.0};
+  double highEvictionAcWatermark{5.0};
+  double minAcAllocationWatermark{0.0};
+  double maxAcAllocationWatermark{0.0};
+  double acTopTierEvictionWatermark{0.0};
+  uint64_t sizeThresholdPolicy{0};   
+  double defaultTierChancePercentage{50.0};
+  // TODO: default could be based on ratio
+
+  double numDuplicateElements{0.0}; // inclusivness of the cache
+  double syncPromotion{0.0}; // can promotion be done synchronously in user thread
+
+  uint64_t evictorThreads{1};
+  uint64_t promoterThreads{1};
+
+  uint64_t maxEvictionBatch{40};
+  uint64_t maxPromotionBatch{10};
+
+  uint64_t minEvictionBatch{5};
+  uint64_t minPromotionBatch{5};
+
+  uint64_t maxEvictionPromotionHotness{60};
+
+  uint64_t forceAllocationTier{UINT64_MAX};
+
   explicit CacheConfig(const folly::dynamic& configJson);
 
   CacheConfig() {}
 
   std::shared_ptr<RebalanceStrategy> getRebalanceStrategy() const;
+  std::shared_ptr<BackgroundEvictorStrategy> getBackgroundEvictorStrategy() const;
+  std::shared_ptr<BackgroundEvictorStrategy> getBackgroundPromoterStrategy() const;
 };
 } // namespace cachebench
 } // namespace cachelib

@@ -4,13 +4,16 @@
     "usePosixShm": true,
     "poolRebalanceIntervalSec": 0,
     "persistedCacheDir": "/tmp/mem-tier",
+    "htBucketPower": 28,
+    "backgroundEvictorIntervalMilSec": 10,
+    "backgroundPromoterIntervalMilSec": 10,
     "memoryTiers" : [
       {
         "ratio": 1
       },
       {
         "ratio": 1,
-        "file": "/pmem/memory-mapped-tier"
+        "file": "/mnt/pmem0/memory-mapped-tier"
       }
     ]
   }, 
@@ -31,7 +34,8 @@
       ], 
       "loneGetRatio": 0.2315436539873129, 
       "numKeys": 71605574, 
-      "numOps": 5000000, 
+      "numOps": 5000000,
+      "opRatePerSec": 500000,
       "numThreads": 24, 
       "popDistFile": "pop.json", 
        

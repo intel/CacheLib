@@ -61,6 +61,21 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   allocatorConfig_.enablePoolRebalancing(
       config_.getRebalanceStrategy(),
       std::chrono::seconds(config_.poolRebalanceIntervalSec));
+ 
+  //for another day
+  //allocatorConfig_.enablePoolOptimizer(
+  //    config_.getPoolOptimizerStrategy(),
+  //    std::chrono::seconds(config_.poolOptimizerIntervalSec));
+  
+  allocatorConfig_.enableBackgroundEvictor(
+      config_.getBackgroundEvictorStrategy(),
+      std::chrono::milliseconds(config_.backgroundEvictorIntervalMilSec),
+      config_.evictorThreads);
+
+  allocatorConfig_.enableBackgroundPromoter(
+      config_.getBackgroundPromoterStrategy(),
+      std::chrono::milliseconds(config_.backgroundPromoterIntervalMilSec),
+      config_.promoterThreads);
 
   if (config_.moveOnSlabRelease && movingSync != nullptr) {
     allocatorConfig_.enableMovingOnSlabRelease(
@@ -115,6 +130,13 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       util::removePath(nvmCacheFilePath_);
     }
   });
+
+  allocatorConfig_.maxEvictionBatch = config_.maxEvictionBatch;
+  allocatorConfig_.maxPromotionBatch = config_.maxPromotionBatch;
+  allocatorConfig_.forceAllocationTier = config_.forceAllocationTier;
+  allocatorConfig_.minEvictionBatch = config_.minEvictionBatch;
+  allocatorConfig_.minPromotionBatch = config_.minPromotionBatch;
+  allocatorConfig_.maxEvictionPromotionHotness = config_.maxEvictionPromotionHotness;
 
   if (config_.enableItemDestructorCheck) {
     auto removeCB = [&](const typename Allocator::DestructorData& data) {
@@ -259,6 +281,18 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   }
 
   allocatorConfig_.cacheName = "cachebench";
+
+  allocatorConfig_.disableEvictionToMemory = config_.disableEvictionToMemory;
+  allocatorConfig_.lowEvictionAcWatermark = config_.lowEvictionAcWatermark;
+  allocatorConfig_.highEvictionAcWatermark = config_.highEvictionAcWatermark;
+  allocatorConfig_.minAcAllocationWatermark = config_.minAcAllocationWatermark;
+  allocatorConfig_.maxAcAllocationWatermark = config_.maxAcAllocationWatermark;
+  allocatorConfig_.sizeThresholdPolicy = config_.sizeThresholdPolicy;
+  allocatorConfig_.defaultTierChancePercentage = config_.defaultTierChancePercentage;
+  allocatorConfig_.numDuplicateElements = config_.numDuplicateElements;
+  allocatorConfig_.syncPromotion = config_.syncPromotion;
+  allocatorConfig_.promotionAcWatermark = config_.promotionAcWatermark;
+  allocatorConfig_.acTopTierEvictionWatermark = config_.acTopTierEvictionWatermark;
 
   if (!allocatorConfig_.cacheDir.empty()) {
     cache_ =
@@ -515,6 +549,21 @@ Stats Cache<Allocator>::getStats() const {
   Stats ret;
   ret.slabsApproxFreePercentages = cache_->getCacheMemoryStats().slabsApproxFreePercentages;
   ret.allocationClassStats = allocationClassStats;
+
+  ret.backgndEvicStats.nEvictedItems =
+            cacheStats.evictionStats.numEvictedItems;
+  ret.backgndEvicStats.nTraversals =
+            cacheStats.evictionStats.runCount;
+  ret.backgndEvicStats.nClasses =
+            cacheStats.evictionStats.totalClasses;
+  ret.backgndEvicStats.evictionSize =
+            cacheStats.evictionStats.evictionSize;
+  
+  ret.backgndPromoStats.nPromotedItems =
+            cacheStats.promotionStats.numPromotedItems;
+  ret.backgndPromoStats.nTraversals =
+            cacheStats.promotionStats.runCount;
+
   ret.numEvictions = aggregate.numEvictions();
   ret.numItems = aggregate.numItems();
   ret.allocAttempts = cacheStats.allocAttempts;
@@ -564,6 +613,9 @@ Stats Cache<Allocator>::getStats() const {
   if (config_.printNvmCounters) {
     ret.nvmCounters = cache_->getNvmCacheStatsMap();
   }
+
+  ret.backgroundEvictionClasses = cache_->getBackgroundEvictorClassStats();
+  ret.backgroundPromotionClasses = cache_->getBackgroundPromoterClassStats();
 
   // nvm stats from navy
   if (!isRamOnly() && !navyStats.empty()) {

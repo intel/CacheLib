@@ -20,6 +20,9 @@
 #include "cachelib/allocator/LruTailAgeStrategy.h"
 #include "cachelib/allocator/RandomStrategy.h"
 
+#include "cachelib/allocator/FreeThresholdStrategy.h"
+#include "cachelib/allocator/PromotionStrategy.h"
+
 namespace facebook {
 namespace cachelib {
 namespace cachebench {
@@ -27,10 +30,14 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, allocator);
   JSONSetVal(configJson, cacheSizeMB);
   JSONSetVal(configJson, poolRebalanceIntervalSec);
+  JSONSetVal(configJson, backgroundEvictorIntervalMilSec);
+  JSONSetVal(configJson, backgroundPromoterIntervalMilSec);
   JSONSetVal(configJson, moveOnSlabRelease);
   JSONSetVal(configJson, rebalanceStrategy);
   JSONSetVal(configJson, rebalanceMinSlabs);
   JSONSetVal(configJson, rebalanceDiffRatio);
+  
+  JSONSetVal(configJson, backgroundEvictorStrategy);
 
   JSONSetVal(configJson, htBucketPower);
   JSONSetVal(configJson, htLockPower);
@@ -93,8 +100,29 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, enableItemDestructorCheck);
   JSONSetVal(configJson, enableItemDestructor);
 
+  JSONSetVal(configJson, disableEvictionToMemory);
+  JSONSetVal(configJson, lowEvictionAcWatermark);
+  JSONSetVal(configJson, highEvictionAcWatermark);
+  JSONSetVal(configJson, minAcAllocationWatermark);
+  JSONSetVal(configJson, maxAcAllocationWatermark);
+  JSONSetVal(configJson, acTopTierEvictionWatermark);
+  JSONSetVal(configJson, sizeThresholdPolicy);
+  JSONSetVal(configJson, defaultTierChancePercentage);
+  JSONSetVal(configJson, numDuplicateElements);
+  JSONSetVal(configJson, syncPromotion);
+  JSONSetVal(configJson, evictorThreads);
+  JSONSetVal(configJson, promoterThreads);
+
+  JSONSetVal(configJson, promotionAcWatermark);
   JSONSetVal(configJson, persistedCacheDir);
   JSONSetVal(configJson, usePosixShm);
+  JSONSetVal(configJson, maxEvictionBatch);
+  JSONSetVal(configJson, maxPromotionBatch);
+  JSONSetVal(configJson, forceAllocationTier);
+  JSONSetVal(configJson, minEvictionBatch);
+  JSONSetVal(configJson, minPromotionBatch);
+  JSONSetVal(configJson, maxEvictionPromotionHotness);
+
   if (configJson.count("memoryTiers")) {
     for (auto& it : configJson["memoryTiers"]) {
       memoryTierConfigs.push_back(MemoryTierConfig(it).getMemoryTierCacheConfig());
@@ -104,7 +132,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 752>();
+  checkCorrectSize<CacheConfig, 944>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
@@ -134,12 +162,30 @@ std::shared_ptr<RebalanceStrategy> CacheConfig::getRebalanceStrategy() const {
   }
 }
 
+std::shared_ptr<BackgroundEvictorStrategy> CacheConfig::getBackgroundEvictorStrategy() const {
+  if (backgroundEvictorIntervalMilSec == 0) {
+    return nullptr;
+  }
+
+  return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+}
+
+std::shared_ptr<BackgroundEvictorStrategy> CacheConfig::getBackgroundPromoterStrategy() const {
+  if (backgroundPromoterIntervalMilSec == 0) {
+    return nullptr;
+  }
+
+  return std::make_shared<PromotionStrategy>(promotionAcWatermark, maxPromotionBatch, minPromotionBatch);
+}
+
 
 MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, file);
   JSONSetVal(configJson, ratio);
+  JSONSetVal(configJson, markUsefulChance);
+  JSONSetVal(configJson, lruInsertionPointSpec);
 
-  checkCorrectSize<MemoryTierConfig, 40>();
+  checkCorrectSize<MemoryTierConfig, 56>();
 }
 
 } // namespace cachebench
