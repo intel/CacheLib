@@ -23,10 +23,9 @@ if (BUILD_TESTS)
     GTest::gtest
     GTest::gmock
   )
-  target_sources(compact_cache_test_support INTERFACE ../common/TestUtils.cpp)
 
   function (ADD_TEST SOURCE_FILE)
-     generic_add_test("compact-cache-test" "${SOURCE_FILE}"
+    generic_add_test("compact-cache-test" "${SOURCE_FILE}"
                       compact_cache_test_support "${ARGN}")
   endfunction()
 

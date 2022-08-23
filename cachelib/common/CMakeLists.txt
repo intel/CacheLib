@@ -47,19 +47,28 @@ install(TARGETS cachelib_common
 
 
 if (BUILD_TESTS)
-  add_library (common_test_support INTERFACE)
-  target_link_libraries (common_test_support INTERFACE
+  add_library (common_test_utils STATIC
+    TestUtils.cpp
+  )
+  target_link_libraries (common_test_utils PUBLIC
+    cachelib_common
+    gflags
+    GTest::gtest
+    GTest::gtest_main
+  )
+
+  add_library (common_test_support OBJECT
+    hothash/HotHashDetectorTest.cpp
+    piecewise/GenericPiecesTest.cpp
+    piecewise/RequestRangeTest.cpp
+  )
+  target_link_libraries (common_test_support PUBLIC
     cachelib_common
     common_test_utils
     gflags
     GTest::gtest
     GTest::gtest_main
   )
-  target_sources(common_test_support INTERFACE
-    TestUtils.cpp
-    hothash/HotHashDetectorTest.cpp
-    piecewise/GenericPiecesTest.cpp
-    piecewise/RequestRangeTest.cpp)
 
   function (ADD_TEST SOURCE_FILE)
      # Add any additional libraries BEFORE the "common_test_support" to ensure

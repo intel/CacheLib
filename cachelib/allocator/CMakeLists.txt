@@ -81,7 +81,6 @@ if (BUILD_TESTS)
     ${DATASTRUCT_TESTS_THRIFT_FILES}
     ./nvmcache/tests/NvmTestBase.cpp
     ./memory/tests/TestBase.cpp
-    ../common/TestUtils.cpp
     )
   add_dependencies(allocator_test_support thrift_generated_files)
   target_link_libraries (allocator_test_support PUBLIC

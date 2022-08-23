@@ -17,7 +17,6 @@ add_thrift_file(DATATYPEBENCH DataTypeBench.thrift frozen2)
 if (BUILD_TESTS)
   add_library (benchmark_test_support
     ${DATATYPEBENCH_THRIFT_FILES}
-    ../common/TestUtils.cpp
     )
 
   add_dependencies(benchmark_test_support thrift_generated_files)
