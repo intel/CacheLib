@@ -134,9 +134,9 @@ bool ShmManager::initFromFile() {
   }
 
   if (static_cast<bool>(usePosix_) ^
-      (*object.shmVal() == static_cast<int8_t>(ShmVal::SHM_POSIX))) {
+      (object.get_shmVal() == static_cast<int8_t>(ShmVal::SHM_POSIX))) {
     throw std::invalid_argument(folly::sformat(
-        "Invalid value for attach. ShmVal: {}", *object.shmVal()));
+        "Invalid value for attach. ShmVal: {}", object.get_shmVal()));
   }
 
   for (const auto& kv : *object.nameToKeyMap_ref()) {
@@ -170,19 +170,19 @@ typename ShmManager::ShutDownRes ShmManager::writeActiveSegmentsToFile() {
 
   serialization::ShmManagerObject object;
 
-  object.shmVal() = usePosix_ ? static_cast<int8_t>(ShmVal::SHM_POSIX)
+  object.shmVal_ref() = usePosix_ ? static_cast<int8_t>(ShmVal::SHM_POSIX)
                               : static_cast<int8_t>(ShmVal::SHM_SYS_V);
 
   for (const auto& kv : nameToOpts_) {
     const auto& name = kv.first;
     serialization::ShmTypeObject key;
     if (const auto* opts = std::get_if<FileShmSegmentOpts>(&kv.second)) {
-      key.set_path(opts->path);
+      key.path_ref() = opts->path;
     } else {
       try {
         const auto& v = std::get<PosixSysVSegmentOpts>(kv.second);
-        key.set_usePosix(v.usePosix);
-        key.set_path("");
+        key.usePosix_ref() = v.usePosix;
+        key.path_ref() = "";
       } catch(std::bad_variant_access&) {
         throw std::invalid_argument(folly::sformat("Not a valid segment"));
       }
@@ -190,7 +190,7 @@ typename ShmManager::ShutDownRes ShmManager::writeActiveSegmentsToFile() {
     const auto it = segments_.find(name);
     // segment exists and is active.
     if (it != segments_.end() && it->second->isActive()) {
-      object.nameToKeyMap()[name] = key;
+      (*object.nameToKeyMap_ref())[name] = key;
     }
   }
 

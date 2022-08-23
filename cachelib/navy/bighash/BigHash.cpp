@@ -173,13 +173,13 @@ void BigHash::getCounters(const CounterVisitor& visitor) const {
 void BigHash::persist(RecordWriter& rw) {
   XLOG(INFO, "Starting bighash persist");
   serialization::BigHashPersistentData pd;
-  *pd.version() = kFormatVersion;
-  *pd.generationTime() = generationTime_.count();
-  *pd.itemCount() = itemCount_.get();
-  *pd.bucketSize() = bucketSize_;
-  *pd.cacheBaseOffset() = cacheBaseOffset_;
-  *pd.numBuckets() = numBuckets_;
-  *pd.sizeDist() = sizeDist_.getSnapshot();
+  pd.version_ref() = kFormatVersion;
+  pd.generationTime_ref() = generationTime_.count();
+  pd.itemCount_ref() = itemCount_.get();
+  pd.bucketSize_ref() = bucketSize_;
+  pd.cacheBaseOffset_ref() = cacheBaseOffset_;
+  pd.numBuckets_ref() = numBuckets_;
+  pd.sizeDist_ref() = sizeDist_.getSnapshot();
   serializeProto(pd, rw);
 
   if (bloomFilter_) {
@@ -194,26 +194,26 @@ bool BigHash::recover(RecordReader& rr) {
   XLOG(INFO, "Starting bighash recovery");
   try {
     auto pd = deserializeProto<serialization::BigHashPersistentData>(rr);
-    if (*pd.version() != kFormatVersion) {
+    if (pd.get_version() != kFormatVersion) {
       throw std::logic_error{
           folly::sformat("invalid format version {}, expected {}",
-                         *pd.version(),
+                         pd.get_version(),
                          kFormatVersion)};
     }
 
     auto configEquals =
-        static_cast<uint64_t>(*pd.bucketSize()) == bucketSize_ &&
-        static_cast<uint64_t>(*pd.cacheBaseOffset()) == cacheBaseOffset_ &&
-        static_cast<uint64_t>(*pd.numBuckets()) == numBuckets_;
+        static_cast<uint64_t>(pd.get_bucketSize()) == bucketSize_ &&
+        static_cast<uint64_t>(pd.get_cacheBaseOffset()) == cacheBaseOffset_ &&
+        static_cast<uint64_t>(pd.get_numBuckets()) == numBuckets_;
     if (!configEquals) {
       auto configStr = serializeToJson(pd);
       XLOGF(ERR, "Recovery config: {}", configStr.c_str());
       throw std::logic_error{"config mismatch"};
     }
 
-    generationTime_ = std::chrono::nanoseconds{*pd.generationTime()};
-    itemCount_.set(*pd.itemCount());
-    sizeDist_ = SizeDistribution{*pd.sizeDist()};
+    generationTime_ = std::chrono::nanoseconds{pd.get_generationTime()};
+    itemCount_.set(pd.get_itemCount());
+    sizeDist_ = SizeDistribution{pd.get_sizeDist()};
     if (bloomFilter_) {
       bloomFilter_->recover<ProtoSerializer>(rr);
       XLOG(INFO, "Recovered bloom filter");

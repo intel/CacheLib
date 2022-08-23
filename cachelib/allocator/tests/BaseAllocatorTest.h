@@ -6160,7 +6160,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
 
     std::set<std::string> movedKeys;
     auto moveCb = [&](const Item& oldItem, Item& newItem, Item* /* parentPtr */) {
-      std::memcpy(newItem.getWritableMemory(), oldItem.getMemory(), oldItem.getSize());
+      std::memcpy(newItem.getMemory(), oldItem.getMemory(), oldItem.getSize());
       movedKeys.insert(oldItem.getKey().str());
     };
 
@@ -6190,7 +6190,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
       auto h = alloc.allocate(pid, key, 1024);
       EXPECT_TRUE(h);
 
-      std::memcpy(h->getWritableMemory(), data.data(), data.size());
+      std::memcpy(h->getMemory(), data.data(), data.size());
 
       alloc.insertOrReplace(h);
     }
