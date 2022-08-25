@@ -97,6 +97,52 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     ASSERT(handle != nullptr);
     ASSERT_NO_THROW(alloc->insertOrReplace(handle));
   }
+  
+  void testSyncEviction() {
+    auto config = makeDefaultConfig();
+    config.setCacheSize(10 * Slab::kSize);
+    config.acTopTierEvictionWatermark = 99.0;
+
+    {
+      AllocatorT alloc(AllocatorT::SharedMemNew, config);
+      auto pool = alloc.addPool("default", alloc.getCacheMemoryStats().cacheSize);
+
+      {
+        // should be allocated in upper tier.
+        auto handle = alloc.allocate(pool, "key", Slab::kSize / 2);
+        ASSERT_NE(handle, nullptr);
+        std::string data = "some data";
+        std::memcpy(handle->getMemory(), data.data(), data.size());
+
+        alloc.insertOrReplace(handle);
+
+        auto found = alloc.find("key");
+        ASSERT_NE(found, nullptr);
+        ASSERT_EQ(found->getSize(), Slab::kSize / 2);
+        ASSERT_EQ(std::string(reinterpret_cast<const char*>(found->getMemory()), data.size()), data);
+      }
+
+      auto toptier_free = alloc.getCacheMemoryStats().slabsApproxFreePercentages[0];
+      ASSERT_NE(toptier_free, 100.0);
+      ASSERT_EQ(alloc.getCacheMemoryStats().slabsApproxFreePercentages[1], 100.0);
+
+      auto handle2 = alloc.allocate(pool, "key2", Slab::kSize / 2);
+      ASSERT_NE(handle2, nullptr);
+      std::string data2 = "other data";
+      std::memcpy(reinterpret_cast<char*>(handle2->getMemory()), data2.data(), data2.size());
+
+      alloc.insertOrReplace(handle2);
+
+      auto found2 = alloc.find("key2");
+      ASSERT_NE(found2, nullptr);
+      ASSERT_EQ(found2->getSize(), Slab::kSize / 2);
+      ASSERT_EQ(std::string(reinterpret_cast<const char*>(found2->getMemory()), data2.size()), data2);
+
+      // previous data should be evicted, and replaced by new one
+      ASSERT_EQ(toptier_free, alloc.getCacheMemoryStats().slabsApproxFreePercentages[0]);
+      ASSERT_NE(alloc.getCacheMemoryStats().slabsApproxFreePercentages[1], 100.0);
+    }
+  }
 
   void testMultiTiersForceTierAllocation() {
     auto config = makeDefaultConfig();
