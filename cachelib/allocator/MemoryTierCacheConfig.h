@@ -53,6 +53,16 @@ public:
 
   size_t getRatio() const noexcept { return ratio; }
 
+  // Allocate memory only from specified NUMA nodes
+  MemoryTierCacheConfig& setMemBind(const std::vector<size_t>& _numaNodes) {
+    numaNodes = _numaNodes;
+    return *this;
+  }
+
+  std::vector<size_t> getMemBind() const {
+    return numaNodes;
+  }
+
   const ShmTypeOpts& getShmTypeOpts() const noexcept { return shmOpts; }
 
   size_t calculateTierSize(size_t totalCacheSize, size_t partitionNum) const {
@@ -79,6 +89,9 @@ private:
 
   // Options specific to shm type
   ShmTypeOpts shmOpts;
+
+  // Numa node(s) to bind the tier
+  std::vector<size_t> numaNodes;
 
   MemoryTierCacheConfig() = default;
 };

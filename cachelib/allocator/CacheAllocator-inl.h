@@ -202,6 +202,7 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts(TierId tid) {
   ShmSegmentOpts opts;
   opts.alignment = sizeof(Slab);
   opts.typeOpts = memoryTierConfigs[tid].getShmTypeOpts();
+  opts.memBindNumaNodes = memoryTierConfigs[tid].getMemBind();
   if (auto *v = std::get_if<PosixSysVSegmentOpts>(&opts.typeOpts)) {
     v->usePosix = config_.usePosixShm;
   }

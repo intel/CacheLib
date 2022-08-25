@@ -100,6 +100,7 @@ private:
   void lockPagesInMemory() const;
   void createReferenceMapping();
   void deleteReferenceMapping() const;
+  void memBind(void* addr) const;
 
   //  the key identifier for the shared memory
   KeyType key_{kInvalidKey};

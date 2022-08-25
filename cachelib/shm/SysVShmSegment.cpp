@@ -18,8 +18,11 @@
 
 #include <folly/hash/Hash.h>
 #include <folly/logging/xlog.h>
+#include <folly/ScopeGuard.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
+#include <numa.h>
+#include <numaif.h>
 
 #include "cachelib/common/Utils.h"
 
@@ -184,6 +187,50 @@ void shmCtlImpl(int shmid, int cmd, shmid_ds* buf) {
   }
 }
 
+void mbindImpl(void *addr, unsigned long len, int mode,
+               const std::vector<size_t>& memBindNumaNodes,
+               unsigned int flags) {
+  struct bitmask *nodesMask = numa_allocate_nodemask();
+  auto guard = folly::makeGuard([&] { numa_bitmask_free(nodesMask); });
+
+  for(auto node : memBindNumaNodes) {
+    numa_bitmask_setbit(nodesMask, node);
+  }              
+  
+  long ret = mbind(addr, len, mode, nodesMask->maskp, nodesMask->size, flags);
+  if(ret == 0) return;
+
+  switch (errno) {
+  case EFAULT:
+    util::throwSystemError(errno);
+    break;
+  case EINVAL:
+    util::throwSystemError(errno, "Invalid parameters when bind segment to NUMA node(s)");
+    break;
+  case EIO:
+    if(flags & MPOL_MF_STRICT) {
+      util::throwSystemError(errno, "Segment already allocated on another NUMA node that does not follow the policy.");
+    }
+    if(flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL )) {
+      util::throwSystemError(errno, "Segment already allocated but kernel was unable to move it to specified NUMA node(s).");
+    }
+    util::throwSystemError(errno, "Invalid errno");
+    break;
+  case ENOMEM:
+    util::throwSystemError(errno, "Could not bind memory. Insufficient kernel memory was available");
+    break;
+  case EPERM:
+    if(flags & MPOL_MF_MOVE_ALL) {
+      util::throwSystemError(errno, "Process does not have the CAP_SYS_NICE privilege to bind segment with MPOL_MF_MOVE_ALL flag");
+    }
+    util::throwSystemError(errno, "Invalid errno");
+    break;
+  default:
+    XDCHECK(false);
+    util::throwSystemError(errno, "Invalid errno");
+  }
+}
+
 } // namespace detail
 
 void ensureSizeforHugePage(size_t size) {
@@ -270,10 +317,16 @@ void* SysVShmSegment::mapAddress(void* addr) const {
 
   void* retAddr = detail::shmAttachImpl(shmid_, addr, shmFlags);
   XDCHECK(retAddr == addr || addr == nullptr);
+  memBind(retAddr);
   return retAddr;
 }
 
 void SysVShmSegment::unMap(void* addr) const { detail::shmDtImpl(addr); }
+
+void SysVShmSegment::memBind(void* addr) const {
+  if(opts_.memBindNumaNodes.empty()) return;
+  detail::mbindImpl(addr, getSize(), MPOL_BIND, opts_.memBindNumaNodes, 0);
+}
 
 void SysVShmSegment::markForRemoval() {
   if (isMarkedForRemoval()) {

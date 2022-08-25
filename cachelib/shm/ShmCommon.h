@@ -93,6 +93,7 @@ struct ShmSegmentOpts {
   PageSizeT pageSize{PageSizeT::NORMAL};
   bool readOnly{false};
   size_t alignment{1}; // alignment for mapping.
+  std::vector<size_t> memBindNumaNodes;
   // opts specific to segment type
   ShmTypeOpts typeOpts{PosixSysVSegmentOpts(false)};
 
