@@ -36,7 +36,6 @@
 #include <folly/Format.h>
 #include <folly/Range.h>
 #pragma GCC diagnostic pop
-
 #include "cachelib/allocator/CCacheManager.h"
 #include "cachelib/allocator/Cache.h"
 #include "cachelib/allocator/CacheAllocatorConfig.h"
@@ -988,6 +987,10 @@ class CacheAllocator : public CacheBase {
   const MemoryPool& getPool(PoolId pid) const override final {
     return allocator_[currentTier()]->getPool(pid);
   }
+  
+  const MemoryPool& getPoolByTid(PoolId pid, TierId tid) const override final {
+    return allocator_[tid]->getPool(pid);
+  }
 
   // calculate the number of slabs to be advised/reclaimed in each pool
   PoolAdviseReclaimData calcNumSlabsToAdviseReclaim() override final {
@@ -1222,6 +1225,11 @@ class CacheAllocator : public CacheBase {
   // allocator and executes the necessary callbacks. no-op if it is nullptr.
   FOLLY_ALWAYS_INLINE void release(Item* it, bool isNascent);
 
+  TierId getTargetTierForItem(PoolId pid, typename Item::Key key,
+                                             uint32_t size,
+                                             uint32_t creationTime,
+                                             uint32_t expiryTime);
+
   // This is the last step in item release. We also use this for the eviction
   // scenario where we have to do everything, but not release the allocation
   // to the allocator and instead recycle it for another new allocation. If
@@ -1326,7 +1334,8 @@ class CacheAllocator : public CacheBase {
                               Key key,
                               uint32_t size,
                               uint32_t creationTime,
-                              uint32_t expiryTime);
+                              uint32_t expiryTime,
+                              bool fromEvictorThread);
 
   // create a new cache allocation on specific memory tier.
   // For description see allocateInternal.
@@ -1337,7 +1346,8 @@ class CacheAllocator : public CacheBase {
                               Key key,
                               uint32_t size,
                               uint32_t creationTime,
-                              uint32_t expiryTime);
+                              uint32_t expiryTime,
+                              bool fromEvictorThread);
 
   // Allocate a chained item
   //
@@ -1577,7 +1587,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item);
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromEvictorThread);
 
   // Try to move the item down to the next memory tier
   //
@@ -1585,7 +1595,10 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle. 
-  WriteHandle tryEvictToNextMemoryTier(Item& item);
+  WriteHandle tryEvictToNextMemoryTier(Item& item, bool fromEvictorThread);
+
+  bool shouldEvictToNextMemoryTier(TierId sourceTierId,
+        TierId targetTierId, PoolId pid, Item& item);
 
   size_t memoryTierSize(TierId tid) const;
 
@@ -1714,7 +1727,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return last handle for corresponding to item on success. empty handle on
   // failure. caller can retry if needed.
-  ItemHandle evictNormalItem(Item& item, bool skipIfTokenInvalid = false);
+  ItemHandle evictNormalItem(Item& item, bool skipIfTokenInvalid = false, bool fromEvictorThread = false);
 
   // Helper function to evict a child item for slab release
   // As a side effect, the parent item is also evicted

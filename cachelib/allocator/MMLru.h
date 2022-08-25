@@ -190,6 +190,8 @@ class MMLru {
     // access. If set, and tryLock fails, access will not result in promotion.
     bool tryLockUpdate{false};
 
+    double markUsefulChance{100.0};
+
     // By default insertions happen at the head of the LRU. If we need
     // insertions at the middle of lru we can adjust this to be a non-zero.
     // Ex: lruInsertionPointSpec = 1, we insert at the middle (1/2 from end)
@@ -337,6 +339,9 @@ class MMLru {
     // iterator passed as parameter.
     template <typename F>
     void withEvictionIterator(F&& f);
+
+    template <typename F>
+    void withPromotionIterator(F&& f);
 
     // get copy of current config
     Config getConfig() const;

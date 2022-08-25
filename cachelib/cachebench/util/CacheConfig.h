@@ -48,11 +48,16 @@ struct MemoryTierConfig : public JSONConfig {
   MemoryTierCacheConfig getMemoryTierCacheConfig() {
     MemoryTierCacheConfig config = memoryTierCacheConfigFromSource();
     config.setRatio(ratio);
+    config.markUsefulChance = markUsefulChance;
+    config.lruInsertionPointSpec = lruInsertionPointSpec;
     return config;
   }
 
   std::string file{""};
   size_t ratio{0};
+
+  double markUsefulChance{100.0}; // call mark useful only with this
+  uint32_t lruInsertionPointSpec{0};
 
 private:
   MemoryTierCacheConfig memoryTierCacheConfigFromSource() {
@@ -281,6 +286,16 @@ struct CacheConfig : public JSONConfig {
   // enable the ItemDestructor feature, but not check correctness,
   // this verifies whether the feature affects throughputs.
   bool enableItemDestructor{false};
+
+  bool disableEvictionToMemory{false};
+
+  double minAcAllocationWatermark{0.0};
+  double maxAcAllocationWatermark{0.0};
+  double acTopTierEvictionWatermark{0.0};
+  uint64_t sizeThresholdPolicy{0};   
+  double defaultTierChancePercentage{50.0};
+
+  uint64_t forceAllocationTier{UINT64_MAX};
 
   explicit CacheConfig(const folly::dynamic& configJson);
 

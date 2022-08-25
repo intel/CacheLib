@@ -585,6 +585,15 @@ class CacheAllocatorConfig {
   // skip promote children items in chained when parent fail to promote
   bool skipPromoteChildrenWhenParentFailed{false};
 
+  bool disableEvictionToMemory{false};
+
+  double minAcAllocationWatermark{0.0};
+  double maxAcAllocationWatermark{0.0};
+  double acTopTierEvictionWatermark{0.0}; // TODO: make it per TIER?
+  uint64_t sizeThresholdPolicy{0};   
+  double defaultTierChancePercentage{50.0};
+  uint64_t forceAllocationTier{UINT64_MAX};
+
   friend CacheT;
 
  private:

@@ -93,8 +93,15 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, enableItemDestructorCheck);
   JSONSetVal(configJson, enableItemDestructor);
 
+  JSONSetVal(configJson, disableEvictionToMemory);
+  JSONSetVal(configJson, minAcAllocationWatermark);
+  JSONSetVal(configJson, maxAcAllocationWatermark);
+  JSONSetVal(configJson, acTopTierEvictionWatermark);
+  JSONSetVal(configJson, sizeThresholdPolicy);
+  JSONSetVal(configJson, defaultTierChancePercentage);
   JSONSetVal(configJson, persistedCacheDir);
   JSONSetVal(configJson, usePosixShm);
+  JSONSetVal(configJson, forceAllocationTier);
   if (configJson.count("memoryTiers")) {
     for (auto& it : configJson["memoryTiers"]) {
       memoryTierConfigs.push_back(MemoryTierConfig(it).getMemoryTierCacheConfig());
@@ -104,7 +111,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 752>();
+  checkCorrectSize<CacheConfig, 800>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
@@ -138,8 +145,10 @@ std::shared_ptr<RebalanceStrategy> CacheConfig::getRebalanceStrategy() const {
 MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, file);
   JSONSetVal(configJson, ratio);
+  JSONSetVal(configJson, markUsefulChance);
+  JSONSetVal(configJson, lruInsertionPointSpec);
 
-  checkCorrectSize<MemoryTierConfig, 40>();
+  checkCorrectSize<MemoryTierConfig, 56>();
 }
 
 } // namespace cachebench

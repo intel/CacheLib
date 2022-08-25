@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <folly/Random.h>
+
 namespace facebook {
 namespace cachelib {
 
@@ -103,6 +105,10 @@ bool MM2Q::Container<T, HookPtr>::recordAccess(T& node,
       }
       return false;
     }
+
+  // TODO: % 100 is not very accurate
+  if (config_.markUsefulChance < 100.0 && folly::Random::rand32() % 100 >= config_.markUsefulChance)
+    return false;
 
     return lruMutex_->lock_combine(func);
   }
@@ -211,15 +217,32 @@ void MM2Q::Container<T, HookPtr>::rebalance() noexcept {
 template <typename T, MM2Q::Hook<T> T::*HookPtr>
 bool MM2Q::Container<T, HookPtr>::add(T& node) noexcept {
   const auto currTime = static_cast<Time>(util::getCurrentTimeSec());
-  return lruMutex_->lock_combine([this, &node, currTime]() {
+
+  auto insertToList = [this, &node] {
+    if (config_.lruInsertionPointSpec == 0) {
+      markHot(node);
+      unmarkCold(node);
+      unmarkTail(node);
+      lru_.getList(LruType::Hot).linkAtHead(node);
+    } else if (config_.lruInsertionPointSpec == 1) {
+      unmarkHot(node);
+      unmarkCold(node);
+      unmarkTail(node);
+      lru_.getList(LruType::Warm).linkAtHead(node);
+    } else {
+      unmarkHot(node);
+      markCold(node);
+      unmarkTail(node);
+      lru_.getList(LruType::Cold).linkAtHead(node);
+    }
+  };
+
+  return lruMutex_->lock_combine([this, &node, currTime, &insertToList]() {
     if (node.isInMMContainer()) {
       return false;
     }
 
-    markHot(node);
-    unmarkCold(node);
-    unmarkTail(node);
-    lru_.getList(LruType::Hot).linkAtHead(node);
+    insertToList();
     rebalance();
 
     node.markInMMContainer();

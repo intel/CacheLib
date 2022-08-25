@@ -116,6 +116,7 @@ Cache<Allocator>::Cache(const CacheConfig& config,
     }
   });
 
+  allocatorConfig_.forceAllocationTier = config_.forceAllocationTier;
   if (config_.enableItemDestructorCheck) {
     auto removeCB = [&](const typename Allocator::DestructorData& data) {
       if (!itemRecords_.validate(data)) {
@@ -259,6 +260,13 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   }
 
   allocatorConfig_.cacheName = "cachebench";
+
+  allocatorConfig_.disableEvictionToMemory = config_.disableEvictionToMemory;
+  allocatorConfig_.minAcAllocationWatermark = config_.minAcAllocationWatermark;
+  allocatorConfig_.maxAcAllocationWatermark = config_.maxAcAllocationWatermark;
+  allocatorConfig_.sizeThresholdPolicy = config_.sizeThresholdPolicy;
+  allocatorConfig_.defaultTierChancePercentage = config_.defaultTierChancePercentage;
+  allocatorConfig_.acTopTierEvictionWatermark = config_.acTopTierEvictionWatermark;
 
   if (!allocatorConfig_.cacheDir.empty()) {
     cache_ =

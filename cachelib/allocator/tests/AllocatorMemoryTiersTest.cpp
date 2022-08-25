@@ -26,6 +26,8 @@ using LruAllocatorMemoryTiersTest = AllocatorMemoryTiersTest<LruAllocator>;
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersInvalid) { this->testMultiTiersInvalid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValid) { this->testMultiTiersValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValidMixed) { this->testMultiTiersValidMixed(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersForceTierAllocation) { this->testMultiTiersForceTierAllocation(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersWatermarkTierAllocation) { this->testMultiTiersWatermarkAllocation(); }
 
 } // end of namespace tests
 } // end of namespace cachelib

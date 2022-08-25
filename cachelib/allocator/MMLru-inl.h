@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <folly/Random.h>
+
 namespace facebook {
 namespace cachelib {
 namespace detail {
@@ -86,6 +88,10 @@ bool MMLru::Container<T, HookPtr>::recordAccess(T& node,
 
       return false;
     }
+
+    // TODO: % 100 is not very accurate
+    if (config_.markUsefulChance < 100.0 && folly::Random::rand32() % 100 < config_.markUsefulChance)
+      return false;
 
     lruMutex_->lock_combine(func);
     return true;
@@ -231,6 +237,15 @@ void
 MMLru::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
   lruMutex_->lock_combine([this, &fun]() {
     fun(Iterator{LockHolder{}, lru_.rbegin()});
+  });
+}
+
+template <typename T, MMLru::Hook<T> T::*HookPtr>
+template <typename F>
+void
+MMLru::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
+  lruMutex_->lock_combine([this, &fun]() {
+    fun(Iterator{LockHolder{}, lru_.begin()});
   });
 }
 
