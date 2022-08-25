@@ -1551,7 +1551,8 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  WriteHandle moveRegularItemOnEviction(Item& oldItem, WriteHandle& newItemHdl);
+  template <typename P>
+  WriteHandle moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl, P&& predicate);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
