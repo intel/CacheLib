@@ -81,6 +81,10 @@ class MemoryTierCacheConfig {
   
   const ShmTypeOpts& getShmTypeOpts() const noexcept { return shmOpts; }
 
+    // TODO: move it to MMContainer config
+  double markUsefulChance{100.0}; // call mark useful only with this
+  uint8_t lruInsertionPointSpec{0}; // look at LRU/LRU2Q description (possible values vary)
+
 private:
   // Ratio is a number of parts of the total cache size to be allocated for this
   // tier. E.g. if X is a total cache size, Yi are ratios specified for memory

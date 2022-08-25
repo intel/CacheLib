@@ -405,9 +405,22 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   // TODO: per-tier
   (*stats_.allocAttempts)[pid][cid].inc();
 
-  void* memory = allocator_[tid]->allocate(pid, requiredSize);
+  void *memory = nullptr;
+
+  if (tid == 0 && config_.acTopTierEvictionWatermark > 0.0
+    && getAllocationClassStats(tid, pid, cid)
+      .approxFreePercent < config_.acTopTierEvictionWatermark) {
+    memory = findEviction(tid, pid, cid);
+  } 
+  
+  if (memory == nullptr) {
+    // TODO: should we try allocate item even if this will result in violating
+    // acTopTierEvictionWatermark?
+    memory = allocator_[tid]->allocate(pid, requiredSize);
+  }
+
   // TODO: Today disableEviction means do not evict from memory (DRAM).
-  //       Should we support eviction between memory tiers (e.g. from DRAM to PMEM)?
+  //       Should we support eviction between memory tiers (e.g. from DRAM to next tier)?
   if (memory == nullptr && !config_.isEvictionDisabled()) {
     memory = findEviction(tid, pid, cid);
   }
@@ -449,18 +462,70 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
 }
 
 template <typename CacheTrait>
+TierId
+CacheAllocator<CacheTrait>::getTargetTierForItem(PoolId pid,
+                                             typename Item::Key key,
+                                             uint32_t size,
+                                             uint32_t creationTime,
+                                             uint32_t expiryTime) {
+  if (getNumTiers() == 1)
+    return 0;
+
+  if (config_.forceAllocationTier != UINT64_MAX) {
+    return config_.forceAllocationTier;
+  }
+
+  const TierId defaultTargetTier = 0;
+
+  const auto requiredSize = Item::getRequiredSize(key, size);
+  const auto cid = allocator_[defaultTargetTier]->getAllocationClassId(pid, requiredSize);
+
+  auto freePercentage = getAllocationClassStats(defaultTargetTier, pid, cid).approxFreePercent;
+
+  // TODO: COULD we implement BG worker which would move slabs around
+  // so that there is similar amount of free space in each pool/ac.
+  // Should this be responsibility of BG evictor?
+
+  if (freePercentage >= config_.maxAcAllocationWatermark)
+    return defaultTargetTier;
+
+  if (freePercentage <= config_.minAcAllocationWatermark)
+    return defaultTargetTier + 1;
+
+  // TODO: we can even think about creating different allocation classes for different tiers
+  // and we could look at possible fragmentation when deciding where to put the item
+  if (config_.sizeThresholdPolicy)
+    return requiredSize < config_.sizeThresholdPolicy ? defaultTargetTier : defaultTargetTier + 1;
+
+  // TODO: (e.g. always put chained items to PMEM)
+  // if (chainedItemsPolicy)
+  //  return item.isChainedItem() ? defaultTargetTier + 1 : defaultTargetTier;
+
+  // TODO:
+  // if (expiryTimePolicy)
+  //   return (expiryTime - creationTime) < expiryTimePolicy ? defaultTargetTier : defaultTargetTier + 1;
+
+  // TODO:
+  // if (keyPolicy) // this can be based on key length or some other properties
+  //  return getTargetTierForKey(key);
+
+  // TODO:
+  // if (compressabilityPolicy) // if compresses well store in PMEM? latency will be higher anyway
+  //  return TODO;
+
+  // TODO: only works for 2 tiers
+  return (folly::Random::rand32() % 100) < config_.defaultTierChancePercentage ? defaultTargetTier : defaultTargetTier + 1;
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              typename Item::Key key,
                                              uint32_t size,
                                              uint32_t creationTime,
                                              uint32_t expiryTime) {
-  auto tid = 0; /* TODO: consult admission policy */
-  for(TierId tid = 0; tid < getNumTiers(); ++tid) {
-    auto handle = allocateInternalTier(tid, pid, key, size, creationTime, expiryTime);
-    if (handle) return handle;
-  }
-  return {};
+  auto tid = getTargetTierForItem(pid, key, size, creationTime, expiryTime);
+  return allocateInternalTier(tid, pid, key, size, creationTime, expiryTime);
 }
 
 template <typename CacheTrait>
@@ -1637,6 +1702,13 @@ bool CacheAllocator<CacheTrait>::shouldWriteToNvmCacheExclusive(
 }
 
 template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::shouldEvictToNextMemoryTier(
+    TierId sourceTierId, TierId targetTierId, PoolId pid, Item& item)
+{
+  return !(config_.disableEvictionToMemory);
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item) {
@@ -1649,8 +1721,10 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     if (handle) { return handle; }
   }
 
-  TierId nextTier = tid; // TODO - calculate this based on some admission policy
+  TierId nextTier = tid;
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
+    if (!shouldEvictToNextMemoryTier(tid, nextTier, pid, item))
+      continue;
     // allocateInternal might trigger another eviction
     auto newItemHdl = allocateInternalTier(nextTier, pid,
                      item.getKey(),
@@ -2431,6 +2505,10 @@ void CacheAllocator<CacheTrait>::createMMContainers(const PoolId pid,
                   .getAllocsPerSlab()
             : 0);
     for (TierId tid = 0; tid < getNumTiers(); tid++) {
+      if constexpr (std::is_same_v<MMConfig, MMLru::Config> || std::is_same_v<MMConfig, MM2Q::Config>) {
+        config.lruInsertionPointSpec  = config_.memoryTierConfigs[tid].lruInsertionPointSpec ;
+        config.markUsefulChance = config_.memoryTierConfigs[tid].markUsefulChance;
+      }
       mmContainers_[tid][pid][cid].reset(new MMContainer(config, compressor_));
     }
   }
@@ -2485,7 +2563,7 @@ std::set<PoolId> CacheAllocator<CacheTrait>::getRegularPoolIds() const {
   folly::SharedMutex::ReadHolder r(poolsResizeAndRebalanceLock_);
   // TODO - get rid of the duplication - right now, each tier
   // holds pool objects with mostly the same info
-  return filterCompactCachePools(allocator_[0]->getPoolIds());
+  return filterCompactCachePools(allocator_[currentTier()]->getPoolIds());
 }
 
 template <typename CacheTrait>

@@ -228,7 +228,6 @@ MMTinyLFU::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
   fun(Iterator{LockHolder{}, *this});
 }
 
-
 template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
 void MMTinyLFU::Container<T, HookPtr>::removeLocked(T& node) noexcept {
   if (isTiny(node)) {

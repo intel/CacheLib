@@ -603,6 +603,14 @@ class CacheAllocatorConfig {
   // If true, we will delay worker start until user explicitly calls
   // CacheAllocator::startCacheWorkers()
   bool delayCacheWorkersStart{false};
+  bool disableEvictionToMemory{false};
+
+  double minAcAllocationWatermark{0.0}; //if % free in AC is <= then try to allocate in next tier 
+  double maxAcAllocationWatermark{0.0}; //if % free in AC is >= then allocate in default target tier
+  double acTopTierEvictionWatermark{0.0}; // evict from 1st tier if % free is < watermark
+  uint64_t sizeThresholdPolicy{0}; // only allow items < threshold in top tier   
+  double defaultTierChancePercentage{50.0}; //randomly allocate items among top and bottom tiers
+  uint64_t forceAllocationTier{UINT64_MAX}; //force allocations to happen in this tier
 
   friend CacheT;
 
