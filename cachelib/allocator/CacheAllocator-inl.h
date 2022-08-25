@@ -1657,7 +1657,6 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   return {};
 }
 
-
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item) {
