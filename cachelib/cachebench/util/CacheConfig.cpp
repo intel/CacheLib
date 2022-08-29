@@ -138,8 +138,53 @@ std::shared_ptr<RebalanceStrategy> CacheConfig::getRebalanceStrategy() const {
 MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, file);
   JSONSetVal(configJson, ratio);
+  JSONSetVal(configJson, memBindNodes);
 
-  checkCorrectSize<MemoryTierConfig, 40>();
+  checkCorrectSize<MemoryTierConfig, 72>();
+}
+
+static bool starts_with() {return true;}
+
+std::vector<size_t> MemoryTierConfig::parseNumaNodes() {
+  std::vector<size_t> numaNodes;
+
+  std::vector<folly::StringPiece> tokens;
+  folly::split(",", memBindNodes, tokens, true /*ignore empty*/);
+  for(const auto &token : tokens) {
+    if(token.startsWith("!")) {
+      throw std::invalid_argument(folly::sformat(
+        "invalid NUMA nodes binding in memory tier config: {} "
+        "inverse !N or !N-N is not supported "
+        "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so forth.",
+        token));
+    }
+    else if(token.startsWith("+")) {
+      throw std::invalid_argument(folly::sformat(
+        "invalid NUMA nodes binding in memory tier config: {} "
+        "relative nodes are not supported. "
+        "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so forth.",
+        token));
+    }
+    else if (token.contains("-")) {
+      size_t begin, end;
+      if(folly::split("-", token, begin, end) && begin < end) {
+        while(begin <=end) {
+          numaNodes.push_back(begin++);
+        }
+      } else {
+        throw std::invalid_argument(folly::sformat(
+        "invalid NUMA nodes binding in memory tier config: {} "
+        "Invalid range format. "
+        "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so forth.",
+        token));
+      }
+    }
+    else {
+      numaNodes.push_back(folly::to<size_t>(token));
+    }
+  }
+
+  return numaNodes;
 }
 
 } // namespace cachebench

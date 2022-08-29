@@ -48,11 +48,13 @@ struct MemoryTierConfig : public JSONConfig {
   MemoryTierCacheConfig getMemoryTierCacheConfig() {
     MemoryTierCacheConfig config = memoryTierCacheConfigFromSource();
     config.setRatio(ratio);
+    config.setMemBind(parseNumaNodes());
     return config;
   }
 
   std::string file{""};
   size_t ratio{0};
+  std::string memBindNodes{""};
 
 private:
   MemoryTierCacheConfig memoryTierCacheConfigFromSource() {
@@ -62,6 +64,8 @@ private:
       return MemoryTierCacheConfig::fromFile(file);
     }
   }
+
+  std::vector<size_t> parseNumaNodes();
 };
 
 struct CacheConfig : public JSONConfig {
