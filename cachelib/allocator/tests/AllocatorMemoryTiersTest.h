@@ -27,7 +27,7 @@ namespace tests {
 template <typename AllocatorT>
 class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
  public:
-  void testMultiTiersInvalid() {
+  void testMultiTiersFormFileInvalid() {
     typename AllocatorT::Config config;
     config.setCacheSize(100 * Slab::kSize);
     config.configureMemoryTiers({
@@ -42,7 +42,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
                  std::invalid_argument);
   }
 
-  void testMultiTiersValid() {
+  void testMultiTiersFromFileValid() {
     typename AllocatorT::Config config;
     config.setCacheSize(100 * Slab::kSize);
     config.enableCachePersistence("/tmp");
@@ -73,6 +73,47 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
             .setRatio(1),
         MemoryTierCacheConfig::fromFile("/tmp/b" + std::to_string(::getpid()))
             .setRatio(1)
+    });
+
+    auto alloc = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
+    ASSERT(alloc != nullptr);
+
+    auto pool = alloc->addPool("default", alloc->getCacheMemoryStats().cacheSize);
+    auto handle = alloc->allocate(pool, "key", std::string("value").size());
+    ASSERT(handle != nullptr);
+    ASSERT_NO_THROW(alloc->insertOrReplace(handle));
+  }
+
+  void testMultiTiersNumaBindingsSysVValid() {
+    typename AllocatorT::Config config;
+    config.setCacheSize(100 * Slab::kSize);
+    config.enableCachePersistence("/tmp");
+    config.configureMemoryTiers({
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind({0}),
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind({0})
+    });
+
+    auto alloc = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
+    ASSERT(alloc != nullptr);
+
+    auto pool = alloc->addPool("default", alloc->getCacheMemoryStats().cacheSize);
+    auto handle = alloc->allocate(pool, "key", std::string("value").size());
+    ASSERT(handle != nullptr);
+    ASSERT_NO_THROW(alloc->insertOrReplace(handle));
+  }
+
+  void testMultiTiersNumaBindingsPosixValid() {
+    typename AllocatorT::Config config;
+    config.setCacheSize(100 * Slab::kSize);
+    config.enableCachePersistence("/tmp");
+    config.usePosixForShm();
+    config.configureMemoryTiers({
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind({0}),
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind({0})
     });
 
     auto alloc = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
