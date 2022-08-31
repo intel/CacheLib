@@ -23,9 +23,11 @@ namespace tests {
 using LruAllocatorMemoryTiersTest = AllocatorMemoryTiersTest<LruAllocator>;
 
 // TODO(MEMORY_TIER): add more tests with different eviction policies
-TEST_F(LruAllocatorMemoryTiersTest, MultiTiersInvalid) { this->testMultiTiersInvalid(); }
-TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValid) { this->testMultiTiersValid(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersFromFileInvalid) { this->testMultiTiersFormFileInvalid(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersFromFileValid) { this->testMultiTiersFromFileValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValidMixed) { this->testMultiTiersValidMixed(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsSysVValid) { this->testMultiTiersNumaBindingsSysVValid(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsPosixValid) { this->testMultiTiersNumaBindingsPosixValid(); }
 
 } // end of namespace tests
 } // end of namespace cachelib
