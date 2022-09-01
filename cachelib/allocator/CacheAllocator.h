@@ -1159,17 +1159,8 @@ class CacheAllocator : public CacheBase {
   //
   // @return  time when the cache was created.
   time_t getCacheCreationTime() const noexcept { return cacheCreationTime_; }
-
-  // unix timestamp when the NVM cache was created. If NVM cahce isn't enaled,
-  // the cache creation time is returned instead.
-  //
-  // @return  time when the NVM cache was created.
   time_t getNVMCacheCreationTime() const {
-    auto result = getCacheCreationTime();
-    if (nvmCacheState_.has_value()) {
-      result = nvmCacheState_.value().getCreationTime();
-    }
-    return result;
+    return nvmCacheState_.getCreationTime();
   }
 
   // Inspects the cache without changing its state.
@@ -2198,7 +2189,7 @@ class CacheAllocator : public CacheBase {
   folly::ThreadLocal<TlsActiveItemRing, DummyTlsActiveItemRingTag> ring_;
 
   // state for the nvmcache
-  std::optional<NvmCacheState> nvmCacheState_{};
+  NvmCacheState nvmCacheState_;
 
   // admission policy for nvmcache
   std::shared_ptr<NvmAdmissionPolicy<CacheT>> nvmAdmissionPolicy_;
