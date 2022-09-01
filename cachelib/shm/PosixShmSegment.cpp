@@ -21,6 +21,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <numa.h>
+#include <numaif.h>
 
 #include "cachelib/common/Utils.h"
 
@@ -176,11 +178,50 @@ void* PosixShmSegment::mapAddress(void* addr) const {
     util::throwSystemError(EINVAL, "Address already mapped");
   }
   XDCHECK(retAddr == addr || addr == nullptr);
+  memBind(addr);
   return retAddr;
 }
 
 void PosixShmSegment::unMap(void* addr) const {
   detail::munmapImpl(addr, getSize());
+}
+
+static void forcePageAllocation(void* addr, size_t size, size_t pageSize) {
+  for(volatile char* curAddr = (char*)addr; curAddr < (char*)addr+size; curAddr += pageSize) {
+    *curAddr = *curAddr;
+  }
+}
+
+void PosixShmSegment::memBind(void* addr) const {
+  if(opts_.memBindNumaNodes.empty()) return;
+
+  struct bitmask *oldNodeMask = numa_allocate_nodemask();
+  int oldMode = 0;
+  struct bitmask *nodesMask = numa_allocate_nodemask();
+  auto guard = folly::makeGuard([&] { numa_bitmask_free(nodesMask); numa_bitmask_free(oldNodeMask); });
+
+  for(auto node : opts_.memBindNumaNodes) {
+    numa_bitmask_setbit(nodesMask, node);
+  }
+
+  // mbind() cannot be used because mmap was called with MAP_SHARED flag
+  // But we can set memory policy for current thread and force page allcoation.
+  // The following logic is used:
+  // 1. Remember current memory policy for the current thread
+  // 2. Set new memory policy as specifiec by config
+  // 3. Force page allocation by touching every page in the segment
+  // 4. Restore memory policy
+
+  // Remember current memory policy 
+  get_mempolicy(&oldMode, oldNodeMask->maskp, oldNodeMask->size, nullptr, 0);
+
+  // Set memory bindings
+  set_mempolicy(MPOL_BIND, nodesMask->maskp, nodesMask->size);
+
+  forcePageAllocation(addr, getSize(), detail::getPageSize(opts_.pageSize));
+
+  // Restore memory policy for the thread
+  set_mempolicy(oldMode, nodesMask->maskp, nodesMask->size);
 }
 
 std::string PosixShmSegment::createKeyForName(
