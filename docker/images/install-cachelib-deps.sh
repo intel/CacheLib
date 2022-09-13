@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright 2022, Intel Corporation
 
-git clone https://github.com/pmem/CacheLib CacheLib
+git clone -b develop https://github.com/intel/CacheLib CacheLib
 
 ./CacheLib/contrib/prerequisites-centos8.sh
 

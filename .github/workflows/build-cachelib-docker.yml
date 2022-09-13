@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REPO:           cachelib
-      GITHUB_REPO:    pmem/CacheLib
+      GITHUB_REPO:    intel/CacheLib
       CONTAINER_REG:  ghcr.io/pmem/cachelib
       CONTAINER_REG_USER:   ${{ secrets.GH_CR_USER }}
       CONTAINER_REG_PASS:   ${{ secrets.GH_CR_PAT }}
