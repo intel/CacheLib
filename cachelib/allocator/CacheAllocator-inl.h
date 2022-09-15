@@ -1641,7 +1641,16 @@ typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item) {
   if(item.isChainedItem()) return {}; // TODO: We do not support ChainedItem yet
-  if(item.isExpired()) return acquire(&item);
+  if(item.isExpired()) {
+    auto handle = accessContainer_->removeIf(item,
+                                             [](const Item& it) {
+                                              return it.getRefCount() == 0;
+                                             });
+    if(handle) {
+      removeFromMMContainer(item);
+    }
+    return handle;
+  }
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
