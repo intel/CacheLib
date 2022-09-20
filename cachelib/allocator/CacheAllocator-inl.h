@@ -1223,18 +1223,22 @@ CacheAllocator<CacheTrait>::findEviction(PoolId pid, ClassId cid) {
   unsigned int searchTries = 0;
   while ((config_.evictionSearchTries == 0 ||
           config_.evictionSearchTries > searchTries)) {
-    ++searchTries;
-    (*stats_.evictionAttempts)[pid][cid].inc();
-
     Item* toRecycle = nullptr;
     Item* candidate = nullptr;
 
     mmContainer.withEvictionIterator(
-        [this, &candidate, &toRecycle, &searchTries](auto&& itr) {
+        [this, pid, cid, &candidate, &toRecycle, &searchTries](auto&& itr) {
+          if (!itr) {
+            ++searchTries;
+            (*stats_.evictionAttempts)[pid][cid].inc();
+            return;
+          }
+
           while ((config_.evictionSearchTries == 0 ||
                   config_.evictionSearchTries > searchTries) &&
                  itr) {
             ++searchTries;
+            (*stats_.evictionAttempts)[pid][cid].inc();
 
             auto* toRecycle_ = itr.get();
             auto* candidate_ =
