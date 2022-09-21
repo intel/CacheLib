@@ -660,8 +660,7 @@ class MemoryAllocator {
       && ptr < slabAllocator_.getSlabMemoryEnd();
   }
 
- // TODO:
- // private:
+  private:
   // @param memory    pointer to the memory.
   // @return          the MemoryPool corresponding to the memory.
   // @throw std::invalid_argument if the memory does not belong to any active

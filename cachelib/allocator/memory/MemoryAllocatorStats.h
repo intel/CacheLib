@@ -55,7 +55,7 @@ struct ACStats {
     return Slab::kSize * freeSlabs + freeAllocs * allocSize;
   }
 
-  constexpr size_t getTotalMemory() const noexcept {
+  constexpr size_t getTotalAllocMemory() const noexcept {
     return activeAllocs * allocSize;
   }
 };
