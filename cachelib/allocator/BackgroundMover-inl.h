@@ -17,27 +17,24 @@
 namespace facebook {
 namespace cachelib {
 
-
 template <typename CacheT>
-BackgroundMover<CacheT>::BackgroundMover(Cache& cache,
-                               std::shared_ptr<BackgroundMoverStrategy> strategy, 
-                               MoverDir direction)
-    : cache_(cache),
-      strategy_(strategy),
-      direction_(direction)
-{
-    if (direction_ == MoverDir::Evict) {
-        moverFunc = 
-            BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItems;
+BackgroundMover<CacheT>::BackgroundMover(
+    Cache& cache,
+    std::shared_ptr<BackgroundMoverStrategy> strategy,
+    MoverDir direction)
+    : cache_(cache), strategy_(strategy), direction_(direction) {
+  if (direction_ == MoverDir::Evict) {
+    moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItems;
 
-    } else if (direction_ == MoverDir::Promote) {
-        moverFunc = 
-            BackgroundMoverAPIWrapper<CacheT>::traverseAndPromoteItems;
-    }
+  } else if (direction_ == MoverDir::Promote) {
+    moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndPromoteItems;
+  }
 }
 
 template <typename CacheT>
-BackgroundMover<CacheT>::~BackgroundMover() { stop(std::chrono::seconds(0)); }
+BackgroundMover<CacheT>::~BackgroundMover() {
+  stop(std::chrono::seconds(0));
+}
 
 template <typename CacheT>
 void BackgroundMover<CacheT>::work() {
@@ -49,14 +46,14 @@ void BackgroundMover<CacheT>::work() {
 }
 
 template <typename CacheT>
-void BackgroundMover<CacheT>::setAssignedMemory(std::vector<std::tuple<TierId, PoolId, ClassId>> &&assignedMemory)
-{
+void BackgroundMover<CacheT>::setAssignedMemory(
+    std::vector<std::tuple<TierId, PoolId, ClassId>>&& assignedMemory) {
   XLOG(INFO, "Class assigned to background worker:");
   for (auto [tid, pid, cid] : assignedMemory) {
     XLOGF(INFO, "Tid: {}, Pid: {}, Cid: {}", tid, pid, cid);
   }
 
-  mutex.lock_combine([this, &assignedMemory]{
+  mutex.lock_combine([this, &assignedMemory] {
     this->assignedMemory_ = std::move(assignedMemory);
   });
 }
@@ -65,31 +62,28 @@ void BackgroundMover<CacheT>::setAssignedMemory(std::vector<std::tuple<TierId, P
 // and return those for eviction
 template <typename CacheT>
 void BackgroundMover<CacheT>::checkAndRun() {
-  auto assignedMemory = mutex.lock_combine([this]{
-    return assignedMemory_;
-  });
+  auto assignedMemory = mutex.lock_combine([this] { return assignedMemory_; });
 
   unsigned int moves = 0;
   std::set<ClassId> classes{};
-  auto batches = strategy_->calculateBatchSizes(cache_,assignedMemory);
+  auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
 
   for (size_t i = 0; i < batches.size(); i++) {
     const auto [tid, pid, cid] = assignedMemory[i];
     const auto batch = batches[i];
-  
+
     classes.insert(cid);
-    const auto& mpStats = cache_.getPoolByTid(pid,tid).getStats();
+    const auto& mpStats = cache_.getPoolByTid(pid, tid).getStats();
 
     if (!batch) {
       continue;
     }
 
-    totalBytesMoved.add(batch * mpStats.acStats.at(cid).allocSize);
-  
-    //try moving BATCH items from the class in order to reach free target
-    auto moved = moverFunc(cache_,tid,pid,cid,batch);
+    // try moving BATCH items from the class in order to reach free target
+    auto moved = moverFunc(cache_, tid, pid, cid, batch);
     moves += moved;
     moves_per_class_[tid][pid][cid] += moved;
+    totalBytesMoved.add(moved * mpStats.acStats.at(cid).allocSize);
   }
 
   numTraversals.inc();

@@ -23,10 +23,10 @@ namespace cachelib {
 
 // Base class for background eviction strategy.
 class BackgroundMoverStrategy {
-
-public:
-  virtual std::vector<size_t> calculateBatchSizes(const CacheBase& cache,
-                                       std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) = 0;
+ public:
+  virtual std::vector<size_t> calculateBatchSizes(
+      const CacheBase& cache,
+      std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) = 0;
 };
 
 } // namespace cachelib

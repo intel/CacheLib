@@ -16,24 +16,27 @@
 
 #pragma once
 
-#include "cachelib/allocator/Cache.h"
 #include "cachelib/allocator/BackgroundMoverStrategy.h"
+#include "cachelib/allocator/Cache.h"
 
 namespace facebook {
 namespace cachelib {
 
-
 // Base class for background mover strategy.
 class FreeThresholdStrategy : public BackgroundMoverStrategy {
-
-public:
-  FreeThresholdStrategy(double lowEvictionAcWatermark, double highEvictionAcWatermark, uint64_t maxEvictionBatch, uint64_t minEvictionBatch);
+ public:
+  FreeThresholdStrategy(double lowEvictionAcWatermark,
+                        double highEvictionAcWatermark,
+                        uint64_t maxEvictionBatch,
+                        uint64_t minEvictionBatch);
   ~FreeThresholdStrategy() {}
 
-  std::vector<size_t> calculateBatchSizes(const CacheBase& cache,
-                            std::vector<std::tuple<TierId, PoolId, ClassId>> acVecs);
-private:
-  double lowEvictionAcWatermark{2.0}; 
+  std::vector<size_t> calculateBatchSizes(
+      const CacheBase& cache,
+      std::vector<std::tuple<TierId, PoolId, ClassId>> acVecs);
+
+ private:
+  double lowEvictionAcWatermark{2.0};
   double highEvictionAcWatermark{5.0};
   uint64_t maxEvictionBatch{40};
   uint64_t minEvictionBatch{5};

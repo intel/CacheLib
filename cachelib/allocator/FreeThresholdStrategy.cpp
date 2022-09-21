@@ -21,13 +21,18 @@
 namespace facebook {
 namespace cachelib {
 
-
-
-FreeThresholdStrategy::FreeThresholdStrategy(double lowEvictionAcWatermark, double highEvictionAcWatermark, uint64_t maxEvictionBatch, uint64_t minEvictionBatch)
-    : lowEvictionAcWatermark(lowEvictionAcWatermark), highEvictionAcWatermark(highEvictionAcWatermark), maxEvictionBatch(maxEvictionBatch), minEvictionBatch(minEvictionBatch) {}
+FreeThresholdStrategy::FreeThresholdStrategy(double lowEvictionAcWatermark,
+                                             double highEvictionAcWatermark,
+                                             uint64_t maxEvictionBatch,
+                                             uint64_t minEvictionBatch)
+    : lowEvictionAcWatermark(lowEvictionAcWatermark),
+      highEvictionAcWatermark(highEvictionAcWatermark),
+      maxEvictionBatch(maxEvictionBatch),
+      minEvictionBatch(minEvictionBatch) {}
 
 std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
-  const CacheBase& cache, std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) {
+    const CacheBase& cache,
+    std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) {
   std::vector<size_t> batches{};
   for (auto [tid, pid, cid] : acVec) {
     auto stats = cache.getAllocationClassStats(tid, pid, cid);
@@ -35,7 +40,8 @@ std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
       batches.push_back(0);
     } else {
       auto toFreeMemPercent = highEvictionAcWatermark - stats.approxFreePercent;
-      auto toFreeItems = static_cast<size_t>(toFreeMemPercent * stats.memorySize / stats.allocSize);
+      auto toFreeItems = static_cast<size_t>(
+          toFreeMemPercent * stats.memorySize / stats.allocSize);
       batches.push_back(toFreeItems);
     }
   }
@@ -48,17 +54,18 @@ std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
   if (maxBatch == 0)
     return batches;
 
-  std::transform(batches.begin(), batches.end(), batches.begin(), [&](auto numItems){
-    if (numItems == 0) {
-      return 0UL;
-    }
+  std::transform(
+      batches.begin(), batches.end(), batches.begin(), [&](auto numItems) {
+        if (numItems == 0) {
+          return 0UL;
+        }
 
-    auto cappedBatchSize = maxEvictionBatch * numItems / maxBatch;
-    if (cappedBatchSize < minEvictionBatch)
-      return minEvictionBatch;
-    else
-      return cappedBatchSize;
-  });
+        auto cappedBatchSize = maxEvictionBatch * numItems / maxBatch;
+        if (cappedBatchSize < minEvictionBatch)
+          return minEvictionBatch;
+        else
+          return cappedBatchSize;
+      });
 
   return batches;
 }

@@ -427,7 +427,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   if (backgroundEvictor_.size() && !fromBgThread && (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
     backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
   }
-  // TODO: Today disableEviction means do not evict from memory (DRAM).
+  // TODO: Today isEvictionDisabled means do not evict from memory (DRAM).
   //       Should we support eviction between memory tiers (e.g. from DRAM to PMEM)?
   if (memory == nullptr && !config_.isEvictionDisabled()) {
     memory = findEviction(tid, pid, cid);

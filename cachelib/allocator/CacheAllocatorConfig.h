@@ -625,11 +625,8 @@ class CacheAllocatorConfig {
   // CacheAllocator::startCacheWorkers()
   bool delayCacheWorkersStart{false};
   
-  
-  double minAcAllocationWatermark{0.0};
-  double maxAcAllocationWatermark{0.0};
-
-  double promotionAcWatermark{4.0};
+  // see MultiTierDataMovement.md
+  double promotionAcWatermark{4.0}; 
   double lowEvictionAcWatermark{2.0};
   double highEvictionAcWatermark{5.0};
   double numDuplicateElements{0.0}; // inclusivness of the cache

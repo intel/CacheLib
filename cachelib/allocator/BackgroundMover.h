@@ -16,14 +16,13 @@
 
 #pragma once
 
-#include <gtest/gtest_prod.h>
 #include <folly/concurrency/UnboundedQueue.h>
+#include <gtest/gtest_prod.h>
 
-#include "cachelib/allocator/CacheStats.h"
-#include "cachelib/common/PeriodicWorker.h"
 #include "cachelib/allocator/BackgroundMoverStrategy.h"
+#include "cachelib/allocator/CacheStats.h"
 #include "cachelib/common/AtomicCounter.h"
-
+#include "cachelib/common/PeriodicWorker.h"
 
 namespace facebook {
 namespace cachelib {
@@ -32,23 +31,24 @@ namespace cachelib {
 // needed for the cache api
 template <typename C>
 struct BackgroundMoverAPIWrapper {
-
   static size_t traverseAndEvictItems(C& cache,
-          unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
-    return cache.traverseAndEvictItems(tid,pid,cid,batch);
+                                      unsigned int tid,
+                                      unsigned int pid,
+                                      unsigned int cid,
+                                      size_t batch) {
+    return cache.traverseAndEvictItems(tid, pid, cid, batch);
   }
-  
+
   static size_t traverseAndPromoteItems(C& cache,
-          unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
-    return cache.traverseAndPromoteItems(tid,pid,cid,batch);
+                                        unsigned int tid,
+                                        unsigned int pid,
+                                        unsigned int cid,
+                                        size_t batch) {
+    return cache.traverseAndPromoteItems(tid, pid, cid, batch);
   }
-  
 };
 
-enum class MoverDir {
-    Evict = 0,
-    Promote
-};
+enum class MoverDir { Evict = 0, Promote };
 
 // Periodic worker that evicts items from tiers in batches
 // The primary aim is to reduce insertion times for new items in the
@@ -58,35 +58,40 @@ class BackgroundMover : public PeriodicWorker {
  public:
   using Cache = CacheT;
   // @param cache               the cache interface
-  // @param strategy            the stragey class that defines how objects are moved,
+  // @param strategy            the stragey class that defines how objects are
+  // moved,
   //                            (promoted vs. evicted and how much)
   BackgroundMover(Cache& cache,
                   std::shared_ptr<BackgroundMoverStrategy> strategy,
                   MoverDir direction_);
 
   ~BackgroundMover() override;
-  
-  BackgroundMoverStats getStats() const noexcept;
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> getClassStats() const noexcept;
 
-  void setAssignedMemory(std::vector<std::tuple<TierId, PoolId, ClassId>> &&assignedMemory);
+  BackgroundMoverStats getStats() const noexcept;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+  getClassStats() const noexcept;
+
+  void setAssignedMemory(
+      std::vector<std::tuple<TierId, PoolId, ClassId>>&& assignedMemory);
 
  private:
-   std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> moves_per_class_;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+      moves_per_class_;
   // cache allocator's interface for evicting
   using Item = typename Cache::Item;
-  
+
   Cache& cache_;
   std::shared_ptr<BackgroundMoverStrategy> strategy_;
   MoverDir direction_;
-  
-  std::function<size_t(Cache&, unsigned int, unsigned int, unsigned int, size_t)> moverFunc;
+
+  std::function<size_t(
+      Cache&, unsigned int, unsigned int, unsigned int, size_t)>
+      moverFunc;
 
   // implements the actual logic of running the background evictor
   void work() override final;
   void checkAndRun();
 
-  
   AtomicCounter numMovedItems{0};
   AtomicCounter numTraversals{0};
   AtomicCounter totalClasses{0};
