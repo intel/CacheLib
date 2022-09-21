@@ -115,6 +115,9 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     auto cid = 2;
     EXPECT_GT(1, perclassEstats[0][0][cid]);
     EXPECT_GT(1, perclassPstats[1][0][cid]);
+    
+    auto slabStats = allocator->getAllocationClassStats(0,0,cid);
+    ASSERT_GE(slabStats.approxFreePercent,10);
   }
 
   void testMultiTiersValidMixed() {
