@@ -93,10 +93,11 @@ class CacheBase {
   virtual bool isObjectCache() const = 0;
 
   // Get the reference  to a memory pool, for stats purposes
+  // uses the top most memory tier by default
   //
   // @param poolId    The pool id to query
   virtual const MemoryPool& getPool(PoolId poolId) const = 0;
-
+  
   // Get Pool specific stats (regular pools). This includes stats from the
   // Memory Pool and also the cache.
   //

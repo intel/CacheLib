@@ -308,7 +308,7 @@ class MemoryPool {
   // @param value  new value for the curSlabsAdvised_
   void setNumSlabsAdvised(uint64_t value) { curSlabsAdvised_ = value; }
 
- private:
+  private:
   // container for storing a vector of AllocationClass.
   using ACVector = std::vector<std::unique_ptr<AllocationClass>>;
 

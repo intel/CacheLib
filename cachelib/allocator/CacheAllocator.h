@@ -1287,6 +1287,11 @@ class CacheAllocator : public CacheBase {
   // @param types         the type of the memory used
   // @param config        the configuration for the whole cache allocator
   CacheAllocator(InitMemType types, Config config);
+  
+  TierId getTargetTierForItem(PoolId pid, typename Item::Key key,
+                                             uint32_t size,
+                                             uint32_t creationTime,
+                                             uint32_t expiryTime);
 
   // This is the last step in item release. We also use this for the eviction
   // scenario where we have to do everything, but not release the allocation
@@ -1677,6 +1682,9 @@ class CacheAllocator : public CacheBase {
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle. 
   WriteHandle tryEvictToNextMemoryTier(Item& item);
+
+  bool shouldEvictToNextMemoryTier(TierId sourceTierId,
+        TierId targetTierId, PoolId pid, Item& item);
 
   size_t memoryTierSize(TierId tid) const;
 
