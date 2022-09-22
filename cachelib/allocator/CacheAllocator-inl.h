@@ -302,6 +302,18 @@ void CacheAllocator<CacheTrait>::initWorkers() {
                           config_.poolOptimizeStrategy,
                           config_.ccacheOptimizeStepSizePercent);
   }
+
+  if (config_.backgroundEvictorEnabled()) {
+      startNewBackgroundEvictor(config_.backgroundEvictorInterval,
+                                config_.backgroundEvictorStrategy,
+                                config_.backgroundEvictorThreads);
+  }
+
+  if (config_.backgroundPromoterEnabled()) {
+      startNewBackgroundPromoter(config_.backgroundPromoterInterval,
+                                config_.backgroundPromoterStrategy,
+                                config_.backgroundPromoterThreads);
+  }
 }
 
 template <typename CacheTrait>
@@ -2423,6 +2435,16 @@ PoolId CacheAllocator<CacheTrait>::addPool(
   createMMContainers(pid, std::move(config));
   setRebalanceStrategy(pid, std::move(rebalanceStrategy));
   setResizeStrategy(pid, std::move(resizeStrategy));
+
+  if (backgroundEvictor_.size()) {
+    for (size_t id = 0; id < backgroundEvictor_.size(); id++)
+      backgroundEvictor_[id]->setAssignedMemory(getAssignedMemoryToBgWorker(id, backgroundEvictor_.size(), 0));
+  }
+
+  if (backgroundPromoter_.size()) {
+    for (size_t id = 0; id < backgroundPromoter_.size(); id++)
+      backgroundPromoter_[id]->setAssignedMemory(getAssignedMemoryToBgWorker(id, backgroundPromoter_.size(), 1));
+  }
 
   return pid;
 }

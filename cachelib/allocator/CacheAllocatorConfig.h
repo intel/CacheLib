@@ -365,6 +365,17 @@ class CacheAllocatorConfig {
            poolOptimizeStrategy != nullptr;
   }
 
+  // @return whether background evictor thread is enabled
+  bool backgroundEvictorEnabled() const noexcept {
+    return backgroundEvictorInterval.count() > 0 &&
+           backgroundEvictorStrategy != nullptr;
+  }
+
+  bool backgroundPromoterEnabled() const noexcept {
+    return backgroundPromoterInterval.count() > 0 &&
+           backgroundPromoterStrategy != nullptr;
+  }
+
   // @return whether memory monitor is enabled
   bool memMonitoringEnabled() const noexcept {
     return memMonitorConfig.mode != MemoryMonitor::Disabled &&

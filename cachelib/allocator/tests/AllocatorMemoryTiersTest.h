@@ -67,7 +67,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
   
   void testMultiTiersBackgroundMovers() {
     typename AllocatorT::Config config;
-    config.setCacheSize(4 * Slab::kSize);
+    config.setCacheSize(10 * Slab::kSize);
     config.enableCachePersistence("/tmp");
     config.usePosixForShm();
     config.configureMemoryTiers({
@@ -76,47 +76,42 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
         MemoryTierCacheConfig::fromFile("/tmp/b" + std::to_string(::getpid()))
             .setRatio(1)
     });
-    config.enableBackgroundEvictor(std::make_shared<FreeThresholdStrategy>(10, 20, 4, 2),
+    config.enableBackgroundEvictor(std::make_shared<FreeThresholdStrategy>(2, 10, 100, 40),
             std::chrono::milliseconds(10),1);
     config.enableBackgroundPromoter(std::make_shared<PromotionStrategy>(5, 4, 2),
             std::chrono::milliseconds(10),1);
 
     auto allocator = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
     ASSERT(allocator != nullptr);
-
     const size_t numBytes = allocator->getCacheMemoryStats().cacheSize;
-    const size_t kItemSize = 100;
+
     auto poolId = allocator->addPool("default", numBytes);
 
-    const int numItems = 10000;
-    
-    int numAllocatedItems = 0;
-    for (unsigned int i = 0; i < numItems; i++) {
-      auto handle = util::allocateAccessible(
-          *allocator, poolId, folly::to<std::string>(i), kItemSize, 0);
-      ++numAllocatedItems;
-    }
-
-    ASSERT_GT(numAllocatedItems, 0);
-
     const unsigned int keyLen = 100;
-    const unsigned int nSizes = 10;
-    const auto sizes =
-        this->getValidAllocSizes(*allocator, poolId, nSizes, keyLen);
+    std::vector<uint32_t> sizes = {100};
     this->fillUpPoolUntilEvictions(*allocator, poolId, sizes, keyLen);
+    
+    const auto key = this->getRandomNewKey(*allocator, keyLen);
+    auto handle = util::allocateAccessible(*allocator, poolId, key, sizes[0]);
+    ASSERT_NE(nullptr, handle);
+    const uint8_t cid = allocator->getAllocInfo(handle->getMemory()).classId;
+
+    //wait for bg movers
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     auto stats = allocator->getGlobalCacheStats();
     auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
     auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);
 
-    EXPECT_GT(1, stats.evictionStats.numMovedItems);
-    EXPECT_GT(1, stats.promotionStats.numMovedItems);
+    EXPECT_GT(stats.evictionStats.numMovedItems,1);
+    EXPECT_GT(stats.evictionStats.runCount,1);
+    EXPECT_GT(stats.promotionStats.numMovedItems,1);
    
-    auto cid = 2;
-    EXPECT_GT(1, perclassEstats[0][0][cid]);
-    EXPECT_GT(1, perclassPstats[1][0][cid]);
+    EXPECT_GT(perclassEstats[0][0][cid], 1);
+    EXPECT_GT(perclassPstats[1][0][cid], 1);
     
     auto slabStats = allocator->getAllocationClassStats(0,0,cid);
+
     ASSERT_GE(slabStats.approxFreePercent,10);
   }
 
