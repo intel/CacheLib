@@ -144,7 +144,8 @@ class MMLru {
            bool updateOnR,
            bool tryLockU,
            uint8_t ipSpec,
-           uint32_t mmReconfigureInterval)
+           uint32_t mmReconfigureInterval,
+           bool useCombinedLockForIterators = true)
         : defaultLruRefreshTime(time),
           lruRefreshRatio(ratio),
           updateOnWrite(updateOnW),
@@ -152,7 +153,8 @@ class MMLru {
           tryLockUpdate(tryLockU),
           lruInsertionPointSpec(ipSpec),
           mmReconfigureIntervalSecs(
-              std::chrono::seconds(mmReconfigureInterval)) {}
+              std::chrono::seconds(mmReconfigureInterval)),
+          useCombinedLockForIterators(useCombinedLockForIterators) {}
 
     Config() = default;
     Config(const Config& rhs) = default;
@@ -194,6 +196,9 @@ class MMLru {
     // Ex: lruInsertionPointSpec = 1, we insert at the middle (1/2 from end)
     //     lruInsertionPointSpec = 2, we insert at a point 1/4th from tail
     uint8_t lruInsertionPointSpec{0};
+
+    // Whether to use combined locking for withEvictionIterator.
+    bool useCombinedLockForIterators{true};
 
     // Minimum interval between reconfigurations. If 0, reconfigure is never
     // called.
