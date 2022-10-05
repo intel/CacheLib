@@ -3521,6 +3521,8 @@ bool CacheAllocator<CacheTrait>::stopWorkers(std::chrono::seconds timeout) {
   success &= stopPoolResizer(timeout);
   success &= stopMemMonitor(timeout);
   success &= stopReaper(timeout);
+  success &= stopBackgroundEvictor(timeout);
+  success &= stopBackgroundPromoter(timeout);
   return success;
 }
 
@@ -4019,6 +4021,26 @@ bool CacheAllocator<CacheTrait>::stopMemMonitor(std::chrono::seconds timeout) {
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopReaper(std::chrono::seconds timeout) {
   return stopWorker("Reaper", reaper_, timeout);
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::stopBackgroundEvictor(std::chrono::seconds timeout) {
+  bool result = true;
+  for (size_t i = 0; i < backgroundEvictor_.size(); i++) {
+    auto ret = stopWorker("BackgroundEvictor", backgroundEvictor_[i], timeout);
+    result = result && ret;
+  }
+  return result;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::stopBackgroundPromoter(std::chrono::seconds timeout) {
+  bool result = true;
+  for (size_t i = 0; i < backgroundPromoter_.size(); i++) {
+    auto ret = stopWorker("BackgroundPromoter", backgroundPromoter_[i], timeout);
+    result = result && ret;
+  }
+  return result;
 }
 
 template <typename CacheTrait>
