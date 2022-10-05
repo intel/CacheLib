@@ -96,10 +96,13 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     ASSERT_NE(nullptr, handle);
     const uint8_t cid = allocator->getAllocInfo(handle->getMemory()).classId;
 
-    //wait for bg movers
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     auto stats = allocator->getGlobalCacheStats();
+    while (stats.evictionStats.runCount < 1) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        stats = allocator->getGlobalCacheStats();
+    }
+
     auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
     auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);
 
