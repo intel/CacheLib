@@ -94,28 +94,30 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     const auto key = this->getRandomNewKey(*allocator, keyLen);
     auto handle = util::allocateAccessible(*allocator, poolId, key, sizes[0]);
     ASSERT_NE(nullptr, handle);
+    
     const uint8_t cid = allocator->getAllocInfo(handle->getMemory()).classId;
-
-
     auto stats = allocator->getGlobalCacheStats();
-    while (stats.evictionStats.runCount < 1) {
+    auto slabStats = allocator->getAllocationClassStats(0,0,cid);
+    const auto& mpStats = allocator->getPoolByTid(poolId, 0).getStats(); 
+    //cache is 10MB should move about 1MB to reach 10% free
+    uint32_t approxEvict = (1024*1024)/mpStats.acStats.at(cid).allocSize;
+    while (stats.evictionStats.numMovedItems < approxEvict*0.95 && slabStats.approxFreePercent >= 9.5) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         stats = allocator->getGlobalCacheStats();
+        slabStats = allocator->getAllocationClassStats(0,0,cid);
     }
+    ASSERT_GE(slabStats.approxFreePercent,9.5);
 
     auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
     auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);
 
-    EXPECT_GT(stats.evictionStats.numMovedItems,1);
-    EXPECT_GT(stats.evictionStats.runCount,1);
-    EXPECT_GT(stats.promotionStats.numMovedItems,1);
+    ASSERT_GE(stats.evictionStats.numMovedItems,1);
+    ASSERT_GE(stats.evictionStats.runCount,1);
+    ASSERT_GE(stats.promotionStats.numMovedItems,1);
    
-    EXPECT_GT(perclassEstats[0][0][cid], 1);
-    EXPECT_GT(perclassPstats[1][0][cid], 1);
+    ASSERT_GE(perclassEstats[0][0][cid], 1);
+    ASSERT_GE(perclassPstats[1][0][cid], 1);
     
-    auto slabStats = allocator->getAllocationClassStats(0,0,cid);
-
-    ASSERT_GE(slabStats.approxFreePercent,10);
   }
 
   void testMultiTiersValidMixed() {
