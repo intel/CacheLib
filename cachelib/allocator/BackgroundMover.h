@@ -16,9 +16,6 @@
 
 #pragma once
 
-#include <folly/concurrency/UnboundedQueue.h>
-#include <gtest/gtest_prod.h>
-
 #include "cachelib/allocator/BackgroundMoverStrategy.h"
 #include "cachelib/allocator/CacheStats.h"
 #include "cachelib/common/AtomicCounter.h"
