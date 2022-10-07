@@ -134,15 +134,21 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // Bumps up the reference count only if the new count will be strictly less
   // than or equal to the maxCount.
   // @return true if refcount is bumped. false otherwise.
-  FOLLY_ALWAYS_INLINE bool incRef() noexcept {
+  FOLLY_ALWAYS_INLINE bool incRef() {
     Value* const refPtr = &refCount_;
     unsigned int nCASFailures = 0;
     constexpr bool isWeak = false;
+
+    Value bitMask = getAdminRef<kExclusive>();
     Value oldVal = __atomic_load_n(refPtr, __ATOMIC_RELAXED);
 
     while (true) {
+      const bool alreadyExclusive = oldVal & bitMask;
       const Value newCount = oldVal + static_cast<Value>(1);
       if (UNLIKELY((oldVal & kAccessRefMask) == (kAccessRefMask))) {
+        throw exception::RefcountOverflow("Refcount maxed out.");
+      }
+      if (alreadyExclusive) {
         return false;
       }
 
@@ -226,6 +232,9 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   bool isInMMContainer() const noexcept {
     return getRaw() & getAdminRef<kLinked>();
   }
+  bool isOnlyInMMContainer() const noexcept {
+    return getRefWithAccessAndAdmin() == getAdminRef<kLinked>();
+  }
 
   /**
    * The following three functions correspond to the state of the allocation
@@ -253,9 +262,6 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
    * An item can only be marked exclusive when `isInMMContainer` returns true
    * and the item is not yet marked as exclusive. This operation is atomic.
    *
-   * User can also query if an item "isOnlyExclusive". This returns true only
-   * if the refcount is 0 and only the exlusive bit is set.
-   *
    * Unmarking exclusive does not depend on `isInMMContainer`
    */
   bool markExclusive() noexcept {
@@ -269,7 +275,14 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
     while (true) {
       const bool flagSet = curValue & conditionBitMask;
       const bool alreadyExclusive = curValue & bitMask;
+      const bool accessible = curValue & getAdminRef<kAccessible>();
       if (!flagSet || alreadyExclusive) {
+        return false;
+      }
+      if ((curValue & kAccessRefMask) != 0) {
+        return false;
+      }
+      if (!accessible) {
         return false;
       }
 
@@ -277,6 +290,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
       if (__atomic_compare_exchange_n(refPtr, &curValue, newValue, isWeak,
                                       __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         XDCHECK(newValue & conditionBitMask);
+        XDCHECK(getAccessRef() == 0);
         return true;
       }
 
@@ -294,17 +308,6 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   }
   bool isExclusive() const noexcept {
     return getRaw() & getAdminRef<kExclusive>();
-  }
-  bool isOnlyExclusive() const noexcept {
-    // An item is only exclusive when its refcount is zero and only the exlusive
-    // bit among all the control bits is set. This indicates an item is already
-    // on its way out of cache and does not need to be moved.
-    auto ref = getRefWithAccessAndAdmin();
-    bool anyOtherBitSet = ref & ~getAdminRef<kExclusive>();
-    if (anyOtherBitSet) {
-      return false;
-    }
-    return ref & getAdminRef<kExclusive>();
   }
 
   /**

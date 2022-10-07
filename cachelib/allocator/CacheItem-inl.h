@@ -217,6 +217,11 @@ bool CacheItem<CacheTrait>::isInMMContainer() const noexcept {
 }
 
 template <typename CacheTrait>
+bool CacheItem<CacheTrait>::isOnlyInMMContainer() const noexcept {
+  return ref_.isOnlyInMMContainer();
+}
+
+template <typename CacheTrait>
 bool CacheItem<CacheTrait>::markExclusive() noexcept {
   return ref_.markExclusive();
 }
@@ -229,11 +234,6 @@ RefcountWithFlags::Value CacheItem<CacheTrait>::unmarkExclusive() noexcept {
 template <typename CacheTrait>
 bool CacheItem<CacheTrait>::isExclusive() const noexcept {
   return ref_.isExclusive();
-}
-
-template <typename CacheTrait>
-bool CacheItem<CacheTrait>::isOnlyExclusive() const noexcept {
-  return ref_.isOnlyExclusive();
 }
 
 template <typename CacheTrait>

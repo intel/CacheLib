@@ -305,12 +305,17 @@ class CACHELIB_PACKED_ATTR CacheItem {
    */
   RefcountWithFlags::Value getRefCountAndFlagsRaw() const noexcept;
 
-  FOLLY_ALWAYS_INLINE void incRef() {
-    if (LIKELY(ref_.incRef())) {
-      return;
+  // Increments item's ref count
+  //
+  // @return true on success, failure if item is marked as exclusive
+  // @throw exception::RefcountOverflow on ref count overflow
+  FOLLY_ALWAYS_INLINE bool incRef() {
+    try {
+      return ref_.incRef();
+    } catch (exception::RefcountOverflow& e) {
+      throw exception::RefcountOverflow(
+          folly::sformat("{} item: {}", e.what(), toString()));
     }
-    throw exception::RefcountOverflow(
-        folly::sformat("Refcount maxed out. item: {}", toString()));
   }
 
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef() {
@@ -324,7 +329,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
   bool isDrained() const noexcept;
 
   /**
-   * The following three functions correspond to the state of the allocation
+   * The following four functions correspond to the state of the allocation
    * in the memory management container. This is protected by the
    * MMContainer's internal locking. Inspecting this outside the mm
    * container will be racy.
@@ -332,6 +337,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
   void markInMMContainer() noexcept;
   void unmarkInMMContainer() noexcept;
   bool isInMMContainer() const noexcept;
+  bool isOnlyInMMContainer() const noexcept;
 
   /**
    * The following three functions correspond to the state of the allocation
@@ -344,21 +350,16 @@ class CACHELIB_PACKED_ATTR CacheItem {
 
   /**
    * The following two functions corresond to whether or not an item is
-   * currently in the process of being moved. This happens during a slab
-   * rebalance, eviction or resize operation.
+   * currently in the process of being evicted.
    *
    * An item can only be marked exclusive when `isInMMContainer` returns true.
    * This operation is atomic.
-   *
-   * User can also query if an item "isOnlyExclusive". This returns true only
-   * if the refcount is 0 and only the exclusive bit is set.
    *
    * Unmarking exclusive does not depend on `isInMMContainer`
    */
   bool markExclusive() noexcept;
   RefcountWithFlags::Value unmarkExclusive() noexcept;
   bool isExclusive() const noexcept;
-  bool isOnlyExclusive() const noexcept;
 
   /**
    * Item cannot be marked both chained allocation and
