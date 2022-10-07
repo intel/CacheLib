@@ -1308,7 +1308,7 @@ CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   // make sure that no other thread removed it, and only then replaces it.
   if (!replaceInMMContainer(oldItem, *newItemHdl)) {
     accessContainer_->remove(*newItemHdl);
-    return {};
+    return acquire(&oldItem);
   }
 
   // Replacing into the MM container was successful, but someone could have
@@ -1316,7 +1316,7 @@ CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   // replaceInMMContainer() operation, which would invalidate newItemHdl.
   if (!newItemHdl->isAccessible()) {
     removeFromMMContainer(*newItemHdl);
-    return {};
+    return acquire(&oldItem);
   }
 
   // no one can add or remove chained items at this point

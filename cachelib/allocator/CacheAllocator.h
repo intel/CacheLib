@@ -1496,8 +1496,9 @@ class CacheAllocator : public CacheBase {
   // @param oldItem     Reference to the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
+  // @return            the handle to the oldItem if the move was completed
+  //                    and the oldItem can be recycled.
+  //                    Otherwise an empty handle is returned.
   template <typename P>
   WriteHandle moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl, P&& predicate);
 
