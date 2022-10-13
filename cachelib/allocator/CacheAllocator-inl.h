@@ -515,21 +515,31 @@ CacheAllocator<CacheTrait>::allocateChainedItem(const ReadHandle& parent,
   return it;
 }
 
+
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateChainedItemInternal(
     const ReadHandle& parent, uint32_t size) {
+  auto tid = 0; /* TODO: consult admission policy */
+  for(TierId tid = 0; tid < getNumTiers(); ++tid) {
+    auto handle = allocateChainedItemInternalTier(parent, tid, size);
+    if (handle) return handle;
+  }
+  return {};
+}
+
+template <typename CacheTrait>
+typename CacheAllocator<CacheTrait>::WriteHandle
+CacheAllocator<CacheTrait>::allocateChainedItemInternalTier(
+    const ReadHandle& parent, TierId tid, uint32_t size) {
   util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
 
   // number of bytes required for this item
   const auto requiredSize = ChainedItem::getRequiredSize(size);
-
-  // TODO: is this correct?
-  auto tid = getTierId(*parent);
-
-  const auto pid = allocator_[tid]->getAllocInfo(parent->getMemory()).poolId;
+  const auto ptid = getTierId(parent->getMemory());
+  const auto pid = allocator_[ptid]->getAllocInfo(parent->getMemory()).poolId;
   const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
 
   util::RollingLatencyTracker rollTracker{(*stats_.classAllocLatency)[tid][pid][cid]};
@@ -552,6 +562,8 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(
   auto child = acquire(
       new (memory) ChainedItem(compressor_.compress(parent.getInternal()), size,
                                util::getCurrentTimeSec()));
+  
+  const auto info = allocator_[tid]->getAllocInfo(memory);
 
   if (child) {
     child.markNascent();
@@ -950,9 +962,10 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
 
     while (head) {
       auto next = head->getNext(compressor_);
+      const auto ctid = getTierId(static_cast<const void*>(head));
 
       const auto childInfo =
-          allocator_[tid]->getAllocInfo(static_cast<const void*>(head));
+          allocator_[ctid]->getAllocInfo(static_cast<const void*>(head));
       (*stats_.fragmentationSize)[childInfo.poolId][childInfo.classId].sub(
           util::getFragmentation(*this, *head));
 
@@ -988,7 +1001,7 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
           XDCHECK(ReleaseRes::kReleased != res);
           res = ReleaseRes::kRecycled;
         } else {
-          allocator_[tid]->free(head);
+          allocator_[ctid]->free(head);
         }
       }
 
@@ -1618,8 +1631,8 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         } else {
           stats_.evictFailAC.inc();
         }
-
-        ++itr;
+        
+	++itr;
         XDCHECK(toRecycle == nullptr);
         XDCHECK(candidate == nullptr);
       }
@@ -1746,7 +1759,6 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item, bool fromBgThread) {
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
-  if(item.hasChainedItem()) return WriteHandle{}; // TODO: We do not support ChainedItem yet
   if(item.isExpired()) {
     accessContainer_->remove(item);
     item.unmarkMoving();
@@ -1755,19 +1767,33 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
-    // allocateInternal might trigger another eviction
-    auto newItemHdl = allocateInternalTier(nextTier, pid,
-                     item.getKey(),
-                     item.getSize(),
-                     item.getCreationTime(),
-                     item.getExpiryTime(),
-                     fromBgThread);
+    WriteHandle newItemHdl{};
+    if(item.isChainedItem()) {
+        // allocateInternal might trigger another eviction
+        auto parentHandle = findInternal(item.asChainedItem().getParentItem(compressor_).getKey());
+        newItemHdl = allocateChainedItemInternalTier(parentHandle,
+                         nextTier,
+                         item.getSize());
+    } else {
+    	// allocateInternal might trigger another eviction
+    	newItemHdl = allocateInternalTier(nextTier, pid,
+    	                 item.getKey(),
+    	                 item.getSize(),
+    	                 item.getCreationTime(),
+    	                 item.getExpiryTime(),
+    	                 fromBgThread);
+    }
 
     if (newItemHdl) {
-      XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      moveRegularItemWithSync(item, newItemHdl);
-      item.unmarkMoving();
-      return newItemHdl;
+      if (item.isChainedItem() && moveChainedItem(item.asChainedItem(), newItemHdl)) {
+	//TODO: is this correct??
+        return acquire(&item);
+      } else {
+      	XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
+      	moveRegularItemWithSync(item, newItemHdl);
+      	item.unmarkMoving();
+      	return newItemHdl;
+      }
     } else {
       return WriteHandle{};
     }
