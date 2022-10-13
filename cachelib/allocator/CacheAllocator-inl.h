@@ -482,21 +482,31 @@ CacheAllocator<CacheTrait>::allocateChainedItem(const ReadHandle& parent,
   return it;
 }
 
+
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateChainedItemInternal(
     const ReadHandle& parent, uint32_t size) {
+  auto tid = 0; /* TODO: consult admission policy */
+  for(TierId tid = 0; tid < getNumTiers(); ++tid) {
+    auto handle = allocateChainedItemInternalTier(parent, tid, size);
+    if (handle) return handle;
+  }
+  return {};
+}
+
+template <typename CacheTrait>
+typename CacheAllocator<CacheTrait>::WriteHandle
+CacheAllocator<CacheTrait>::allocateChainedItemInternalTier(
+    const ReadHandle& parent, TierId tid, uint32_t size) {
   util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
 
   // number of bytes required for this item
   const auto requiredSize = ChainedItem::getRequiredSize(size);
-
-  // TODO: is this correct?
-  auto tid = getTierId(*parent);
-
-  const auto pid = allocator_[tid]->getAllocInfo(parent->getMemory()).poolId;
+  const auto ptid = getTierId(parent->getMemory());
+  const auto pid = allocator_[ptid]->getAllocInfo(parent->getMemory()).poolId;
   const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
 
   util::RollingLatencyTracker rollTracker{(*stats_.classAllocLatency)[tid][pid][cid]};
@@ -519,6 +529,8 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(
   auto child = acquire(
       new (memory) ChainedItem(compressor_.compress(parent.getInternal()), size,
                                util::getCurrentTimeSec()));
+  
+  const auto info = allocator_[tid]->getAllocInfo(memory);
 
   if (child) {
     child.markNascent();
@@ -905,9 +917,10 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
 
     while (head) {
       auto next = head->getNext(compressor_);
+      const auto ctid = getTierId(static_cast<const void*>(head));
 
       const auto childInfo =
-          allocator_[tid]->getAllocInfo(static_cast<const void*>(head));
+          allocator_[ctid]->getAllocInfo(static_cast<const void*>(head));
       (*stats_.fragmentationSize)[childInfo.poolId][childInfo.classId].sub(
           util::getFragmentation(*this, *head));
 
@@ -940,7 +953,7 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
           XDCHECK(ReleaseRes::kReleased != res);
           res = ReleaseRes::kRecycled;
         } else {
-          allocator_[tid]->free(head);
+          allocator_[ctid]->free(head);
         }
       }
 
@@ -1498,16 +1511,21 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     Item* toRecycle = nullptr;
     Item* candidate = nullptr;
 
-    mmContainer.withEvictionIterator([this, &candidate, &toRecycle, &searchTries](auto &&itr){
+    mmContainer.withEvictionIterator([this, &tid, &candidate, &toRecycle, &searchTries](auto &&itr){
       while ((config_.evictionSearchTries == 0 ||
           config_.evictionSearchTries > searchTries) && itr) {
         ++searchTries;
 
         auto *toRecycle_ = itr.get();
-        auto *candidate_ = toRecycle_->isChainedItem()
-            ? &toRecycle_->asChainedItem().getParentItem(compressor_)
-            : toRecycle_;
-
+        auto *candidate_ = toRecycle_;
+        
+        // if this is last tier then we should get the parent item since
+        // we will want to evict the entire chain in this case
+        if (toRecycle_->isChainedItem()) {
+            candidate_ = tid < getNumTiers() 
+                           ?  &toRecycle_->asChainedItem() :
+                              &toRecycle_->asChainedItem().getParentItem(compressor_);
+        }
         // make sure no other thead is evicting the item
         if (candidate_->getRefCount() == 0 && candidate_->markMoving()) {
           toRecycle = toRecycle_;
@@ -1640,7 +1658,6 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item) {
-  if(item.isChainedItem()) return {}; // TODO: We do not support ChainedItem yet
   if(item.isExpired()) {
     auto handle = removeIf(item, [](const Item& it) {
                                     return it.getRefCount() == 0;
@@ -1651,16 +1668,29 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
-    // allocateInternal might trigger another eviction
-    auto newItemHdl = allocateInternalTier(nextTier, pid,
-                     item.getKey(),
-                     item.getSize(),
-                     item.getCreationTime(),
-                     item.getExpiryTime());
+    WriteHandle newItemHdl{};
+    if(item.isChainedItem()) {
+        // allocateInternal might trigger another eviction
+        auto parentHandle = findInternal(item.asChainedItem().getParentItem(compressor_).getKey());
+        newItemHdl = allocateChainedItemInternalTier(parentHandle,
+                         nextTier,
+                         item.getSize());
+    } else {
+        // allocateInternal might trigger another eviction
+        newItemHdl = allocateInternalTier(nextTier, pid,
+                         item.getKey(),
+                         item.getSize(),
+                         item.getCreationTime(),
+                         item.getExpiryTime());
+    }
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      return moveRegularItemWithSync(item, newItemHdl, itemMovingPredicate);
+      if (item.isChainedItem() && moveChainedItem(item.asChainedItem(), newItemHdl)) {
+          return acquire(&item);
+      } else if (!item.isChainedItem()) {
+          return moveRegularItemWithSync(item, newItemHdl, itemMovingPredicate);
+      }
     }
   }
 
@@ -3045,6 +3075,7 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     });
   }
 }
+
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle

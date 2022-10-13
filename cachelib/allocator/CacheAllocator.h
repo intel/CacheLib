@@ -1422,6 +1422,10 @@ class CacheAllocator : public CacheBase {
   //            if the item is invalid
   WriteHandle allocateChainedItemInternal(const ReadHandle& parent,
                                           uint32_t size);
+  
+  WriteHandle allocateChainedItemInternalTier(const ReadHandle& parent,
+                                          TierId tid,
+                                          uint32_t size);
 
   // Given an item and its parentKey, validate that the parentKey
   // corresponds to an item that's the parent of the supplied item.
