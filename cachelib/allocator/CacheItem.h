@@ -42,6 +42,9 @@ namespace cachelib {
 namespace tests {
 template <typename AllocatorT>
 class BaseAllocatorTest;
+  
+template <typename AllocatorT>
+class AllocatorMemoryTiersTest;
 
 template <typename AllocatorT>
 class AllocatorHitStatsTest;
@@ -133,6 +136,8 @@ class CACHELIB_PACKED_ATTR CacheItem {
   using WriteHandle = detail::WriteHandleImpl<CacheItem>;
   using Handle = WriteHandle;
   using HandleMaker = std::function<Handle(CacheItem*)>;
+  using NodePtrMaker = std::function<CacheItem*>;
+  using NodePtr = CacheItem*;
 
   /**
    * Item* and ChainedItem* are represented in this compressed form
@@ -380,6 +385,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
    * unmarking.
    */
   bool markMoving(bool failIfRefNotZero);
+  bool markChildMoving(bool failIfRefNotOne);
   RefcountWithFlags::Value unmarkMoving() noexcept;
   bool isMoving() const noexcept;
   bool isOnlyMoving() const noexcept;
@@ -463,6 +469,8 @@ class CACHELIB_PACKED_ATTR CacheItem {
   // tests
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::BaseAllocatorTest;
+  template <typename AllocatorT>
+  friend class facebook::cachelib::tests::AllocatorMemoryTiersTest;
   friend class facebook::cachelib::tests::MapTest<CacheAllocator<CacheTrait>>;
   FRIEND_TEST(LruAllocatorTest, ItemSampling);
   FRIEND_TEST(LruAllocatorTest, AddChainedAllocationSimple);
@@ -581,6 +589,8 @@ class CACHELIB_PACKED_ATTR CacheChainedItem : public CacheItem<CacheTrait> {
   friend NvmCache<CacheAllocator<CacheTrait>>;
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::BaseAllocatorTest;
+  template <typename AllocatorT>
+  friend class facebook::cachelib::tests::AllocatorMemoryTiersTest;
   FRIEND_TEST(ItemTest, ChainedItemConstruction);
   FRIEND_TEST(ItemTest, ToString);
   FRIEND_TEST(ItemTest, ChangeKey);

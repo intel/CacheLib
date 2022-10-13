@@ -341,6 +341,7 @@ class RWBucketLocks : public BaseBucketLocks<LockType, LockAlignmentType> {
   using Lock = LockType;
   using ReadLockHolder = ReadLockHolderType;
   using WriteLockHolder = WriteLockHolderType;
+  using LockHolder = std::unique_lock<Lock>;
 
   RWBucketLocks(uint32_t locksPower, std::shared_ptr<Hash> hasher)
       : Base::BaseBucketLocks(locksPower, std::move(hasher)) {}
@@ -369,6 +370,11 @@ class RWBucketLocks : public BaseBucketLocks<LockType, LockAlignmentType> {
   WriteLockHolder lockExclusive(const std::chrono::microseconds& timeout,
                                 Args... args) {
     return WriteLockHolder(Base::getLock(args...), timeout);
+  }
+  
+  template <typename... Args>
+  LockHolder tryExclusive(Args... args) noexcept {
+    return LockHolder(Base::getLock(args...), std::try_to_lock);
   }
 };
 

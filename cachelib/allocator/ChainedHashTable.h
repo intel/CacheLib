@@ -495,6 +495,18 @@ class ChainedHashTable {
     // @throw std::overflow_error is the maximum item refcount is execeeded by
     //        creating this item handle.
     Handle find(Key key) const;
+    
+    // finds the node corresponding to the key in the hashtable and returns a
+    // handle to that node.
+    //
+    // @param key   the lookup key
+    //
+    // @return  Pointer T* if there is a node corresponding to the
+    //          key or a nullptr if not.
+    //
+    // @throw std::overflow_error is the maximum item refcount is execeeded by
+    //        creating this item handle.
+    T* findPtr(Key key) const;
 
     // for saving the state of the hash table
     //
@@ -694,6 +706,7 @@ const typename T::HandleMaker
   }
   return typename T::Handle{t};
 };
+
 } // namespace cachelib
 } // namespace facebook
 

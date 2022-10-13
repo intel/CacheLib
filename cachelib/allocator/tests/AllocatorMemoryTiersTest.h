@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <future>
+
 #include "cachelib/allocator/CacheAllocatorConfig.h"
 #include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/tests/TestBase.h"
@@ -273,6 +275,68 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     testMultiTiersAsyncOpDuringMove(alloc, pool, quit, moveCb);
 
     t->join();
+  }
+  
+  // This test will first allocate a normal item. And then it will
+  // keep allocating new chained items and appending them to the
+  // first item until the system runs out of memory.
+  // After that it will drop the normal item's handle and try
+  // allocating again to verify that it can be evicted.
+  void testAddChainedItemUntilEviction() {
+    // create an allocator worth 10 slabs.
+    typename AllocatorT::Config config;
+    config.configureChainedItems();
+    config.setCacheSize(10 * Slab::kSize);
+    config.enableCachePersistence("/tmp");
+    config.usePosixForShm();
+    config.configureMemoryTiers({
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1),
+        MemoryTierCacheConfig::fromFile("/tmp/b" + std::to_string(::getpid()))
+            .setRatio(1)
+    });
+    auto alloc = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
+    const size_t numBytes = alloc->getCacheMemoryStats().cacheSize;
+    const auto poolSize = numBytes;
+
+    const auto pid = alloc->addPool("one", poolSize);
+
+    const std::vector<uint32_t> sizes = {100, 500, 1000, 2000, 100000};
+
+    // Allocate chained allocs until allocations fail.
+    // It will fail because "hello1" has an outsanding item handle alive,
+    // and thus it cannot be evicted, so none of its chained allocations
+    // can be evicted either
+    auto itemHandle = alloc->allocate(pid, "hello1", sizes[0]);
+    uint32_t exhaustedSize = 0;
+    for (unsigned int i = 0;; ++i) {
+      auto chainedItemHandle =
+          alloc->allocateChainedItem(itemHandle, sizes[i % sizes.size()]);
+      if (chainedItemHandle == nullptr) {
+        exhaustedSize = sizes[i % sizes.size()];
+        break;
+      }
+      alloc->addChainedItem(itemHandle, std::move(chainedItemHandle));
+    }
+
+    // Verify some of the items live in tier 1
+    uint64_t allocs[2] = { 0, 0 };
+    auto headHandle = alloc->findChainedItem(*itemHandle);
+    auto* head = &headHandle.get()->asChainedItem();
+    while (head) {
+        const auto tid = alloc->getTierId(*head);
+        allocs[tid]++;
+        head = head->getNext(alloc->compressor_);
+    }
+    ASSERT_GT(allocs[1],10);
+    headHandle.reset();
+    // Verify we cannot allocate a new item either.
+    ASSERT_EQ(nullptr, alloc->allocate(pid, "hello2", exhaustedSize));
+
+    // We should be able to allocate a new item after releasing the old one
+    itemHandle.reset();
+    ASSERT_NE(nullptr, alloc->allocate(pid, "hello2", exhaustedSize));
+    
   }
 };
 } // namespace tests

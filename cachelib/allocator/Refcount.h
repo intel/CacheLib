@@ -361,6 +361,45 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
 
     return markInternal(predicate, newValue);
   }
+  /**
+   * The following functions correspond to whether or not an child
+   * item is urrently in the processed of being moved. 
+   * When moving, ref count is always >= 2 and `kExclusive` bit is set.
+   *
+   * An item can only be marked moving when `isInMMContainer` returns true
+   * and item is not already exclusive nor moving.
+   *
+   * Unmarking moving does not depend on `isInMMContainer`
+   */
+  bool markChildMoving(bool failIfRefNotOne) {
+    auto predicate = [failIfRefNotOne](const Value curValue) {
+      Value conditionBitMask = getAdminRef<kLinked>();
+      const bool flagSet = curValue & conditionBitMask;
+      const bool alreadyExclusive = curValue & getAdminRef<kExclusive>();
+      const bool accessible = curValue & getAdminRef<kAccessible>();
+
+      if (!flagSet || alreadyExclusive) {
+        return false;
+      }
+      if (failIfRefNotOne && (curValue & kAccessRefMask) != 1) {
+        return false;
+      }
+      if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {
+        throw exception::RefcountOverflow("Refcount maxed out.");
+      }
+
+      return true;
+    };
+
+    auto newValue = [](const Value curValue) {
+      // Set exclusive flag and make the ref count non-zero (to distinguish
+      // from exclusive case). This extra ref will not be reported to the
+      // user/
+      return (curValue + static_cast<Value>(1)) | getAdminRef<kExclusive>();
+    };
+
+    return markInternal(predicate, newValue);
+  }
   Value unmarkMoving() noexcept {
     XDCHECK(isMoving());
     auto predicate = [](const Value curValue) {

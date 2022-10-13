@@ -242,6 +242,11 @@ bool CacheItem<CacheTrait>::markMoving(bool failIfRefNotZero) {
 }
 
 template <typename CacheTrait>
+bool CacheItem<CacheTrait>::markChildMoving(bool failIfRefNotOne) {
+  return ref_.markMoving(failIfRefNotOne);
+}
+
+template <typename CacheTrait>
 RefcountWithFlags::Value CacheItem<CacheTrait>::unmarkMoving() noexcept {
   return ref_.unmarkMoving();
 }
