@@ -168,15 +168,6 @@ bool MemoryAllocator::allAllocsFreed(const SlabReleaseContext& ctx) const {
   return ac.allFreed(ctx.getSlab());
 }
 
-void MemoryAllocator::processAllocForRelease(
-    const SlabReleaseContext& ctx,
-    void* memory,
-    const std::function<void(void*)>& callback) const {
-  const auto& pool = memoryPoolManager_.getPoolById(ctx.getPoolId());
-  const auto& ac = pool.getAllocationClass(ctx.getClassId());
-  return ac.processAllocForRelease(ctx, memory, callback);
-}
-
 void MemoryAllocator::completeSlabRelease(const SlabReleaseContext& context) {
   auto pid = context.getPoolId();
   auto& pool = memoryPoolManager_.getPoolById(pid);

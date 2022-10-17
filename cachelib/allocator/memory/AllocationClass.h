@@ -130,23 +130,6 @@ class AllocationClass {
   //         slabReleaseAllocMap_
   bool isAllocFreed(const SlabReleaseContext& ctx, void* memory) const;
 
-  // The callback is executed under the lock, immediately after checking if the
-  // alloc has been freed.
-  //
-  // @param ctx       release context for the slab owning this alloc
-  // @param memory    memory to check
-  // @param callback  callback to execute if the alloc has not been freed. This
-  //                  takes a single argument - the alloc being processed.
-  //
-  // @throws std::invalid_argument  if the memory does not belong to a slab of
-  //         this slab class, or if the slab is not actively being released, or
-  //         if the context belongs to a different slab.
-  // @throws std::runtime_error  if the slab cannot be found inside
-  //         slabReleaseAllocMap_
-  void processAllocForRelease(const SlabReleaseContext& ctx,
-                              void* memory,
-                              const std::function<void(void*)>& callback) const;
-
   // Function takes the startSlabReleaseLock_, gets the slab header and if
   // the slab is in a valid state invokes a user defined callback for each
   // allocation in the slab.
