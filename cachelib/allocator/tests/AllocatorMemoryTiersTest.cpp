@@ -31,6 +31,7 @@ TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsSysVValid) { this->tes
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsPosixValid) { this->testMultiTiersNumaBindingsPosixValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersRemoveDuringEviction) { this->testMultiTiersRemoveDuringEviction(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersReplaceDuringEviction) { this->testMultiTiersReplaceDuringEviction(); }
+TEST_F(LruAllocatorMemoryTiersTest, AddChainedItemUntilEviction ) { this->testAddChainedItemUntilEviction(); }
 
 } // end of namespace tests
 } // end of namespace cachelib
