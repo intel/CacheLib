@@ -1125,55 +1125,6 @@ TEST_F(AllocationClassTest, Stats) {
   }
 }
 
-// Test alloc processing during slab release
-TEST_F(AllocationClassTest, ProcessAllocForRelease) {
-  auto slabAlloc = createSlabAllocator(1);
-  const PoolId pid = 0;
-  const ClassId cid = 0;
-  auto slab = slabAlloc->makeNewSlab(pid);
-  ASSERT_NE(slab, nullptr);
-  AllocationClass ac(cid, pid, getRandomAllocSize(), *slabAlloc);
-  ac.addSlab(slab);
-
-  const unsigned int nPerSlab = ac.getAllocsPerSlab();
-
-  std::vector<void*> allAllocs;
-  for (unsigned int i = 0; i < nPerSlab; i++) {
-    auto allocation = ac.allocate();
-    allAllocs.push_back(allocation);
-  }
-
-  // Free a random set of allocs
-  std::vector<void*> activeAllocs;
-  for (unsigned int i = 0; i < nPerSlab; i++) {
-    const auto& alloc = allAllocs[i];
-    if (folly::Random::rand32() % 2) {
-      ac.free(alloc);
-    } else {
-      activeAllocs.push_back(alloc);
-    }
-  }
-
-  auto releaseContext = ac.startSlabRelease(SlabReleaseMode::kResize,
-                                            reinterpret_cast<void*>(slab));
-
-  std::vector<void*> processedActiveAllocs;
-  for (const auto& alloc : releaseContext.getActiveAllocations()) {
-    const auto fn = [&processedActiveAllocs](void* memory) {
-      processedActiveAllocs.push_back(memory);
-    };
-    ac.processAllocForRelease(releaseContext, alloc, fn);
-  }
-
-  ASSERT_EQ(activeAllocs, processedActiveAllocs);
-
-  // Complete the slab release process
-  for (const auto& alloc : processedActiveAllocs) {
-    ac.free(alloc);
-  }
-  ac.completeSlabRelease(std::move(releaseContext));
-}
-
 TEST_F(AllocationClassTest, AbortSlabReleaseTest) {
   // make  allocations from a slab, free some allocations back and call
   // abort slab and ensure that the allocation class is in the expected state

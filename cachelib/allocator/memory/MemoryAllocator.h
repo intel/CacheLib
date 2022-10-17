@@ -304,11 +304,6 @@ class MemoryAllocator {
   //        does not have the allocStateMap entry.
   bool allAllocsFreed(const SlabReleaseContext& ctx) const;
 
-  // See AllocationClass::processAllocForRelease
-  void processAllocForRelease(const SlabReleaseContext& ctx,
-                              void* memory,
-                              const std::function<void(void*)>& callback) const;
-
   // Aborts the slab release process when there were active allocations in
   // the slab. This should be called with the same non-null context that was
   // created using startSlabRelease and after the user FAILS to free all the

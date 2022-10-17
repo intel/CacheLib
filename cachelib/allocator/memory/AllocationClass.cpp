@@ -610,18 +610,6 @@ bool AllocationClass::isAllocFreed(const SlabReleaseContext& ctx,
       [this, &ctx, memory]() { return isAllocFreedLocked(ctx, memory); });
 }
 
-void AllocationClass::processAllocForRelease(
-    const SlabReleaseContext& ctx,
-    void* memory,
-    const std::function<void(void*)>& callback) const {
-  checkSlabInRelease(ctx, memory);
-  lock_->lock_combine([this, &ctx, memory, &callback]() {
-    if (!isAllocFreedLocked(ctx, memory)) {
-      callback(memory);
-    }
-  });
-}
-
 void AllocationClass::free(void* memory) {
   const auto* header = slabAlloc_.getSlabHeader(memory);
   auto* slab = slabAlloc_.getSlabForMemory(memory);
