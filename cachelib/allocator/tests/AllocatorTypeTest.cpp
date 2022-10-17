@@ -283,16 +283,14 @@ TYPED_TEST(BaseAllocatorTest, AddChainedItemMultithread) {
 }
 
 TYPED_TEST(BaseAllocatorTest, AddChainedItemMultiThreadWithMoving) {
-  // TODO - fix multi-tier support for chained items
-  // this->testAddChainedItemMultithreadWithMoving();
+  this->testAddChainedItemMultithreadWithMoving();
 }
 
 // Notes (T96890007): This test is flaky in OSS build.
 // The test fails when running allocator-test-AllocatorTest on TinyLFU cache
 // trait but passes if the test is built with only TinyLFU cache trait.
 TYPED_TEST(BaseAllocatorTest, AddChainedItemMultiThreadWithMovingAndSync) {
-  // TODO - fix multi-tier support for chained items
-  // this->testAddChainedItemMultithreadWithMovingAndSync();
+  //this->testAddChainedItemMultithreadWithMovingAndSync();
 }
 
 TYPED_TEST(BaseAllocatorTest, TransferChainWhileMoving) {

@@ -28,6 +28,7 @@ TEST_F(LruAllocatorMemoryTiersTest, MultiTiersFromFileValid) { this->testMultiTi
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValidMixed) { this->testMultiTiersValidMixed(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsSysVValid) { this->testMultiTiersNumaBindingsSysVValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsPosixValid) { this->testMultiTiersNumaBindingsPosixValid(); }
+TEST_F(LruAllocatorMemoryTiersTest, AddChainedItemUntilEviction ) { this->testAddChainedItemUntilEviction(); }
 
 } // end of namespace tests
 } // end of namespace cachelib

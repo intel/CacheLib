@@ -4858,7 +4858,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     const size_t numBytes = alloc.getCacheMemoryStats().cacheSize;
     const auto poolSize = numBytes;
 
-    const std::set<uint32_t> allocSizes = {150, 250, 550, 1050, 2050, 5050};
+    const std::set<uint32_t> allocSizes = {170, 270, 570, 1070, 2070, 5070};
     const auto pid = alloc.addPool("one", poolSize, allocSizes);
 
     // Allocate 10000 Parent items and for each parent item, 10 chained
@@ -4886,6 +4886,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
             uint8_t* buf = reinterpret_cast<uint8_t*>(childItem->getMemory());
             for (uint8_t k = 0; k < 100; ++k) {
               buf[k] = static_cast<uint8_t>((k + i) % 256);
+              ASSERT_EQ(buf[k], (k + (*parentBuf)) % 256);
             }
 
             alloc.addChainedItem(itemHandle, std::move(childItem));
@@ -4910,16 +4911,15 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
       }
     };
 
-    /* TODO: we adjust alloc size by -20 or -40 due to increased CompressedPtr size */
     auto allocateItem1 =
         std::async(std::launch::async, allocFn, std::string{"hello"},
-                   std::vector<uint32_t>{100 - 20, 500, 1000});
+                   std::vector<uint32_t>{100, 460, 960});
     auto allocateItem2 =
         std::async(std::launch::async, allocFn, std::string{"world"},
-                   std::vector<uint32_t>{200- 40, 1000, 2000});
+                   std::vector<uint32_t>{180, 960, 1960});
     auto allocateItem3 =
         std::async(std::launch::async, allocFn, std::string{"yolo"},
-                   std::vector<uint32_t>{100-20, 200, 5000});
+                   std::vector<uint32_t>{100, 160, 4960});
 
     auto slabRelease = std::async(releaseFn);
     slabRelease.wait();

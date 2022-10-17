@@ -1522,7 +1522,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         // if this is last tier then we should get the parent item since
         // we will want to evict the entire chain in this case
         if (toRecycle_->isChainedItem()) {
-            candidate_ = tid < getNumTiers() 
+            candidate_ = tid+1 < getNumTiers()
                            ?  &toRecycle_->asChainedItem() :
                               &toRecycle_->asChainedItem().getParentItem(compressor_);
         }
