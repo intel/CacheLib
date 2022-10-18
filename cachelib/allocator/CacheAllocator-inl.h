@@ -1354,10 +1354,7 @@ CacheAllocator<CacheTrait>::findEviction(PoolId pid, ClassId cid) {
     unlinkItemExclusive(*candidate);
 
     if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
-      auto handle = acquire(candidate);
-      nvmCache_->put(handle, std::move(token));
-      auto r = decRef(*handle.release());
-      XDCHECK(r == 0u);
+      nvmCache_->put(*candidate, std::move(token));
     }
 
     // recycle the item. it's safe to do so, even if toReleaseHandle was
@@ -1525,7 +1522,7 @@ bool CacheAllocator<CacheTrait>::pushToNvmCacheFromRamForTesting(
 
   if (handle && nvmCache_ && shouldWriteToNvmCache(*handle) &&
       shouldWriteToNvmCacheExclusive(*handle)) {
-    nvmCache_->put(handle, nvmCache_->createPutToken(handle->getKey()));
+    nvmCache_->put(*handle, nvmCache_->createPutToken(handle->getKey()));
     return true;
   }
   return false;
@@ -2650,10 +2647,7 @@ bool CacheAllocator<CacheTrait>::evictForSlabRelease(
   unlinkItemExclusive(*candidate);
 
   if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
-    auto handle = acquire(candidate);
-    nvmCache_->put(handle, std::move(token));
-    auto r = decRef(*handle.release());
-    XDCHECK(r == 0u);
+    nvmCache_->put(*candidate, std::move(token));
   }
 
   const auto allocInfo =
