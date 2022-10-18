@@ -5288,7 +5288,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
 
     EXPECT_EQ(numMoves, 1);
     auto slabReleaseStats = alloc.getSlabReleaseStats();
-    EXPECT_EQ(slabReleaseStats.numMoveAttempts, 2);
+    EXPECT_EQ(slabReleaseStats.numMoveAttempts, 3);
     EXPECT_EQ(slabReleaseStats.numMoveSuccesses, 1);
 
     auto handle = alloc.find(movingKey);
