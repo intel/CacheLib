@@ -2499,19 +2499,26 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(
       return true;
     }
 
-    auto* owner = oldItem.isChainedItem()
-                      ? &oldItem.asChainedItem().getParentItem(compressor_)
-                      : &oldItem;
-    auto handle = accessContainer_->find(owner->getKey());
-    if (!handle) {
-      continue;
-    }
+    const auto pid = ctx.getPoolId();
+    const auto cid = ctx.getClassId();
+    auto& mmContainer = getMMContainer(pid, cid);
 
-    if (!oldItem.isChainedItem() && handle.get() != &oldItem) {
-      // make sure we have a proper handle and non one removed the item
-      // this check is only for regular items, chained items must be
-      // handled under a lock so it's done later
-      continue;
+    WriteHandle handle{};
+
+    mmContainer.withEvictionIterator([&oldItem, &handle, this](auto&&) {
+      if (!oldItem.isInMMContainer()) {
+        return;
+      }
+
+      auto candidate = oldItem.isChainedItem()
+                           ? &oldItem.asChainedItem().getParentItem(compressor_)
+                           : &oldItem;
+
+      handle = accessContainer_->find(candidate->getKey());
+    });
+
+    if (!handle) {
+      return false;
     }
 
     if (!newItemHdl) {
@@ -2640,13 +2647,34 @@ bool CacheAllocator<CacheTrait>::evictForSlabRelease(
     return true;
   }
 
-  auto* candidate = toRelease.isChainedItem()
-                        ? &toRelease.asChainedItem().getParentItem(compressor_)
-                        : &toRelease;
+  const auto pid = ctx.getPoolId();
+  const auto cid = ctx.getClassId();
+  auto& mmContainer = getMMContainer(pid, cid);
 
-  auto token = createPutToken(*candidate);
+  Item* candidate = nullptr;
+  typename NvmCacheT::PutToken token;
 
-  if (!candidate->markExclusive()) {
+  mmContainer.withEvictionIterator(
+      [&toRelease, &candidate, &token, this](auto&&) {
+        if (!toRelease.isInMMContainer()) {
+          // we need to verify that the item is not being recycled or freed
+          // to avoid races (.e.g on reading isChainedItem or getParentItem)
+          return;
+        }
+
+        auto candidate_ =
+            toRelease.isChainedItem()
+                ? &toRelease.asChainedItem().getParentItem(compressor_)
+                : &toRelease;
+
+        token = createPutToken(*candidate_);
+
+        if (candidate_->markExclusive()) {
+          candidate = candidate_;
+        }
+      });
+
+  if (!candidate) {
     return false;
   }
 
