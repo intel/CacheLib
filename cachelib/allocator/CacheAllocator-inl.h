@@ -463,9 +463,7 @@ void CacheAllocator<CacheTrait>::addChainedItem(WriteHandle& parent,
   // Parent will decrement the refcount upon release. Since this is an
   // internal refcount, we dont include it in active handle tracking.
   child->incRef();
-  auto ref = child->getRefCount();
-  // ref == 3 if child is moving
-  XDCHECK(ref == 2u || ref == 3);
+  XDCHECK_EQ(2u, child->getRefCount());
 
   invalidateNvm(*parent);
   if (auto eventTracker = getEventTracker()) {
@@ -555,10 +553,7 @@ void CacheAllocator<CacheTrait>::transferChainLocked(WriteHandle& parent,
   ChainedItem* curr = &headHandle->asChainedItem();
   const auto newParentPtr = compressor_.compress(newParent.get());
   while (curr) {
-    if (!curr->isMoving())
-      XDCHECK_EQ(curr == headHandle.get() ? 2u : 1u, curr->getRefCount());
-    else
-      XDCHECK_EQ(curr == headHandle.get() ? 3u : 2u, curr->getRefCount());
+    XDCHECK_EQ(curr == headHandle.get() ? 2u : 1u, curr->getRefCount());
     XDCHECK(curr->isInMMContainer());
     curr->changeKey(newParentPtr);
     curr = curr->getNext(compressor_);
@@ -654,7 +649,7 @@ CacheAllocator<CacheTrait>::replaceChainedItemLocked(Item& oldItem,
                                                      WriteHandle newItemHdl,
                                                      const Item& parent) {
   XDCHECK(newItemHdl != nullptr);
-  XDCHECK_GE(2u, oldItem.getRefCount());
+  XDCHECK_GE(1u, oldItem.getRefCount());
 
   // grab the handle to the old item so that we can return this. Also, we need
   // to drop the refcount the parent holds on oldItem by manually calling
@@ -1157,7 +1152,7 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
 
   // no one can add or remove chained items at this point
   if (oldItem.hasChainedItem()) {
-    auto oldItemHdl = WriteHandle{&oldItem, *this};
+    auto oldItemHdl = acquire(&oldItem);
     XDCHECK_EQ(1u, oldItemHdl->getRefCount()) << oldItemHdl->toString();
     XDCHECK(!newItemHdl->hasChainedItem()) << newItemHdl->toString();
     try {
@@ -1171,10 +1166,6 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
 
     XDCHECK(!oldItem.hasChainedItem());
     XDCHECK(newItemHdl->hasChainedItem());
-
-    // drop the handle, no need to decRef since we relied on
-    // item being moved
-    oldItemHdl.release();
   }
   newItemHdl.unmarkNascent();
   return true;
