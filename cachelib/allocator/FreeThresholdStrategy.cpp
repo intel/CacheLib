@@ -32,7 +32,7 @@ FreeThresholdStrategy::FreeThresholdStrategy(double lowEvictionAcWatermark,
 
 std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
     const CacheBase& cache,
-    std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) {
+    std::vector<MemoryDescriptorType> acVec) {
   std::vector<size_t> batches{};
   for (auto [tid, pid, cid] : acVec) {
     auto stats = cache.getAllocationClassStats(tid, pid, cid);

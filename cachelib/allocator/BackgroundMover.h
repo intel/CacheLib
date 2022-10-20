@@ -69,7 +69,7 @@ class BackgroundMover : public PeriodicWorker {
   getClassStats() const noexcept;
 
   void setAssignedMemory(
-      std::vector<std::tuple<TierId, PoolId, ClassId>>&& assignedMemory);
+      std::vector<MemoryDescriptorType>&& assignedMemory);
 
  private:
   std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
@@ -94,7 +94,7 @@ class BackgroundMover : public PeriodicWorker {
   AtomicCounter totalClasses{0};
   AtomicCounter totalBytesMoved{0};
 
-  std::vector<std::tuple<TierId, PoolId, ClassId>> assignedMemory_;
+  std::vector<MemoryDescriptorType> assignedMemory_;
   folly::DistributedMutex mutex;
 };
 } // namespace cachelib

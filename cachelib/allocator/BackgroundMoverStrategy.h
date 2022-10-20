@@ -18,15 +18,24 @@
 
 #include "cachelib/allocator/Cache.h"
 
+
 namespace facebook {
 namespace cachelib {
+
+struct MemoryDescriptorType {
+    MemoryDescriptorType(TierId tid, PoolId pid, ClassId cid) : 
+        tid_(tid), pid_(pid), cid_(cid) {}
+    TierId tid_;
+    PoolId pid_;
+    ClassId cid_;
+};
 
 // Base class for background eviction strategy.
 class BackgroundMoverStrategy {
  public:
   virtual std::vector<size_t> calculateBatchSizes(
       const CacheBase& cache,
-      std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) = 0;
+      std::vector<MemoryDescriptorType> acVec) = 0;
 };
 
 } // namespace cachelib

@@ -35,7 +35,7 @@ class PromotionStrategy : public BackgroundMoverStrategy {
 
   std::vector<size_t> calculateBatchSizes(
       const CacheBase& cache,
-      std::vector<std::tuple<TierId, PoolId, ClassId>> acVec) {
+      std::vector<MemoryDescriptorType> acVec) {
     std::vector<size_t> batches{};
     for (auto [tid, pid, cid] : acVec) {
       XDCHECK(tid > 0);

@@ -3941,7 +3941,7 @@ bool CacheAllocator<CacheTrait>::startNewReaper(
 template <typename CacheTrait>
 auto CacheAllocator<CacheTrait>::getAssignedMemoryToBgWorker(size_t evictorId, size_t numWorkers, TierId tid)
 {
-  std::vector<std::tuple<TierId, PoolId, ClassId>> asssignedMemory;
+  std::vector<MemoryDescriptorType> asssignedMemory;
   // TODO: for now, only evict from tier 0
   auto pools = filterCompactCachePools(allocator_[tid]->getPoolIds());
   for (const auto pid : pools) {

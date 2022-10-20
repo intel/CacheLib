@@ -33,7 +33,7 @@ class FreeThresholdStrategy : public BackgroundMoverStrategy {
 
   std::vector<size_t> calculateBatchSizes(
       const CacheBase& cache,
-      std::vector<std::tuple<TierId, PoolId, ClassId>> acVecs);
+      std::vector<MemoryDescriptorType> acVecs);
 
  private:
   double lowEvictionAcWatermark{2.0};

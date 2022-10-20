@@ -10,11 +10,6 @@ thread (green) is integrated to the CacheLib architecture.
   <img width="640" height="360" alt="BackgroundEvictor" src="cachelib-background-evictor.png">
 </p>
 
-## Synchronous Eviction and Promotion
-
-- `disableEviction`: Disables eviction to memory (item is always evicted to NVMe or removed
-on eviction)
-
 ## Background Evictors
 
 The background evictors scan each class to see if there are objects to move the next (lower)

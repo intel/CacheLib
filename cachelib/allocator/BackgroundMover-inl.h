@@ -47,7 +47,7 @@ void BackgroundMover<CacheT>::work() {
 
 template <typename CacheT>
 void BackgroundMover<CacheT>::setAssignedMemory(
-    std::vector<std::tuple<TierId, PoolId, ClassId>>&& assignedMemory) {
+    std::vector<MemoryDescriptorType>&& assignedMemory) {
   XLOG(INFO, "Class assigned to background worker:");
   for (auto [tid, pid, cid] : assignedMemory) {
     XLOGF(INFO, "Tid: {}, Pid: {}, Cid: {}", tid, pid, cid);
