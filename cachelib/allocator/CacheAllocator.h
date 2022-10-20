@@ -1904,7 +1904,7 @@ class CacheAllocator : public CacheBase {
   void saveRamCache();
 
   static bool itemSlabMovePredicate(const Item& item) {
-    return item.isMoving() && item.getRefCount() == 1;
+    return item.isMoving() && item.getRefCount() == 0;
   }
 
   static bool itemExpiryPredicate(const Item& item) {
