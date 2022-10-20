@@ -1450,18 +1450,18 @@ class CacheAllocator : public CacheBase {
   // @return  handle to the parent item if the validations pass
   //          otherwise, an empty Handle is returned.
   //
-  ReadHandle validateAndGetParentHandleForChainedMoveLocked(
+  WriteHandle validateAndGetParentHandleForChainedMoveLocked(
       const ChainedItem& item, const Key& parentKey);
 
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
   //
-  // @param oldItem      the item we want to allocate a new item for
+  // @param itemHandle   handle to the item we want to allocate a new item for
   // @param parentHandle handle to parent if oldItem is a chained item
   //
   // @return  handle to the newly allocated item
   //
-  WriteHandle allocateNewItemForOldItem(const Item& oldItem,
+  WriteHandle allocateNewItemForOldItem(WriteHandle& itemHandle,
                                         WriteHandle& parentHandle);
 
   // internal helper that grabs a refcounted handle to the item. This does
@@ -1548,7 +1548,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveChainedItem(ChainedItem& oldItem,
+  bool moveChainedItem(WriteHandle&& itemHandle,
                        WriteHandle&& parentHandle,
                        WriteHandle& newItemHdl);
 
@@ -1764,8 +1764,8 @@ class CacheAllocator : public CacheBase {
   //
   // @return    true  if the item has been moved
   //            false if we have exhausted moving attempts
-  bool tryMovingForSlabRelease(Item& oldItem,
-                               WriteHandle&& handle,
+  bool tryMovingForSlabRelease(WriteHandle&& itemHandle,
+                               WriteHandle&& parentHandle,
                                WriteHandle& newItemHdl);
 
   // Evict an item from access and mm containers and
