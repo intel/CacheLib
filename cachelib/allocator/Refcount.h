@@ -200,8 +200,18 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
     }
   }
 
-  // Return refcount excluding control bits and flags
-  Value getAccessRef() const noexcept { return getRaw() & kAccessRefMask; }
+  // Return refcount excluding control bits and flags.
+  Value getAccessRef() const noexcept {
+    auto raw = getRaw();
+    auto accessRef = raw & kAccessRefMask;
+
+    if ((raw & getAdminRef<kExclusive>()) && accessRef >= 1) {
+      // if item is moving, ignore the extra ref
+      return accessRef - static_cast<Value>(1);
+    } else {
+      return accessRef;
+    }
+  }
 
   // Return access ref and the admin ref bits
   Value getRefWithAccessAndAdmin() const noexcept {
@@ -334,6 +344,9 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
     };
 
     auto newValue = [](const Value curValue) {
+      // Set exclusive flag and make the ref count non-zero (to distinguish
+      // from exclusive case). This extra ref will not be reported to the
+      // user/
       return (curValue + static_cast<Value>(1)) | getAdminRef<kExclusive>();
     };
 
