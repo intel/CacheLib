@@ -132,6 +132,14 @@ class MemoryPool {
   }
 
   MPStats getStats() const;
+  // approx usage fraction per class
+  double getApproxUsage(ClassId cid) const;
+  // approx slabs assigned to a given class
+  uint32_t getApproxSlabs(ClassId cid) const;
+  
+  uint32_t getApproxFreeSlabs() const;
+  // items per slab for a class
+  uint32_t getPerSlab(ClassId cid) const;
 
   // allocates memory of at least _size_ bytes.
   //

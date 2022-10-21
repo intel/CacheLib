@@ -521,6 +521,15 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       config_.getRebalanceStrategy(),
       std::chrono::seconds(config_.poolRebalanceIntervalSec));
 
+  allocatorConfig_.enableBackgroundEvictor(
+      config_.getBackgroundEvictorStrategy(),
+      std::chrono::milliseconds(config_.backgroundEvictorIntervalMilSec),
+      config_.evictorThreads);
+
+  allocatorConfig_.enableBackgroundPromoter(
+      config_.getBackgroundPromoterStrategy(),
+      std::chrono::milliseconds(config_.backgroundPromoterIntervalMilSec),
+      config_.promoterThreads);
   if (config_.moveOnSlabRelease && movingSync != nullptr) {
     allocatorConfig_.enableMovingOnSlabRelease(
         [](Item& oldItem, Item& newItem, Item* parentPtr) {
@@ -574,6 +583,12 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       util::removePath(nvmCacheFilePath_);
     }
   });
+
+  allocatorConfig_.maxEvictionBatch = config_.maxEvictionBatch;
+  allocatorConfig_.maxPromotionBatch = config_.maxPromotionBatch;
+  allocatorConfig_.minEvictionBatch = config_.minEvictionBatch;
+  allocatorConfig_.minPromotionBatch = config_.minPromotionBatch;
+  allocatorConfig_.maxEvictionPromotionHotness = config_.maxEvictionPromotionHotness;
 
   if (config_.enableItemDestructorCheck) {
     auto removeCB = [&](const typename Allocator::DestructorData& data) {
@@ -1134,15 +1149,17 @@ Stats Cache<Allocator>::getStats() const {
     ret.numItems.push_back(aggregate.numItems());
   }
 
-  std::map<TierId, std::map<PoolId, std::map<ClassId, ACStats>>> allocationClassStats{};
+  std::map<MemoryDescriptorType, ACStats> allocationClassStats{};
 
   for (size_t pid = 0; pid < pools_.size(); pid++) {
     PoolId poolId = static_cast<PoolId>(pid);
     auto poolStats = cache_->getPoolStats(poolId);
     auto cids = poolStats.getClassIds();
     for (TierId tid = 0; tid < cache_->getNumTiers(); tid++) {
-      for (auto cid : cids)
-        allocationClassStats[tid][pid][cid] = cache_->getACStats(tid, pid, cid);
+      for (auto cid : cids) {
+        MemoryDescriptorType md(tid,pid,cid);
+        allocationClassStats[md] = cache_->getACStats(tid, pid, cid);
+      }
     }
   }
 
@@ -1151,18 +1168,13 @@ Stats Cache<Allocator>::getStats() const {
   const auto navyStats = cache_->getNvmCacheStatsMap().toMap();
 
   ret.allocationClassStats = allocationClassStats;
+
+  ret.backgroundEvictorStats = cacheStats.evictionStats;
+  ret.backgroundPromoStats = cacheStats.promotionStats;
+
   ret.evictAttempts = cacheStats.evictionAttempts;
   ret.allocAttempts = cacheStats.allocAttempts;
   ret.allocFailures = cacheStats.allocFailures;
-
-  ret.backgndEvicStats.nEvictedItems = cacheStats.evictionStats.numMovedItems;
-  ret.backgndEvicStats.nTraversals = cacheStats.evictionStats.runCount;
-  ret.backgndEvicStats.nClasses = cacheStats.evictionStats.totalClasses;
-  ret.backgndEvicStats.evictionSize = cacheStats.evictionStats.totalBytesMoved;
-  
-  ret.backgndPromoStats.nPromotedItems =
-      cacheStats.promotionStats.numMovedItems;
-  ret.backgndPromoStats.nTraversals = cacheStats.promotionStats.runCount;
 
   ret.numCacheGets = cacheStats.numCacheGets;
   ret.numCacheGetMiss = cacheStats.numCacheGetMiss;

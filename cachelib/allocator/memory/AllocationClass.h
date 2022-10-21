@@ -97,6 +97,13 @@ class AllocationClass {
   // fetch stats about this allocation class.
   ACStats getStats() const;
 
+  // get approx usage as fraction of used allocs/total allocs in this class
+  double getApproxUsage() const;
+  // get approx slabs in this class
+  uint32_t getApproxSlabs() const;
+  // get items per slabs in this class
+  uint32_t getPerSlab() const;
+
   // Whether the pool is full or free to allocate more in the current state.
   // This is only a hint and not a gurantee that subsequent allocate will
   // fail/succeed.

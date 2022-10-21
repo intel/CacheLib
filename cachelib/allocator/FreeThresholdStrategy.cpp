@@ -30,9 +30,47 @@ FreeThresholdStrategy::FreeThresholdStrategy(double lowEvictionAcWatermark,
       minEvictionBatch(minEvictionBatch) {}
 
 std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
-    const CacheBase& /* cache */,
-    std::vector<MemoryDescriptorType> /* acVec */) {
-  throw std::runtime_error("Not supported yet!");
+    const CacheBase& cache,
+    std::vector<MemoryDescriptorType> acVec) {
+  std::vector<size_t> batches{};
+  for (auto [tid, pid, cid] : acVec) {
+    const auto& pool = cache.getPoolByTid(pid, tid);
+    if (pool.getApproxFreeSlabs()) {
+      batches.push_back(0);
+    }
+    double usage = pool.getApproxUsage(cid);
+    if ((1-usage)*100 < highEvictionAcWatermark && pool.allSlabsAllocated()) {
+      auto toFreeMemPercent = highEvictionAcWatermark - (1-usage)*100;
+      auto toFreeItems = static_cast<size_t>(
+          toFreeMemPercent * (pool.getApproxSlabs(cid) * pool.getPerSlab(cid)) );
+      batches.push_back(toFreeItems);
+    } else {
+      batches.push_back(0);
+    }
+  }
+
+  if (batches.size() == 0) {
+    return batches;
+  }
+
+  auto maxBatch = *std::max_element(batches.begin(), batches.end());
+  if (maxBatch == 0)
+    return batches;
+
+  std::transform(
+      batches.begin(), batches.end(), batches.begin(), [&](auto numItems) {
+        if (numItems == 0) {
+          return 0UL;
+        }
+
+        auto cappedBatchSize = maxEvictionBatch * numItems / maxBatch;
+        if (cappedBatchSize < minEvictionBatch)
+          return minEvictionBatch;
+        else
+          return cappedBatchSize;
+      });
+
+  return batches;
 }
 
 } // namespace facebook::cachelib

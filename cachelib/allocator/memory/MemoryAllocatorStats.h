@@ -53,6 +53,9 @@ struct ACStats {
   // Rolling allocation latency (in ns)
   util::RollingStats allocLatencyNs;
 
+  uint64_t evictionAttempts;
+  uint64_t evictions;
+
   constexpr unsigned long long totalSlabs() const noexcept {
     return freeSlabs + usedSlabs;
   }
@@ -66,6 +69,15 @@ struct ACStats {
       return 0.0;
 
     return activeAllocs / (usedSlabs * allocsPerSlab);
+  }
+  
+  constexpr double approxUsage() const noexcept {
+    const unsigned long long nSlabsAllocated = usedSlabs;
+    if (nSlabsAllocated == 0) {
+        return 0.0;
+    }
+    const unsigned long long perSlab = allocsPerSlab;
+    return (double) activeAllocs / (double) (nSlabsAllocated * perSlab);
   }
 
   constexpr size_t totalAllocatedSize() const noexcept {
