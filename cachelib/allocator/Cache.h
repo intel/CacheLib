@@ -98,6 +98,12 @@ class CacheBase {
   //
   // @param poolId    The pool id to query
   virtual const MemoryPool& getPool(PoolId poolId) const = 0;
+  
+  // Get the reference  to a memory pool using a tier id, for stats purposes
+  //
+  // @param poolId    The pool id to query
+  // @param tierId    The tier of the pool id
+  virtual const MemoryPool& getPoolByTid(PoolId poolId, TierId tid) const = 0;
 
   // Get Pool specific stats (regular pools). This includes stats from the
   // Memory Pool and also the cache.
