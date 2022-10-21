@@ -35,7 +35,43 @@ class PromotionStrategy : public BackgroundMoverStrategy {
 
   std::vector<size_t> calculateBatchSizes(
       const CacheBase& cache, std::vector<MemoryDescriptorType> acVec) {
-    return {};
+    std::vector<size_t> batches{};
+    for (auto [tid, pid, cid] : acVec) {
+      XDCHECK(tid > 0);
+      const auto& pool = cache.getPoolByTid(pid, tid-1);
+      double usage = pool.getApproxUsage(cid);
+      if ((1-usage)*100 <= promotionAcWatermark)
+        batches.push_back(0);
+      else {
+        auto maxPossibleItemsToPromote = static_cast<size_t>(
+            ( (promotionAcWatermark - (1-usage*100) ) *
+              (pool.getApproxSlabs(cid) * pool.getPerSlab(cid)) ) );
+        batches.push_back(maxPossibleItemsToPromote);
+      }
+    }
+
+    if (batches.size() == 0) {
+      return batches;
+    }
+
+    auto maxBatch = *std::max_element(batches.begin(), batches.end());
+    if (maxBatch == 0)
+      return batches;
+
+    std::transform(
+        batches.begin(), batches.end(), batches.begin(), [&](auto numItems) {
+          if (numItems == 0) {
+            return 0UL;
+          }
+
+          auto cappedBatchSize = maxPromotionBatch * numItems / maxBatch;
+          if (cappedBatchSize < minPromotionBatch)
+            return minPromotionBatch;
+          else
+            return cappedBatchSize;
+        });
+
+    return batches;
   }
 
  private:

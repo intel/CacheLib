@@ -639,6 +639,24 @@ class CacheAllocatorConfig {
   // CacheAllocator::startCacheWorkers()
   bool delayCacheWorkersStart{false};
 
+  // see MultiTierDataMovement.md
+  double promotionAcWatermark{4.0}; 
+  double lowEvictionAcWatermark{2.0};
+  double highEvictionAcWatermark{5.0};
+  double numDuplicateElements{0.0}; // inclusivness of the cache
+  double syncPromotion{0.0}; // can promotion be done synchronously in user thread
+  
+  uint64_t evictorThreads{1};
+  uint64_t promoterThreads{1};
+
+  uint64_t maxEvictionBatch{40};
+  uint64_t maxPromotionBatch{10};
+
+  uint64_t minEvictionBatch{1};
+  uint64_t minPromotionBatch{1};
+
+  uint64_t maxEvictionPromotionHotness{60};
+
   friend CacheT;
 
  private:

@@ -546,6 +546,11 @@ class MMTinyLFU {
     template <typename F>
     void withEvictionIterator(F&& f);
 
+    // Execute provided function under container lock. Function gets
+    // iterator passed as parameter.
+    template <typename F>
+    void withPromotionIterator(F&& f);
+
     // Execute provided function under container lock.
     template <typename F>
     void withContainerLock(F&& f);
@@ -899,6 +904,13 @@ template <typename F>
 void MMTinyLFU::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
   // TinyLFU uses spin lock which does not support combined locking
   fun(getEvictionIterator());
+}
+
+template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
+template <typename F>
+void
+MMTinyLFU::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
+  throw std::runtime_error("Not supported");
 }
 
 template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>

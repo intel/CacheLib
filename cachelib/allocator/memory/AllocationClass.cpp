@@ -704,6 +704,30 @@ ACStats AllocationClass::getStats() const {
   });
 }
 
+uint32_t AllocationClass::getPerSlab() const {
+  return getAllocsPerSlab();
+}
+
+uint32_t AllocationClass::getApproxSlabs() const {
+  return allocatedSlabs_.size();
+}
+
+double AllocationClass::getApproxUsage() const {
+  const unsigned long long nSlabsAllocated = allocatedSlabs_.size();
+  if (nSlabsAllocated == 0) {
+      return 0.0;
+  }
+  const unsigned long long perSlab = getAllocsPerSlab();
+  const auto freeAllocsInCurrSlab =
+      canAllocateFromCurrentSlabLocked()
+          ? (Slab::kSize - currOffset_) / allocationSize_
+          : 0;
+  const unsigned long long nFreedAllocs = freedAllocations_.size();
+  const unsigned long long nActiveAllocs =
+      nSlabsAllocated * perSlab - nFreedAllocs - freeAllocsInCurrSlab;
+  return (double) nActiveAllocs / (double) (nSlabsAllocated * perSlab);
+}
+
 void AllocationClass::createSlabReleaseAllocMapLocked(const Slab* slab) {
   // Initialize slab free state
   // Each bit represents whether or not an alloc has already been freed

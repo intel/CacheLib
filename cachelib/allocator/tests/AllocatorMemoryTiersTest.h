@@ -19,6 +19,8 @@
 #include "cachelib/allocator/CacheAllocatorConfig.h"
 #include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/tests/TestBase.h"
+#include "cachelib/allocator/FreeThresholdStrategy.h"
+#include "cachelib/allocator/PromotionStrategy.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -152,6 +154,81 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
         ASSERT_NE(itemCount[tid],itemCount[tid-1]);
         ASSERT_EQ(evictCount[tid],evictCount[tid-1]);
     }
+  }
+  
+  void testMultiTiersBackgroundMovers() {
+    typename AllocatorT::Config config;
+    config.setCacheSize(10 * Slab::kSize);
+    config.enableCachePersistence("/tmp");
+    config.usePosixForShm();
+    auto moveCb = [&](typename AllocatorT::Item& oldItem,
+                      typename AllocatorT::Item& newItem,
+                      typename AllocatorT::Item* /* parentPtr */) {
+      std::memcpy(newItem.getMemory(), oldItem.getMemory(),
+                  oldItem.getSize());
+    };
+
+    config.enableMovingOnSlabRelease(moveCb, {}, 10);
+    config.configureMemoryTiers({
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind(std::string("0")),
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind(std::string("0"))
+    });
+    config.enableBackgroundEvictor(std::make_shared<FreeThresholdStrategy>(2, 10, 100, 40),
+            std::chrono::milliseconds(10),1);
+    config.enableBackgroundPromoter(std::make_shared<PromotionStrategy>(5, 4, 2),
+            std::chrono::milliseconds(10),1);
+
+    auto allocator = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
+    ASSERT(allocator != nullptr);
+    const size_t numBytes = allocator->getCacheMemoryStats().ramCacheSize;
+
+    auto poolId = allocator->addPool("default", numBytes);
+
+    const unsigned int keyLen = 100;
+    const unsigned int size = 100;
+    unsigned int allocs = 0;
+
+    //we should work on pool stats because filluppooluntil evictions
+    //will finish once we evict an item from tier 0 to tier 1 and
+    //there will be unallocated memory left.
+    while (allocs < 174760) {
+      const auto key = this->getRandomNewKey(*allocator, keyLen);
+      ASSERT_EQ(allocator->find(key), nullptr);
+      auto handle = util::allocateAccessible(*allocator, poolId, key, size);
+      allocs++;
+    }
+   
+    const auto key = this->getRandomNewKey(*allocator, keyLen);
+    auto handle = util::allocateAccessible(*allocator, poolId, key, size);
+    ASSERT_NE(nullptr, handle);
+    const uint8_t cid = allocator->getAllocInfo(handle->getMemory()).classId;
+    ASSERT_EQ(cid,5);
+    auto stats = allocator->getGlobalCacheStats();
+    auto slabStats = allocator->getACStats(0,0,cid);
+    const auto& mpStats = allocator->getPoolByTid(poolId, 0).getStats(); 
+    //cache is 10MB should move about 1MB to reach 10% free
+    uint32_t approxEvict = (1024*1024)/mpStats.acStats.at(cid).allocSize;
+    while (stats.evictionStats[0].numMovedItems < approxEvict*0.95 && (1-slabStats.usageFraction()) >= 0.095) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        stats = allocator->getGlobalCacheStats();
+        slabStats = allocator->getACStats(0,0,cid);
+    }
+    ASSERT_GE(1-slabStats.usageFraction(),0.095);
+
+    auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
+    auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);
+
+    ASSERT_GE(stats.evictionStats[0].numMovedItems,1);
+    ASSERT_GE(stats.evictionStats[0].runCount,1);
+    ASSERT_GE(stats.promotionStats[0].numMovedItems,1);
+    
+    MemoryDescriptorType tier0(0,0,cid);
+    MemoryDescriptorType tier1(1,0,cid);
+    ASSERT_GE(perclassEstats[tier0], 1);
+    ASSERT_GE(perclassPstats[tier1], 1);
+    
   }
 
   void testMultiTiersValidMixed() {
