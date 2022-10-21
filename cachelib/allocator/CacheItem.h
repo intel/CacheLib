@@ -42,6 +42,9 @@ namespace cachelib {
 namespace tests {
 template <typename AllocatorT>
 class BaseAllocatorTest;
+  
+template <typename AllocatorT>
+class AllocatorMemoryTiersTest;
 
 template <typename AllocatorT>
 class AllocatorHitStatsTest;
@@ -463,6 +466,8 @@ class CACHELIB_PACKED_ATTR CacheItem {
   // tests
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::BaseAllocatorTest;
+  template <typename AllocatorT>
+  friend class facebook::cachelib::tests::AllocatorMemoryTiersTest;
   friend class facebook::cachelib::tests::MapTest<CacheAllocator<CacheTrait>>;
   FRIEND_TEST(LruAllocatorTest, ItemSampling);
   FRIEND_TEST(LruAllocatorTest, AddChainedAllocationSimple);
@@ -581,6 +586,8 @@ class CACHELIB_PACKED_ATTR CacheChainedItem : public CacheItem<CacheTrait> {
   friend NvmCache<CacheAllocator<CacheTrait>>;
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::BaseAllocatorTest;
+  template <typename AllocatorT>
+  friend class facebook::cachelib::tests::AllocatorMemoryTiersTest;
   FRIEND_TEST(ItemTest, ChainedItemConstruction);
   FRIEND_TEST(ItemTest, ToString);
   FRIEND_TEST(ItemTest, ChangeKey);
