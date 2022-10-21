@@ -496,6 +496,9 @@ class MMTinyLFU {
     // iterator passed as parameter.
     template <typename F>
     void withEvictionIterator(F&& f);
+    
+    template <typename F>
+    void withPromotionIterator(F&& f);
 
     // for saving the state of the lru
     //

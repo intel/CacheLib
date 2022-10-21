@@ -19,6 +19,8 @@
 #include "cachelib/allocator/HitsPerSlabStrategy.h"
 #include "cachelib/allocator/LruTailAgeStrategy.h"
 #include "cachelib/allocator/RandomStrategy.h"
+#include "cachelib/allocator/FreeThresholdStrategy.h"
+#include "cachelib/allocator/PromotionStrategy.h"
 
 namespace facebook {
 namespace cachelib {
@@ -28,6 +30,9 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, cacheDir);
   JSONSetVal(configJson, cacheSizeMB);
   JSONSetVal(configJson, poolRebalanceIntervalSec);
+  JSONSetVal(configJson, backgroundEvictorIntervalMilSec);
+  JSONSetVal(configJson, backgroundPromoterIntervalMilSec);
+  JSONSetVal(configJson, backgroundEvictorStrategy);
   JSONSetVal(configJson, moveOnSlabRelease);
   JSONSetVal(configJson, rebalanceStrategy);
   JSONSetVal(configJson, rebalanceMinSlabs);
@@ -101,10 +106,27 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, nvmAdmissionRetentionTimeThreshold);
 
   JSONSetVal(configJson, customConfigJson);
+  
+  //Background related configs
+  JSONSetVal(configJson, lowEvictionAcWatermark);
+  JSONSetVal(configJson, highEvictionAcWatermark);
+  JSONSetVal(configJson, minAcAllocationWatermark);
+  JSONSetVal(configJson, maxAcAllocationWatermark);
+  JSONSetVal(configJson, numDuplicateElements);
+  JSONSetVal(configJson, syncPromotion);
+  JSONSetVal(configJson, evictorThreads);
+  JSONSetVal(configJson, promoterThreads);
+  JSONSetVal(configJson, promotionAcWatermark);
+  JSONSetVal(configJson, maxEvictionBatch);
+  JSONSetVal(configJson, maxPromotionBatch);
+  JSONSetVal(configJson, minEvictionBatch);
+  JSONSetVal(configJson, minPromotionBatch);
+  JSONSetVal(configJson, maxEvictionPromotionHotness);
+  
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 728>();
+  checkCorrectSize<CacheConfig, 888>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
@@ -139,6 +161,20 @@ MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, memBindNodes);
 
   checkCorrectSize<MemoryTierConfig, 40>();
+}
+
+std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundEvictorStrategy() const {
+  if (backgroundEvictorIntervalMilSec == 0) {
+    return nullptr;
+  }
+  return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+}
+
+std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundPromoterStrategy() const {
+  if (backgroundPromoterIntervalMilSec == 0) {
+    return nullptr;
+  }
+  return std::make_shared<PromotionStrategy>(promotionAcWatermark, maxPromotionBatch, minPromotionBatch);
 }
 } // namespace cachebench
 } // namespace cachelib
