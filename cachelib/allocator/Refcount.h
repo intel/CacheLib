@@ -170,29 +170,12 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // @throw  RefcountUnderflow when we are trying to decremenet from 0
   //         refcount and have a refcount leak.
   FOLLY_ALWAYS_INLINE Value decRef() {
-    Value* const refPtr = &refCount_;
-    unsigned int nCASFailures = 0;
-    constexpr bool isWeak = false;
-
-    Value oldVal = __atomic_load_n(refPtr, __ATOMIC_RELAXED);
-    while (true) {
-      const Value newCount = oldVal - static_cast<Value>(1);
-      if ((oldVal & kAccessRefMask) == 0) {
-        throw exception::RefcountUnderflow(
-            "Trying to decRef with no refcount. RefCount Leak!");
-      }
-
-      if (__atomic_compare_exchange_n(refPtr, &oldVal, newCount, isWeak,
-                                      __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-        return newCount & kRefMask;
-      }
-      if ((++nCASFailures % 4) == 0) {
-        // this pause takes up to 40 clock cycles on intel and the lock cmpxchgl
-        // above should take about 100 clock cycles. we pause once every 400
-        // cycles or so if we are extremely unlucky
-        folly::asm_volatile_pause();
-      }
+    Value oldVal = __atomic_fetch_sub(&refCount_, static_cast<Value>(1), __ATOMIC_ACQ_REL);
+    if (UNLIKELY((oldVal & kAccessRefMask) == 0)) {
+      throw exception::RefcountUnderflow(
+          "Trying to decRef with no refcount. RefCount Leak!");
     }
+    return oldVal - static_cast<Value>(1);
   }
 
   // Return refcount excluding control bits and flags
