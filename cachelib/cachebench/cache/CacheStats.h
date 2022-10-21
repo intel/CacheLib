@@ -226,6 +226,10 @@ struct Stats {
       });
     }
 
+    out << folly::sformat("Tier 0 Background Evicted Items : {:,}",
+                            backgndEvicStats.nEvictedItems) << std::endl;
+    out << folly::sformat("Tier 0 Background Traversals : {:,}",
+                            backgndEvicStats.nTraversals) << std::endl;
     if (numCacheGets > 0) {
       out << folly::sformat("Cache Gets    : {:,}", numCacheGets) << std::endl;
       out << folly::sformat("Hit Ratio     : {:6.2f}%", overallHitRatio)

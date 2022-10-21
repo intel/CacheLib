@@ -381,7 +381,8 @@ CacheAllocator<CacheTrait>::allocate(PoolId poolId,
 }
 
 template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(PoolId /* pid */,
+bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(TierId tid,
+                                                       PoolId /* pid */,
                                                        ClassId /* cid */) {
   return false;
 }
@@ -413,7 +414,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   void* memory = allocator_[tid]->allocate(pid, requiredSize);
 
   if (backgroundEvictor_.size() && !fromBgThread &&
-      (memory == nullptr || shouldWakeupBgEvictor(pid, cid))) {
+      (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
     backgroundEvictor_[BackgroundMover<CacheT>::workerId(
                            tid, pid, cid, backgroundEvictor_.size())]
         ->wakeUp();
@@ -1649,6 +1650,47 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item, bool fromBgThre
   auto tid = getTierId(item);
   auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
   return tryEvictToNextMemoryTier(tid, pid, item, fromBgThread);
+}
+
+template <typename CacheTrait>
+typename CacheAllocator<CacheTrait>::WriteHandle
+CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(
+    TierId tid, PoolId pid, Item& item, bool fromBgThread) {
+  if(item.isExpired()) { return {}; }
+  TierId nextTier = tid;
+  while (nextTier > 0) { // try to evict down to the next memory tiers
+    auto toPromoteTier = nextTier - 1;
+    --nextTier;
+
+    // allocateInternal might trigger another eviction
+    auto newItemHdl = allocateInternalTier(toPromoteTier, pid,
+                     item.getKey(),
+                     item.getSize(),
+                     item.getCreationTime(),
+                     item.getExpiryTime(),
+                     fromBgThread);
+
+    if (newItemHdl) {
+      XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
+      if (!moveRegularItem(item, newItemHdl)) {
+        return WriteHandle{};
+      }
+      item.unmarkMoving();
+      return newItemHdl;
+    } else {
+      return WriteHandle{};
+    }
+  }
+
+  return {};
+}
+
+template <typename CacheTrait>
+typename CacheAllocator<CacheTrait>::WriteHandle
+CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(Item& item, bool fromBgThread) {
+    auto tid = getTierId(item);
+    auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
+    return tryPromoteToNextMemoryTier(tid, pid, item, fromBgThread);
 }
 
 template <typename CacheTrait>

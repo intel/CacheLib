@@ -93,6 +93,7 @@ class BackgroundMover : public PeriodicWorker {
 
   AtomicCounter numMovedItems_{0};
   AtomicCounter numTraversals_{0};
+  AtomicCounter totalClasses_{0};
   AtomicCounter totalBytesMoved_{0};
 
   std::vector<MemoryDescriptorType> assignedMemory_;

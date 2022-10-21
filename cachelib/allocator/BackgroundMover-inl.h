@@ -65,6 +65,7 @@ void BackgroundMover<CacheT>::checkAndRun() {
   auto assignedMemory = mutex_.lock_combine([this] { return assignedMemory_; });
 
   unsigned int moves = 0;
+  std::set<ClassId> classes{};
   auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
 
   for (size_t i = 0; i < batches.size(); i++) {
@@ -74,6 +75,7 @@ void BackgroundMover<CacheT>::checkAndRun() {
     if (batch == 0) {
       continue;
     }
+    classes.insert(cid);
     const auto& mpStats = cache_.getPoolByTid(pid, tid).getStats();
     // try moving BATCH items from the class in order to reach free target
     auto moved = moverFunc(cache_, tid, pid, cid, batch);
@@ -84,6 +86,7 @@ void BackgroundMover<CacheT>::checkAndRun() {
 
   numTraversals_.inc();
   numMovedItems_.add(moves);
+  totalClasses_.add(classes.size());
 }
 
 template <typename CacheT>
@@ -92,6 +95,7 @@ BackgroundMoverStats BackgroundMover<CacheT>::getStats() const noexcept {
   stats.numMovedItems = numMovedItems_.get();
   stats.runCount = numTraversals_.get();
   stats.totalBytesMoved = totalBytesMoved_.get();
+  stats.totalClasses = totalClasses_.get();
 
   return stats;
 }

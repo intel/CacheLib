@@ -46,6 +46,16 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       config_.getRebalanceStrategy(),
       std::chrono::seconds(config_.poolRebalanceIntervalSec));
 
+  allocatorConfig_.enableBackgroundEvictor(
+      config_.getBackgroundEvictorStrategy(),
+      std::chrono::milliseconds(config_.backgroundEvictorIntervalMilSec),
+      config_.evictorThreads);
+
+  allocatorConfig_.enableBackgroundPromoter(
+      config_.getBackgroundPromoterStrategy(),
+      std::chrono::milliseconds(config_.backgroundPromoterIntervalMilSec),
+      config_.promoterThreads);
+
   if (config_.moveOnSlabRelease && movingSync != nullptr) {
     allocatorConfig_.enableMovingOnSlabRelease(
         [](Item& oldItem, Item& newItem, Item* parentPtr) {
@@ -99,6 +109,12 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       util::removePath(nvmCacheFilePath_);
     }
   });
+
+  allocatorConfig_.maxEvictionBatch = config_.maxEvictionBatch;
+  allocatorConfig_.maxPromotionBatch = config_.maxPromotionBatch;
+  allocatorConfig_.minEvictionBatch = config_.minEvictionBatch;
+  allocatorConfig_.minPromotionBatch = config_.minPromotionBatch;
+  allocatorConfig_.maxEvictionPromotionHotness = config_.maxEvictionPromotionHotness;
 
   if (config_.enableItemDestructorCheck) {
     auto removeCB = [&](const typename Allocator::DestructorData& data) {
@@ -670,6 +686,21 @@ Stats Cache<Allocator>::getStats() const {
   const auto navyStats = cache_->getNvmCacheStatsMap().toMap();
 
   ret.allocationClassStats = allocationClassStats;
+
+  ret.backgndEvicStats.nEvictedItems =
+            cacheStats.evictionStats.numMovedItems;
+  ret.backgndEvicStats.nTraversals =
+            cacheStats.evictionStats.runCount;
+  ret.backgndEvicStats.nClasses =
+            cacheStats.evictionStats.totalClasses;
+  ret.backgndEvicStats.evictionSize =
+            cacheStats.evictionStats.totalBytesMoved;
+  
+  ret.backgndPromoStats.nPromotedItems =
+            cacheStats.promotionStats.numMovedItems;
+  ret.backgndPromoStats.nTraversals =
+            cacheStats.promotionStats.runCount;
+
   ret.numEvictions = aggregate.numEvictions();
   ret.numItems = aggregate.numItems();
   ret.evictAttempts = cacheStats.evictionAttempts;

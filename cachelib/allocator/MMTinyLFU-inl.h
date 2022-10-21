@@ -229,6 +229,13 @@ void MMTinyLFU::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
 
 template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
 template <typename F>
+void
+MMTinyLFU::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
+  throw std::runtime_error("Not supported");
+}
+
+template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
+template <typename F>
 void MMTinyLFU::Container<T, HookPtr>::withContainerLock(F&& fun) {
   LockHolder l(lruMutex_);
   fun();
