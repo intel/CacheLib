@@ -1670,11 +1670,17 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
     WriteHandle newItemHdl{};
     if(item.isChainedItem()) {
+        const auto& chainedItem = item.asChainedItem();
+        const auto parentKey = chainedItem.getParentItem(compressor_).getKey();
+        // Grab lock to prevent anyone else from modifying the chain
+        auto l = chainedItemLocks_.lockExclusive(parentKey);
         // allocateInternal might trigger another eviction
-        auto parentHandle = findInternal(item.asChainedItem().getParentItem(compressor_).getKey());
-        newItemHdl = allocateChainedItemInternalTier(parentHandle,
-                         nextTier,
-                         item.getSize());
+        auto parentHandle = validateAndGetParentHandleForChainedMoveLocked(chainedItem, parentKey);
+        if (parentHandle) {
+            newItemHdl = allocateChainedItemInternalTier(parentHandle,
+                             nextTier,
+                             item.getSize());
+        }
     } else {
         // allocateInternal might trigger another eviction
         newItemHdl = allocateInternalTier(nextTier, pid,
@@ -1686,6 +1692,7 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
+      //TODO: implement moveChainedItemWithSync - using transparent sync
       if (item.isChainedItem() && moveChainedItem(item.asChainedItem(), newItemHdl)) {
           return acquire(&item);
       } else if (!item.isChainedItem()) {

@@ -169,12 +169,24 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
       alloc->addChainedItem(itemHandle, std::move(chainedItemHandle));
     }
 
+    // Verify some of the items live in tier 1
+    uint64_t allocs[2] = { 0, 0 };
+    auto headHandle = alloc->findChainedItem(*itemHandle);
+    auto* head = &headHandle.get()->asChainedItem();
+    while (head) {
+        const auto tid = alloc->getTierId(*head);
+        allocs[tid]++;
+        head = head->getNext(alloc->compressor_);
+    }
+    ASSERT_GT(allocs[1],10);
+    headHandle.reset();
     // Verify we cannot allocate a new item either.
     ASSERT_EQ(nullptr, alloc->allocate(pid, "hello2", exhaustedSize));
 
     // We should be able to allocate a new item after releasing the old one
     itemHandle.reset();
     ASSERT_NE(nullptr, alloc->allocate(pid, "hello2", exhaustedSize));
+    
   }
 };
 } // namespace tests

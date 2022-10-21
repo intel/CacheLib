@@ -111,6 +111,9 @@ template <typename AllocatorT>
 class BaseAllocatorTest;
 
 template <typename AllocatorT>
+class AllocatorMemoryTiersTest;
+
+template <typename AllocatorT>
 class AllocatorHitStatsTest;
 
 template <typename AllocatorT>
@@ -2236,6 +2239,8 @@ class CacheAllocator : public CacheBase {
   FRIEND_TEST(CachelibAdminTest, WorkingSetAnalysisLoggingTest);
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::BaseAllocatorTest;
+  template <typename AllocatorT>
+  friend class facebook::cachelib::tests::AllocatorMemoryTiersTest;
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::AllocatorHitStatsTest;
   template <typename AllocatorT>
