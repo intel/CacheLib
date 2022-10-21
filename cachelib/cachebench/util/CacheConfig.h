@@ -20,6 +20,7 @@
 
 #include "cachelib/allocator/CacheAllocator.h"
 #include "cachelib/allocator/RebalanceStrategy.h"
+#include "cachelib/allocator/BackgroundMoverStrategy.h"
 #include "cachelib/cachebench/util/JSONConfig.h"
 #include "cachelib/common/Ticker.h"
 #include "cachelib/navy/common/Device.h"
@@ -71,7 +72,10 @@ struct CacheConfig : public JSONConfig {
 
   uint64_t cacheSizeMB{0};
   uint64_t poolRebalanceIntervalSec{0};
+  uint64_t backgroundEvictorIntervalMilSec{0};
+  uint64_t backgroundPromoterIntervalMilSec{0};
   std::string rebalanceStrategy;
+  std::string backgroundEvictorStrategy;
   uint64_t rebalanceMinSlabs{1};
   double rebalanceDiffRatio{0.25};
   bool moveOnSlabRelease{false};
@@ -249,6 +253,27 @@ struct CacheConfig : public JSONConfig {
   // eviction-age is more than this threshold. 0 means no threshold
   uint32_t nvmAdmissionRetentionTimeThreshold{0};
 
+  // See BackgroundMovers.md for complete description
+  double promotionAcWatermark{4.0};
+  double lowEvictionAcWatermark{2.0};
+  double highEvictionAcWatermark{5.0};
+  double minAcAllocationWatermark{0.0};
+  double maxAcAllocationWatermark{0.0};
+
+  double numDuplicateElements{0.0}; // inclusivness of the cache
+  double syncPromotion{0.0}; // can promotion be done synchronously in user thread
+  
+  uint64_t evictorThreads{1};
+  uint64_t promoterThreads{1};
+  
+  uint64_t maxEvictionBatch{40};
+  uint64_t maxPromotionBatch{10};
+  
+  uint64_t minEvictionBatch{5};
+  uint64_t minPromotionBatch{5};
+  
+  uint64_t maxEvictionPromotionHotness{60};
+
   //
   // Options below are not to be populated with JSON
   //
@@ -284,6 +309,8 @@ struct CacheConfig : public JSONConfig {
   CacheConfig() {}
 
   std::shared_ptr<RebalanceStrategy> getRebalanceStrategy() const;
+  std::shared_ptr<BackgroundMoverStrategy> getBackgroundEvictorStrategy() const;
+  std::shared_ptr<BackgroundMoverStrategy> getBackgroundPromoterStrategy() const;
 };
 } // namespace cachebench
 } // namespace cachelib
