@@ -34,7 +34,7 @@ public:
 
   std::vector<size_t> calculateBatchSizes(const CacheBase& cache, std::vector<std::tuple<TierId, PoolId, ClassId>> acVecs); //function to calculate number of items to evict for alloc. classes in the batch
 
-  BackgroundStrategyStats getStats();
+  //BackgroundStrategyStats getStats();
 
 private:
   double lowEvictionAcWatermark{2.0}; //threshold to activate eviction in a certain alloc. class
