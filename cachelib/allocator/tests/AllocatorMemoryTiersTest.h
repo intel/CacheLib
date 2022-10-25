@@ -19,7 +19,7 @@
 #include "cachelib/allocator/CacheAllocatorConfig.h"
 #include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/tests/TestBase.h"
-#include "cachelib/allocator/FreeThresholdStrategy.h"
+#include "cachelib/allocator/DynamicFreeThresholdStrategy.h"
 #include "cachelib/allocator/PromotionStrategy.h"
 
 #include <folly/synchronization/Latch.h>
