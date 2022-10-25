@@ -106,7 +106,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
         MemoryTierCacheConfig::fromFile("/tmp/b" + std::to_string(::getpid()))
             .setRatio(1)
     });
-    config.enableBackgroundEvictor(std::make_shared<FreeThresholdStrategy>(2, 10, 100, 40),
+    config.enableBackgroundEvictor(std::make_shared<DynamicFreeThresholdStrategy>(2, 10, 100, 40),
             std::chrono::milliseconds(10),1);
     config.enableBackgroundPromoter(std::make_shared<PromotionStrategy>(5, 4, 2),
             std::chrono::milliseconds(10),1);
