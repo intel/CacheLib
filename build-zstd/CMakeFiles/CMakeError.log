@@ -1,0 +1,33 @@
+Determining if the pthread_create exist failed with the following output:
+Change Dir: /home/daniel/Background_cachelib/CacheLib/build-zstd/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_e6653/fast"
+/usr/bin/make -f CMakeFiles/cmTC_e6653.dir/build.make CMakeFiles/cmTC_e6653.dir/build
+make[1]: Entering directory '/home/daniel/Background_cachelib/CacheLib/build-zstd/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_e6653.dir/CheckSymbolExists.c.o
+/usr/bin/cc   -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wcast-qual -Wstrict-prototypes -DDEBUGLEVEL=1    -o CMakeFiles/cmTC_e6653.dir/CheckSymbolExists.c.o   -c /home/daniel/Background_cachelib/CacheLib/build-zstd/CMakeFiles/CMakeTmp/CheckSymbolExists.c
+Linking C executable cmTC_e6653
+/usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_e6653.dir/link.txt --verbose=1
+/usr/bin/cc  -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wcast-qual -Wstrict-prototypes -DDEBUGLEVEL=1     CMakeFiles/cmTC_e6653.dir/CheckSymbolExists.c.o  -o cmTC_e6653 
+/usr/bin/ld: CMakeFiles/cmTC_e6653.dir/CheckSymbolExists.c.o: in function `main':
+CheckSymbolExists.c:(.text+0x1f): undefined reference to `pthread_create'
+collect2: error: ld returned 1 exit status
+make[1]: *** [CMakeFiles/cmTC_e6653.dir/build.make:87: cmTC_e6653] Error 1
+make[1]: Leaving directory '/home/daniel/Background_cachelib/CacheLib/build-zstd/CMakeFiles/CMakeTmp'
+make: *** [Makefile:121: cmTC_e6653/fast] Error 2
+
+File /home/daniel/Background_cachelib/CacheLib/build-zstd/CMakeFiles/CMakeTmp/CheckSymbolExists.c:
+/* */
+#include <pthread.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef pthread_create
+  return ((int*)(&pthread_create))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+

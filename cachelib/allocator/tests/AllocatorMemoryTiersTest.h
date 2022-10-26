@@ -19,6 +19,7 @@
 #include "cachelib/allocator/CacheAllocatorConfig.h"
 #include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/tests/TestBase.h"
+#include "cachelib/allocator/DynamicFreeThresholdStrategy.h"
 #include "cachelib/allocator/FreeThresholdStrategy.h"
 #include "cachelib/allocator/PromotionStrategy.h"
 
@@ -106,6 +107,8 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
         MemoryTierCacheConfig::fromFile("/tmp/b" + std::to_string(::getpid()))
             .setRatio(1)
     });
+    config.enableBackgroundEvictor(std::make_shared<DynamicFreeThresholdStrategy>(2, 10, 100, 40),
+            std::chrono::milliseconds(10),1);
     config.enableBackgroundEvictor(std::make_shared<FreeThresholdStrategy>(2, 10, 100, 40),
             std::chrono::milliseconds(10),1);
     config.enableBackgroundPromoter(std::make_shared<PromotionStrategy>(5, 4, 2),

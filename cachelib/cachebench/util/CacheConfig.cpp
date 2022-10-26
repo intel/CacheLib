@@ -19,6 +19,7 @@
 #include "cachelib/allocator/HitsPerSlabStrategy.h"
 #include "cachelib/allocator/LruTailAgeStrategy.h"
 #include "cachelib/allocator/RandomStrategy.h"
+#include "cachelib/allocator/DynamicFreeThresholdStrategy.h"
 #include "cachelib/allocator/FreeThresholdStrategy.h"
 #include "cachelib/allocator/PromotionStrategy.h"
 
@@ -101,6 +102,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
 
   JSONSetVal(configJson, lowEvictionAcWatermark);
   JSONSetVal(configJson, highEvictionAcWatermark);
+  JSONSetVal(configJson, highEvictionDelta);
   JSONSetVal(configJson, minAcAllocationWatermark);
   JSONSetVal(configJson, maxAcAllocationWatermark);
   JSONSetVal(configJson, numDuplicateElements);
@@ -125,7 +127,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 896>();
+  checkCorrectSize<CacheConfig, 904>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
@@ -134,6 +136,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
         numPools, poolSizes.size()));
   }
 }
+
 
 std::shared_ptr<RebalanceStrategy> CacheConfig::getRebalanceStrategy() const {
   if (poolRebalanceIntervalSec == 0) {
@@ -167,7 +170,18 @@ std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundEvictorStrate
   if (backgroundEvictorIntervalMilSec == 0) {
     return nullptr;
   }
-  return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+  //return std::make_shared<DynamicFreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch,highEvictionDelta);
+ if (backgroundEvictorStrategy=="Dynamic")
+ {
+  return std::make_shared<DynamicFreeThresholdStrategy>(
+    lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch,
+     minEvictionBatch,highEvictionDelta);
+ }
+ else{
+  return std::make_shared<FreeThresholdStrategy>(
+    lowEvictionAcWatermark, highEvictionAcWatermark, 
+    maxEvictionBatch, minEvictionBatch);
+ }
 }
 
 std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundPromoterStrategy() const {
