@@ -171,7 +171,7 @@ std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundEvictorStrate
     return nullptr;
   }
   //return std::make_shared<DynamicFreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch,highEvictionDelta);
- if (backgroundEvictorStrategy=="Dynamic")
+ if (backgroundEvictorStrategy=="dynamic")
  {
   return std::make_shared<DynamicFreeThresholdStrategy>(
     lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch,
