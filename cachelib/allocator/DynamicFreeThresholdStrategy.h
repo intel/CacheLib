@@ -46,7 +46,7 @@ private:
   double highEvictionDelta{0.3}; //step size of hill-climbing algorithm
                                  //TODO: tune this param, use access freq or other access stat as basis, perhaps use the benefit function to adjust this param (binned)?
   double acLatencyDelta{0.1};
-  double initial_latency {100.0};
+  double initial_latency {10.0};
   double alpha {0.99};
   std::vector<std::vector<std::vector<std::vector<double>>>> highEvictionAcWatermarks; //individual dynamic thresholds for each ac class
   //index 0 for i-th window
