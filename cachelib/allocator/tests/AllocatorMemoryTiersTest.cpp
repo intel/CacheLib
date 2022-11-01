@@ -27,6 +27,7 @@ TEST_F(LruAllocatorMemoryTiersTest, MultiTiersFromFileInvalid) { this->testMulti
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersFromFileValid) { this->testMultiTiersFromFileValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValidMixed) { this->testMultiTiersValidMixed(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersBackgroundMovers ) { this->testMultiTiersBackgroundMovers(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersBackgroundMovers ) { this->testMultiTiersBackgroundMovers(true); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsSysVValid) { this->testMultiTiersNumaBindingsSysVValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersNumaBindingsPosixValid) { this->testMultiTiersNumaBindingsPosixValid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersRemoveDuringEviction) { this->testMultiTiersRemoveDuringEviction(); }
