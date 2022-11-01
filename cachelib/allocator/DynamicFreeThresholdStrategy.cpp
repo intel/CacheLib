@@ -109,7 +109,7 @@ std::vector<size_t> DynamicFreeThresholdStrategy::calculateBatchSizes
 
         acHighThresholdAtINew = std::max(acHighThresholdAtINew, lowEvictionAcWatermark); // high threshold cannot be less than the low threshold
         auto CurrentItemsPercent=100-acFree;
-        auto toFreeMemPercent=acHighThresholdAtINew-acFree;
+	auto toFreeMemPercent=CurrentItemsPercent-acHighThresholdAtINew;
                                                                                    
       
       acToFreeMemPercents[tid][pid][cid][1] = toFreeMemPercentAtI; //update acToFreeMemPercents
