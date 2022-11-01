@@ -41,8 +41,8 @@ private:
                                       //for now: static threshold, same for all alloc. classes, TODO: implement dynamic low threshold
   double highEvictionAcWatermark{5.0}; //threshold to calculate number of items to evict from a certain alloc. class
                                        //this threshold is adjusted internally, individually for each ac class
-  uint64_t maxEvictionBatch{0};
-  uint64_t minEvictionBatch{0};
+  uint64_t maxEvictionBatch{40};
+  uint64_t minEvictionBatch{50};
   double highEvictionDelta{0.3}; //step size of hill-climbing algorithm
                                  //TODO: tune this param, use access freq or other access stat as basis, perhaps use the benefit function to adjust this param (binned)?
   double acLatencyDelta{0.1};
