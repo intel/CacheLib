@@ -42,7 +42,7 @@ DynamicFreeThresholdStrategy::DynamicFreeThresholdStrategy(
       highEvictionAcWatermark(highEvictionAcWatermark),
       maxEvictionBatch(maxEvictionBatch),
       minEvictionBatch(minEvictionBatch),
-      highEvictionDelta(highEvictionDelt),
+      highEvictionDelta(highEvictionDelta),
       highEvictionAcWatermarks(
           CacheBase::kMaxTiers,
           std::vector<std::vector<std::vector<double>>>(
