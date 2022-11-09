@@ -18,9 +18,9 @@
 
 #include <any>
 
+#include "cachelib/allocator/BackgroundMoverStrategy.h"
 #include "cachelib/allocator/CacheAllocator.h"
 #include "cachelib/allocator/RebalanceStrategy.h"
-#include "cachelib/allocator/BackgroundMoverStrategy.h"
 #include "cachelib/cachebench/util/JSONConfig.h"
 #include "cachelib/common/Ticker.h"
 #include "cachelib/navy/common/Device.h"
@@ -57,7 +57,7 @@ struct MemoryTierConfig : public JSONConfig {
   size_t ratio{0};
   std::string memBindNodes{""};
 
-private:
+ private:
   MemoryTierCacheConfig memoryTierCacheConfigFromSource() {
     if (file.empty()) {
       return MemoryTierCacheConfig::fromShm();
@@ -264,21 +264,23 @@ struct CacheConfig : public JSONConfig {
   double promotionAcWatermark{4.0};
   double lowEvictionAcWatermark{2.0};
   double highEvictionAcWatermark{5.0};
+  double highEvictionDelta{0.3};
   double minAcAllocationWatermark{0.0};
   double maxAcAllocationWatermark{0.0};
 
   double numDuplicateElements{0.0}; // inclusivness of the cache
-  double syncPromotion{0.0}; // can promotion be done synchronously in user thread
-  
+  double syncPromotion{0.0}; // can promotion be done synchronously in user
+                             // thread
+
   uint64_t evictorThreads{1};
   uint64_t promoterThreads{1};
-  
+
   uint64_t maxEvictionBatch{40};
   uint64_t maxPromotionBatch{10};
-  
+
   uint64_t minEvictionBatch{5};
   uint64_t minPromotionBatch{5};
-  
+
   uint64_t maxEvictionPromotionHotness{60};
 
   //
@@ -313,7 +315,8 @@ struct CacheConfig : public JSONConfig {
 
   std::shared_ptr<RebalanceStrategy> getRebalanceStrategy() const;
   std::shared_ptr<BackgroundMoverStrategy> getBackgroundEvictorStrategy() const;
-  std::shared_ptr<BackgroundMoverStrategy> getBackgroundPromoterStrategy() const;
+  std::shared_ptr<BackgroundMoverStrategy> getBackgroundPromoterStrategy()
+      const;
 };
 } // namespace cachebench
 } // namespace cachelib
