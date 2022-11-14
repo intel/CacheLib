@@ -2,6 +2,7 @@
 
 # Newline separated list of tests to ignore
 BLACKLIST="allocator-test-NavySetupTest
+allocator-test-NvmCacheTests
 shm-test-test_page_size"
 
 if [ "$1" == "long" ]; then

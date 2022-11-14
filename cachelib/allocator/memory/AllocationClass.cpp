@@ -50,7 +50,7 @@ AllocationClass::AllocationClass(ClassId classId,
       poolId_(poolId),
       allocationSize_(allocSize),
       slabAlloc_(s),
-      freedAllocations_{slabAlloc_.createPtrCompressor<FreeAlloc>()} {
+      freedAllocations_{slabAlloc_.createSingleTierPtrCompressor<FreeAlloc>()} {
   checkState();
 }
 
@@ -102,7 +102,7 @@ AllocationClass::AllocationClass(
       currSlab_(s.getSlabForIdx(*object.currSlabIdx())),
       slabAlloc_(s),
       freedAllocations_(*object.freedAllocationsObject(),
-                        slabAlloc_.createPtrCompressor<FreeAlloc>()),
+                        slabAlloc_.createSingleTierPtrCompressor<FreeAlloc>()),
       canAllocate_(*object.canAllocate()) {
   if (!slabAlloc_.isRestorable()) {
     throw std::logic_error("The allocation class cannot be restored.");
@@ -356,9 +356,10 @@ std::pair<bool, std::vector<void*>> AllocationClass::pruneFreeAllocs(
   // allocated slab, release any freed allocations belonging to this slab.
   // Set the bit to true if the corresponding allocation is freed, false
   // otherwise.
-  FreeList freeAllocs{slabAlloc_.createPtrCompressor<FreeAlloc>()};
-  FreeList notInSlab{slabAlloc_.createPtrCompressor<FreeAlloc>()};
-  FreeList inSlab{slabAlloc_.createPtrCompressor<FreeAlloc>()};
+  FreeList freeAllocs{slabAlloc_.createSingleTierPtrCompressor<FreeAlloc>()};
+  FreeList notInSlab{slabAlloc_.createSingleTierPtrCompressor<FreeAlloc>()};
+  FreeList inSlab{slabAlloc_.createSingleTierPtrCompressor<FreeAlloc>()};
+
 
   lock_->lock_combine([&]() {
     // Take the allocation class free list offline
