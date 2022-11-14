@@ -4928,13 +4928,13 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     /* TODO: we adjust alloc size by -20 or -40 due to increased CompressedPtr size */
     auto allocateItem1 =
         std::async(std::launch::async, allocFn, std::string{"hello"},
-                   std::vector<uint32_t>{100 - 20, 500, 1000});
+                   std::vector<uint32_t>{100, 500, 1000});
     auto allocateItem2 =
         std::async(std::launch::async, allocFn, std::string{"world"},
-                   std::vector<uint32_t>{200- 40, 1000, 2000});
+                   std::vector<uint32_t>{200, 1000, 2000});
     auto allocateItem3 =
         std::async(std::launch::async, allocFn, std::string{"yolo"},
-                   std::vector<uint32_t>{100-20, 200, 5000});
+                   std::vector<uint32_t>{100, 200, 5000});
 
     auto slabRelease = std::async(releaseFn);
     slabRelease.wait();
@@ -5772,9 +5772,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     AllocatorT alloc(config);
     const size_t numBytes = alloc.getCacheMemoryStats().cacheSize;
     const auto poolSize = numBytes / 2;
-    // TODO: becasue CompressedPtr size is increased, key1 must be of equal
-    // size with key2
-    std::string key1 = "key1";
+    std::string key1 = "key1-some-random-string-here";
     auto poolId = alloc.addPool("one", poolSize, {} /* allocSizes */, mmConfig);
     auto handle1 = alloc.allocate(poolId, key1, 1);
     alloc.insert(handle1);
@@ -5831,16 +5829,14 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     auto poolId = alloc.addPool("one", poolSize, {} /* allocSizes */, mmConfig);
     auto handle1 = alloc.allocate(poolId, key1, 1);
     alloc.insert(handle1);
-    // TODO: key2 must be the same length as the rest due to increased
-    // CompressedPtr size
-    auto handle2 = alloc.allocate(poolId, "key2-some-random-string-here", 1);
+    auto handle2 = alloc.allocate(poolId, "key2", 1);
     alloc.insert(handle2);
-    ASSERT_NE(alloc.find("key2-some-random-string-here"), nullptr);
+    ASSERT_NE(alloc.find("key2"), nullptr);
     sleep(9);
 
     ASSERT_NE(alloc.find(key1), nullptr);
     auto tail = alloc.dumpEvictionIterator(
-        poolId, 1 /* second allocation class, TODO: CompressedPtr */, 3 /* last 3 items */);
+        poolId, 0 /* first allocation class */, 3 /* last 3 items */);
     // item 1 gets promoted (age 9), tail age 9, lru refresh time 3 (default)
     EXPECT_TRUE(checkItemKey(tail[1], key1));
 
@@ -5848,20 +5844,20 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     alloc.insert(handle3);
 
     sleep(6);
-    tail = alloc.dumpEvictionIterator(poolId, 1 /* second allocation class, TODO: CompressedPtr */,
+    tail = alloc.dumpEvictionIterator(poolId, 0 /* first allocation class */,
                                       3 /* last 3 items */);
     ASSERT_NE(alloc.find(key3), nullptr);
-    tail = alloc.dumpEvictionIterator(poolId, 1 /* second allocation class, TODO: CompressedPtr */,
+    tail = alloc.dumpEvictionIterator(poolId, 0 /* first allocation class */,
                                       3 /* last 3 items */);
     // tail age 15, lru refresh time 6 * 0.7 = 4.2 = 4,
     // item 3 age 6 gets promoted
     EXPECT_TRUE(checkItemKey(tail[1], key1));
 
-    alloc.remove("key2-some-random-string-here");
+    alloc.remove("key2");
     sleep(3);
 
     ASSERT_NE(alloc.find(key3), nullptr);
-    tail = alloc.dumpEvictionIterator(poolId, 1 /* second allocation class, TODO: CompressedPtr */,
+    tail = alloc.dumpEvictionIterator(poolId, 0 /* second allocation class */,
                                       2 /* last 2 items */);
     // tail age 9, lru refresh time 4, item 3 age 3, not promoted
     EXPECT_TRUE(checkItemKey(tail[1], key3));
