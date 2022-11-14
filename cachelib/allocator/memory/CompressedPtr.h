@@ -27,12 +27,16 @@ namespace cachelib {
 
 class SlabAllocator;
 
+template <typename PtrType, typename AllocatorContainer>
+class PtrCompressor;
+
 // This CompressedPtr makes decompression fast by staying away from division and
-// modulo arithmetic and doing those during the compression time. We most often
-// decompress a CompressedPtr than compress a pointer while creating one. This
+// modulo arithmetic and doing those during the compression time. We most  often
+// decompress a CompressedPtr than compress a pointer  while creating one.  This
 // is used for pointer compression by the memory allocator.
 
 // We compress pointers by storing the tier index, slab index and alloc index of
+<<<<<<< HEAD
 // the allocation inside the slab.
 
 // In original design (without memory tiers):
@@ -50,6 +54,16 @@ class SlabAllocator;
 // for the slab index. Hence we can index 128 GiB of memory per tier in
 // multi-tier configuration.
 
+=======
+// the allocation inside the slab. With slab worth kNumSlabBits (22 bits) of
+// data, if we have the min allocation size as 64 bytes, that requires
+// kNumSlabBits - 6 = 16 bits for storing the alloc index.  The tier id occupies
+// the 32nd bit only since its value cannot exceed kMaxTiers (2). This leaves
+// the remaining (32 - (kNumSlabBits - 6) - 1 bit for tier id) =  15 bits  for
+// the  slab  index. Hence we can index 128 GiB of memory in slabs per tier and
+// index anything more than 64 byte allocations inside the slab using a 32 bit
+// representation.
+>>>>>>> 2d8f0802 (This is the additional multi-tier support needed)
 class CACHELIB_PACKED_ATTR CompressedPtr {
  public:
   using PtrType = uint32_t;
@@ -173,12 +187,14 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
   }
 
   friend SlabAllocator;
+  template <typename CPtrType, typename AllocatorContainer>
+  friend class PtrCompressor;
 };
 
 template <typename PtrType, typename AllocatorT>
-class PtrCompressor {
+class SingleTierPtrCompressor {
  public:
-  explicit PtrCompressor(const AllocatorT& allocator) noexcept
+  explicit SingleTierPtrCompressor(const AllocatorT& allocator) noexcept
       : allocator_(allocator) {}
 
   const CompressedPtr compress(const PtrType* uncompressed) const {
@@ -190,8 +206,56 @@ class PtrCompressor {
         allocator_.unCompress(compressed, false /* isMultiTiered */));
   }
 
-  bool operator==(const PtrCompressor& rhs) const noexcept {
+  bool operator==(const SingleTierPtrCompressor& rhs) const noexcept {
     return &allocator_ == &rhs.allocator_;
+  }
+
+  bool operator!=(const SingleTierPtrCompressor& rhs) const noexcept {
+    return !(*this == rhs);
+  }
+
+ private:
+  // memory allocator that does the pointer compression.
+  const AllocatorT& allocator_;
+};
+
+template <typename PtrType, typename AllocatorContainer>
+class PtrCompressor {
+ public:
+  explicit PtrCompressor(const AllocatorContainer& allocators) noexcept
+      : allocators_(allocators) {}
+
+  const CompressedPtr compress(const PtrType* uncompressed) const {
+    if (uncompressed == nullptr)
+      return CompressedPtr{};
+
+    TierId tid;
+    for (tid = 0; tid < allocators_.size(); tid++) {
+      if (allocators_[tid]->isMemoryInAllocator(
+              static_cast<const void*>(uncompressed)))
+        break;
+    }
+
+    bool isMultiTiered = allocators_.size() > 1;
+    auto cptr = allocators_[tid]->compress(uncompressed, isMultiTiered);
+    if (isMultiTiered) { // config has multiple tiers
+      cptr.setTierId(tid);
+    }
+    return cptr;
+  }
+
+  PtrType* unCompress(const CompressedPtr compressed) const {
+    if (compressed.isNull()) {
+      return nullptr;
+    }
+    bool isMultiTiered = allocators_.size() > 1;
+    auto& allocator = *allocators_[compressed.getTierId(isMultiTiered)];
+    return static_cast<PtrType*>(
+        allocator.unCompress(compressed, isMultiTiered));
+  }
+
+  bool operator==(const PtrCompressor& rhs) const noexcept {
+    return &allocators_ == &rhs.allocators_;
   }
 
   bool operator!=(const PtrCompressor& rhs) const noexcept {
@@ -200,7 +264,7 @@ class PtrCompressor {
 
  private:
   // memory allocator that does the pointer compression.
-  const AllocatorT& allocator_;
+  const AllocatorContainer& allocators_;
 };
 } // namespace cachelib
 } // namespace facebook

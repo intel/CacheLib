@@ -516,12 +516,13 @@ class MemoryAllocator {
   using CompressedPtr = facebook::cachelib::CompressedPtr;
   template <typename PtrType>
   using PtrCompressor =
-      facebook::cachelib::PtrCompressor<PtrType, SlabAllocator>;
-
+      facebook::cachelib::PtrCompressor<PtrType,
+             std::vector<std::unique_ptr<MemoryAllocator>>>;
+  
   template <typename PtrType>
-  PtrCompressor<PtrType> createPtrCompressor() {
-    return slabAllocator_.createPtrCompressor<PtrType>();
-  }
+  using SingleTierPtrCompressor =
+       facebook::cachelib::PtrCompressor<PtrType,
+       SlabAllocator>;
 
   // compress a given pointer to a valid allocation made out of this allocator
   // through an allocate() or nullptr. Calling this otherwise with invalid
