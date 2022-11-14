@@ -1334,6 +1334,7 @@ class CacheAllocator : public CacheBase {
                  sizeof(typename RefcountWithFlags::Value) + sizeof(uint32_t) +
                  sizeof(uint32_t) + sizeof(KAllocation)) == sizeof(Item),
                 "vtable overhead");
+  // Check for CompressedPtr single/multi tier support
   static_assert(32 == sizeof(Item), "item overhead is 32 bytes");
 
   // make sure there is no overhead in ChainedItem on top of a regular Item
@@ -1989,7 +1990,7 @@ class CacheAllocator : public CacheBase {
   }
 
   typename Item::PtrCompressor createPtrCompressor() const {
-    return allocator_[0 /* TODO */]->createPtrCompressor<Item>();
+    return typename Item::PtrCompressor(allocator_);
   }
 
   // helper utility to throttle and optionally log.
