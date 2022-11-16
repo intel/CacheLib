@@ -439,7 +439,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   if (backgroundEvictor_.size() && !fromBgThread && (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
     backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
   }
-  
+
   if (memory == nullptr) {
     memory = findEviction(tid, pid, cid);
   }
@@ -1590,13 +1590,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       } else {
         (*stats_.regularItemEvictions)[pid][cid].inc();
       }
-      
+
       if (auto eventTracker = getEventTracker()) {
         eventTracker->record(AllocatorApiEvent::DRAM_EVICT, candidate->getKey(),
                              AllocatorApiResult::EVICTED, candidate->getSize(),
                              candidate->getConfiguredTTL().count());
       }
-      
+
       if (ReleaseRes::kRecycled ==
           releaseBackToAllocator(*candidate, RemoveContext::kEviction,
                                  /* isNascent */ false, toRecycle)) {

@@ -1987,10 +1987,9 @@ class CacheAllocator : public CacheBase {
     for (Item *candidate : candidates) {
       {
         auto toReleaseHandle =
-          evictNormalItem(*candidate, 
-      	true /* skipIfTokenInvalid */, 
-      	true /* from BG thread */);
-        // destroy toReleseHandle. The item won't be release to allocator
+          evictNormalItem(*candidate,
+			  true /* skipIfTokenInvalid */, true /* from BG thread */);
+	// destroy toReleseHandle. The item won't be release to allocator
         // since we marked it as exclusive.
       }
       auto ref = candidate->unmarkExclusive();
