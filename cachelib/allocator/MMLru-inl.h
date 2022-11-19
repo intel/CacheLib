@@ -225,19 +225,13 @@ void MMLru::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
 template <typename T, MMLru::Hook<T> T::*HookPtr>
 template <typename F>
 void
-MMLru::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
-  lruMutex_->lock_combine([this, &fun]() {
-    fun(Iterator{LockHolder{}, lru_.rbegin()});
-  });
-}
-
-template <typename T, MMLru::Hook<T> T::*HookPtr>
-template <typename F>
-void
 MMLru::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
-  lruMutex_->lock_combine([this, &fun]() {
-    fun(Iterator{LockHolder{}, lru_.begin()});
-  });
+  if (config_.useCombinedLockForIterators) {
+    lruMutex_->lock_combine([this, &fun]() { fun(Iterator{lru_.begin()}); });
+  } else {
+    LockHolder lck{*lruMutex_};
+    fun(Iterator{lru_.begin()});
+  }
 }
 
 template <typename T, MMLru::Hook<T> T::*HookPtr>

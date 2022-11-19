@@ -295,11 +295,6 @@ class MMLru {
     template <typename F>
     void withEvictionIterator(F&& f);
 
-    // Execute provided function under container lock. Function gets
-    // iterator passed as parameter.
-    template <typename F>
-    void withEvictionIterator(F&& f);
-
     template <typename F>
     void withPromotionIterator(F&& f);
 
