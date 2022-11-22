@@ -1985,7 +1985,7 @@ class CacheAllocator : public CacheBase {
           throw std::runtime_error("Not supported for chained items");
         }
 
-        if (candidate->markExclusive()) {
+        if (candidate->markMoving(true)) {
           mmContainer.remove(itr);
           candidates.push_back(candidate);
         }
@@ -1996,13 +1996,29 @@ class CacheAllocator : public CacheBase {
 
     for (Item *candidate : candidates) {
       auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true /* from BgThread */);
-      XDCHECK(evictedToNext);
-      if (evictedToNext) {
-          auto ref = candidate->unmarkExclusive();
-          XDCHECK(ref == 0u);
-          evictions++;
+      if (!evictedToNext) {
+	  auto token = createPutToken(*candidate);
+
+	  auto ret = candidate->markExclusiveWhenMoving();
+	  XDCHECK(ret);
+
+          unlinkItemExclusive(*candidate);
+      	  // wake up any readers that wait for the move to complete
+      	  // it's safe to do now, as we have the item marked exclusive and
+      	  // no other reader can be added to the waiters list
+      	  wakeUpWaiters(candidate->getKey(), WriteHandle{});
+
+      	  if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
+      	    nvmCache_->put(*candidate, std::move(token));
+      	  }
       } else {
-	      unlinkItemExclusive(*candidate);
+          evictions++;
+      	  XDCHECK(!evictedToNext->isExclusive() && !evictedToNext->isMoving());
+      	  XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
+      	  XDCHECK(!candidate->isAccessible());
+      	  XDCHECK(candidate->getKey() == evictedToNext->getKey());
+
+      	  wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
       }
       XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
 
@@ -2042,8 +2058,7 @@ class CacheAllocator : public CacheBase {
 
         // TODO: only allow it for read-only items?
         // or implement mvcc
-        if (candidate->markExclusive()) {
-          mmContainer.remove(itr);
+        if (candidate->markMoving(true)) {
           candidates.push_back(candidate);
         }
 
@@ -2053,20 +2068,22 @@ class CacheAllocator : public CacheBase {
 
     for (Item *candidate : candidates) {
       auto promoted = tryPromoteToNextMemoryTier(*candidate, true);
-	  if (promoted) {
+      if (promoted) {
         promotions++;
+  	removeFromMMContainer(*candidate);
+        XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
+     	// it's safe to recycle the item here as there are no more
+     	// references and the item could not been marked as moving
+     	// by other thread since it's detached from MMContainer.
+     	auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
+     	                          /* isNascent */ false);
+     	XDCHECK(res == ReleaseRes::kReleased);
+      } else {
+	 //we failed to allocate a new item, this item is no  longer moving
+	candidate->unmarkMoving();
       }
-      unlinkItemExclusive(*candidate);
-      XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
      
-     // it's safe to recycle the item here as there are no more
-     // references and the item could not been marked as moving
-     // by other thread since it's detached from MMContainer.
-     auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-                               /* isNascent */ false);
-     XDCHECK(res == ReleaseRes::kReleased);
     }
-
     return promotions;
   }
 

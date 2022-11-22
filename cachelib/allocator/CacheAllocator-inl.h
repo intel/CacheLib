@@ -1037,7 +1037,7 @@ CacheAllocator<CacheTrait>::acquire(Item* it) {
 
   SCOPE_FAIL { stats_.numRefcountOverflow.inc(); };
 
-  auto failIfMoving = true; // TODO: only for multi-tier
+  auto failIfMoving = getNumTiers() > 1 ? true : false;
   auto incRes = incRef(*it, failIfMoving);
   if (LIKELY(incRes == RefcountWithFlags::incResult::incOk)) {
     return WriteHandle{it, *this};
@@ -1631,9 +1631,8 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       // in that case, it should be still possible to mark item as exclusive.
       auto ret = candidate->markExclusiveWhenMoving();
       XDCHECK(ret);
-
-	    unlinkItemExclusive(*candidate);
-
+      
+      unlinkItemExclusive(*candidate);
       // wake up any readers that wait for the move to complete
       // it's safe to do now, as we have the item marked exclusive and
       // no other reader can be added to the waiters list
@@ -3258,6 +3257,12 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
       token = createPutToken(*evicted);
       if (evicted->markExclusiveWhenMoving()) {
         unlinkItemExclusive(*evicted);
+	if (getNumTiers() > 1) {
+      	  // wake up any readers that wait for the move to complete
+      	  // it's safe to do now, as we have the item marked exclusive and
+      	  // no other reader can be added to the waiters list
+      	  wakeUpWaiters(evicted->getKey(), WriteHandle{});
+	}
       } else {
         continue;
       }
