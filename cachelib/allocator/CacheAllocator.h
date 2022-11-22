@@ -1389,7 +1389,7 @@ class CacheAllocator : public CacheBase {
   double slabsApproxFreePercentage(TierId tid) const;
 
   // wrapper around Item's refcount and active handle tracking
-  FOLLY_ALWAYS_INLINE bool incRef(Item& it);
+  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(Item& it, bool failIfMoving);
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef(Item& it);
 
   // drops the refcount and if needed, frees the allocation back to the memory
@@ -1622,8 +1622,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  template <typename P>
-  bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl, P&& predicate);
+  void moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
@@ -1792,11 +1791,11 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  bool tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
 
-  bool tryPromoteToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
+  WriteHandle tryPromoteToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
 
-  bool tryPromoteToNextMemoryTier(Item& item, bool fromBgThread);
+  WriteHandle tryPromoteToNextMemoryTier(Item& item, bool fromBgThread);
 
   // Try to move the item down to the next memory tier
   //
@@ -1804,7 +1803,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle. 
-  bool tryEvictToNextMemoryTier(Item& item, bool fromBgThread);
+  WriteHandle tryEvictToNextMemoryTier(Item& item, bool fromBgThread);
 
   size_t memoryTierSize(TierId tid) const;
 
@@ -2235,8 +2234,9 @@ class CacheAllocator : public CacheBase {
     return memoryTierConfigs.size();
   }
 
-  bool addWaitContextForMovingItem(
-      folly::StringPiece key, std::shared_ptr<WaitContext<ReadHandle>> waiter);
+  WriteHandle handleWithWaitContextForMovingItem(Item& item);
+
+  size_t wakeUpWaiters(folly::StringPiece key, WriteHandle&& handle);
 
   class MoveCtx {
    public:
@@ -2260,6 +2260,8 @@ class CacheAllocator : public CacheBase {
       XDCHECK(waiter);
       waiters.push_back(std::move(waiter));
     }
+
+    size_t numWaiters() const { return waiters.size(); }
 
    private:
     // notify all pending waiters that are waiting for the fetch.

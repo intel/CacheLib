@@ -51,7 +51,7 @@ void RefCountTest::testMultiThreaded() {
         nLocalRef--;
         ref.markAccessible();
       } else {
-        ref.incRef();
+        ref.incRef(true);
         nLocalRef++;
         ref.unmarkAccessible();
       }
@@ -100,12 +100,12 @@ void RefCountTest::testBasic() {
   ASSERT_FALSE(ref.template isFlagSet<RefcountWithFlags::Flags::kMMFlag1>());
 
   for (uint32_t i = 0; i < RefcountWithFlags::kAccessRefMask; i++) {
-    ASSERT_TRUE(ref.incRef());
+    ASSERT_TRUE(ref.incRef(true));
   }
 
   // Incrementing past the max will fail
   auto rawRef = ref.getRaw();
-  ASSERT_THROW(ref.incRef(), std::overflow_error);
+  ASSERT_THROW(ref.incRef(true), std::overflow_error);
   ASSERT_EQ(rawRef, ref.getRaw());
 
   // Bumping up access ref shouldn't affect admin ref and flags

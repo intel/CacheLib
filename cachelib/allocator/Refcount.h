@@ -116,10 +116,6 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
     // unevictable in the past.
     kUnevictable_NOOP,
 
-    // Item is accecible but content is not ready yet. Used by eviction
-    // when Item is moved between memory tiers.
-    kIncomplete,
-
     // Unused. This is just to indciate the maximum number of flags
     kFlagMax,
   };
@@ -135,12 +131,18 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   RefcountWithFlags(RefcountWithFlags&&) = delete;
   RefcountWithFlags& operator=(RefcountWithFlags&&) = delete;
 
+  enum incResult {
+    incOk,
+    incFailedMoving,
+    incFailedExclusive
+  };
+
   // Bumps up the reference count only if the new count will be strictly less
   // than or equal to the maxCount and the item is not exclusive
   // @return true if refcount is bumped. false otherwise (if item is exclusive)
   // @throw  exception::RefcountOverflow if new count would be greater than
   // maxCount
-  FOLLY_ALWAYS_INLINE bool incRef() {
+  FOLLY_ALWAYS_INLINE incResult incRef(bool failIfMoving) {
     Value* const refPtr = &refCount_;
     unsigned int nCASFailures = 0;
     constexpr bool isWeak = false;
@@ -155,12 +157,15 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
         throw exception::RefcountOverflow("Refcount maxed out.");
       }
       if (alreadyExclusive && (oldVal & kAccessRefMask) == 0) {
-        return false;
+        return incFailedExclusive;
+      }
+      else if (alreadyExclusive && failIfMoving) {
+        return incFailedMoving;
       }
 
       if (__atomic_compare_exchange_n(refPtr, &oldVal, newCount, isWeak,
                                       __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-        return true;
+        return incOk;
       }
 
       if ((++nCASFailures % 4) == 0) {
@@ -327,14 +332,17 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
    *
    * Unmarking moving does not depend on `isInMMContainer`
    */
-  bool markMoving() {
-    auto predicate = [](const Value curValue) {
+  bool markMoving(bool failIfRefNotZero) {
+    auto predicate = [failIfRefNotZero](const Value curValue) {
       Value conditionBitMask = getAdminRef<kLinked>();
       const bool flagSet = curValue & conditionBitMask;
       const bool alreadyExclusive = curValue & getAdminRef<kExclusive>();
       const bool accessible = curValue & getAdminRef<kAccessible>();
 
       if (!flagSet || alreadyExclusive) {
+        return false;
+      }
+      if (failIfRefNotZero && (curValue & kAccessRefMask) != 0) {
         return false;
       }
       if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {
@@ -423,14 +431,6 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   void markNvmEvicted() noexcept { return setFlag<kNvmEvicted>(); }
   void unmarkNvmEvicted() noexcept { return unSetFlag<kNvmEvicted>(); }
   bool isNvmEvicted() const noexcept { return isFlagSet<kNvmEvicted>(); }
-
-  /**
-   * Marks that the item is migrating between memory tiers and
-   * not ready for access now. Accessing thread should wait.
-   */
-  void markIncomplete() noexcept { return setFlag<kIncomplete>(); }
-  void unmarkIncomplete() noexcept { return unSetFlag<kIncomplete>(); }
-  bool isIncomplete() const noexcept { return isFlagSet<kIncomplete>(); }
 
   // Whether or not an item is completely drained of access
   // Refcount is 0 and the item is not linked, accessible, nor exclusive

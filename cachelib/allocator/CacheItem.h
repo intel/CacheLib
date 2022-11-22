@@ -243,14 +243,6 @@ class CACHELIB_PACKED_ATTR CacheItem {
   bool isNvmEvicted() const noexcept;
 
   /**
-   * Marks that the item is migrating between memory tiers and
-   * not ready for access now. Accessing thread should wait.
-   */
-  void markIncomplete() noexcept;
-  void unmarkIncomplete() noexcept;
-  bool isIncomplete() const noexcept;
-
-  /**
    * Function to set the timestamp for when to expire an item
    *
    * This API will only succeed when an item is a regular item, and user
@@ -318,9 +310,9 @@ class CACHELIB_PACKED_ATTR CacheItem {
   //
   // @return true on success, failure if item is marked as exclusive
   // @throw exception::RefcountOverflow on ref count overflow
-  FOLLY_ALWAYS_INLINE bool incRef() {
+  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(bool failIfMoving) {
     try {
-      return ref_.incRef();
+      return ref_.incRef(failIfMoving);
     } catch (exception::RefcountOverflow& e) {
       throw exception::RefcountOverflow(
           folly::sformat("{} item: {}", e.what(), toString()));
@@ -387,7 +379,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
    * Unmarking moving will also return the refcount at the moment of
    * unmarking.
    */
-  bool markMoving();
+  bool markMoving(bool failIfRefNotZero);
   RefcountWithFlags::Value unmarkMoving() noexcept;
   bool isMoving() const noexcept;
   bool isOnlyMoving() const noexcept;

@@ -237,8 +237,8 @@ bool CacheItem<CacheTrait>::markExclusiveWhenMoving() {
 }
 
 template <typename CacheTrait>
-bool CacheItem<CacheTrait>::markMoving() {
-  return ref_.markMoving();
+bool CacheItem<CacheTrait>::markMoving(bool failIfRefNotZero) {
+  return ref_.markMoving(failIfRefNotZero);
 }
 
 template <typename CacheTrait>
@@ -284,21 +284,6 @@ void CacheItem<CacheTrait>::unmarkNvmEvicted() noexcept {
 template <typename CacheTrait>
 bool CacheItem<CacheTrait>::isNvmEvicted() const noexcept {
   return ref_.isNvmEvicted();
-}
-
-template <typename CacheTrait>
-void CacheItem<CacheTrait>::markIncomplete() noexcept {
-  ref_.markIncomplete();
-}
-
-template <typename CacheTrait>
-void CacheItem<CacheTrait>::unmarkIncomplete() noexcept {
-  ref_.unmarkIncomplete();
-}
-
-template <typename CacheTrait>
-bool CacheItem<CacheTrait>::isIncomplete() const noexcept {
-  return ref_.isIncomplete();
 }
 
 template <typename CacheTrait>
