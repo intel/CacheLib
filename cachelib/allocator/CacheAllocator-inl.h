@@ -1406,6 +1406,60 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 }
 
 template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::moveChainedItemWithSync(
+    ChainedItem& oldItem, WriteHandle& newItemHdl, ReadHandle& parentHandle) {
+  XDCHECK(oldItem.isMoving());
+  XDCHECK(oldItem.isAccessible());
+  XDCHECK(!oldItem.isExpired());
+  // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
+  // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
+
+  XDCHECK_EQ(newItemHdl->getSize(), oldItem.getSize());
+  XDCHECK_NE(getTierId(oldItem), getTierId(*newItemHdl));
+
+  // take care of the flags before we expose the item to be accessed. this
+  // will ensure that when another thread removes the item from RAM, we issue
+  // a delete accordingly. See D7859775 for an example
+  if (oldItem.isNvmClean()) {
+    newItemHdl->markNvmClean();
+  }
+
+  // mark new item as moving to block readers until the data is copied
+  // (moveCb is called). Mark item in MMContainer temporarily (TODO: should
+  // we remove markMoving requirement for the item to be linked?)
+  newItemHdl->markInMMContainer();
+  auto marked = newItemHdl->markMoving(false /* there is already a handle */);
+  newItemHdl->unmarkInMMContainer();
+  XDCHECK(marked);
+  
+  auto parentPtr = parentHandle.getInternal();
+  XDCHECK_EQ(reinterpret_cast<uintptr_t>(parentPtr),
+             reinterpret_cast<uintptr_t>(
+                 &newItemHdl->asChainedItem().getParentItem(compressor_)));
+  
+  // nobody can touch this chain now
+  auto& expectedParent = oldItem.getParentItem(compressor_);
+  const auto parentKey = expectedParent.getKey();
+  auto l = chainedItemLocks_.lockExclusive(parentKey);
+  
+  if (config_.moveCb) {
+    // Invoke the move callback to fix up any user data related to the chain
+    config_.moveCb(oldItem, *newItemHdl, parentPtr);
+  } else {
+    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
+                oldItem.getSize());
+  }
+
+  // Replace the new item in the position of the old one before both in the
+  // parent's chain and the MMContainer.
+  auto oldItemHandle =
+      replaceChainedItemLocked(oldItem, std::move(newItemHdl), *parentHandle);
+
+  newItemHdl.unmarkNascent();
+  newItemHdl->unmarkMoving();
+}
+
+template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
                                                  WriteHandle& newItemHdl) {
   XDCHECK(config_.moveCb);
@@ -1631,7 +1685,6 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         } else {
           stats_.evictFailAC.inc();
         }
-        
 	++itr;
         XDCHECK(toRecycle == nullptr);
         XDCHECK(candidate == nullptr);
@@ -1647,8 +1700,18 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     auto evictedToNext = lastTier ? nullptr
         : tryEvictToNextMemoryTier(*candidate, false /* from BgThread */);
     if (!evictedToNext) {
-      token = createPutToken(*candidate);
 
+      //if we are chained item, unmark moving and abort
+      if (candidate->isChainedItem()) {
+	candidate->unmarkMoving();
+      	// wake up any readers that wait for the move to complete
+      	// it's safe to do now, as we have the item marked exclusive and
+      	// no other reader can be added to the waiters list
+      	wakeUpWaiters(candidate->getKey(), WriteHandle{});
+	continue;
+      }
+      token = createPutToken(*candidate);
+      
       // tryEvictToNextMemoryTier should only fail if allocation of the new item fails
       // in that case, it should be still possible to mark item as exclusive.
       //
@@ -1768,13 +1831,14 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
     WriteHandle newItemHdl{};
+    ReadHandle parentHandle{};
     if(item.isChainedItem()) {
         const auto& chainedItem = item.asChainedItem();
         const auto parentKey = chainedItem.getParentItem(compressor_).getKey();
         // Grab lock to prevent anyone else from modifying the chain
         auto l = chainedItemLocks_.lockExclusive(parentKey);
         // allocateInternal might trigger another eviction
-        auto parentHandle = validateAndGetParentHandleForChainedMoveLocked(chainedItem, parentKey);
+        parentHandle = validateAndGetParentHandleForChainedMoveLocked(chainedItem, parentKey);
         if (parentHandle) {
             newItemHdl = allocateChainedItemInternalTier(parentHandle,
                              nextTier,
@@ -1792,14 +1856,13 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      if (item.isChainedItem() && moveChainedItem(item.asChainedItem(), newItemHdl)) {
-	//TODO: is this correct??
-        return acquire(&item);
+      if (item.isChainedItem()) {
+	moveChainedItemWithSync(item.asChainedItem(), newItemHdl, parentHandle);
       } else {
       	moveRegularItemWithSync(item, newItemHdl);
-      	item.unmarkMoving();
-      	return newItemHdl;
       }
+      item.unmarkMoving();
+      return newItemHdl;
     } else {
       return WriteHandle{};
     }

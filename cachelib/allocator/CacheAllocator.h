@@ -1622,14 +1622,14 @@ class CacheAllocator : public CacheBase {
   //              not exist.
   FOLLY_ALWAYS_INLINE WriteHandle findFastImpl(Key key, AccessMode mode);
 
-  // Moves a regular item to a different memory tier.
+  // Moves a regular/chained item to a different memory tier. These method does not
+  // fail.
   //
   // @param oldItem     Reference to the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
   void moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
+  void moveChainedItemWithSync(ChainedItem& oldItem, WriteHandle& newItemHdl, ReadHandle& parentHandle);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
