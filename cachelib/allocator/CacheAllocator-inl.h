@@ -1037,7 +1037,7 @@ CacheAllocator<CacheTrait>::acquire(Item* it) {
 
   SCOPE_FAIL { stats_.numRefcountOverflow.inc(); };
 
-  auto failIfMoving = getNumTiers() > 1 ? true : false;
+  auto failIfMoving = getNumTiers() > 1;
   auto incRes = incRef(*it, failIfMoving);
   if (LIKELY(incRes == RefcountWithFlags::incResult::incOk)) {
     return WriteHandle{it, *this};
@@ -1310,7 +1310,6 @@ template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     Item& oldItem, WriteHandle& newItemHdl) {
   XDCHECK(oldItem.isMoving());
-  XDCHECK(oldItem.isAccessible());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
@@ -1341,7 +1340,6 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 
   auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl,
                                    predicate);
-  XDCHECK(replaced);
 
   if (config_.moveCb) {
     // Execute the move callback. We cannot make any guarantees about the
@@ -1362,12 +1360,13 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   auto mmContainerAdded = newContainer.add(*newItemHdl);
   XDCHECK(mmContainerAdded);
   
-  XDCHECK(newItemHdl->isAccessible());
 
   // no one can add or remove chained items at this point
   if (oldItem.hasChainedItem()) {
     // safe to acquire handle for a moving Item
-    auto oldHandle = acquire(&oldItem); //don't think this will work
+    auto incRes = incRef(oldItem, false);
+    XDCHECK(incRes == RefcountWithFlags::incResult::incOk);
+    auto oldHandle = WriteHandle{&oldItem,*this};
     XDCHECK_EQ(1u, oldHandle->getRefCount()) << oldHandle->toString();
     XDCHECK(!newItemHdl->hasChainedItem()) << newItemHdl->toString();
     try {
@@ -1383,7 +1382,14 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     XDCHECK(newItemHdl->hasChainedItem());
   }
   newItemHdl.unmarkNascent();
-  newItemHdl->unmarkMoving();
+  auto ref = newItemHdl->unmarkMoving();
+  //remove because there is a chance the new item was not
+  //added to the access container
+  if (UNLIKELY(ref == 0)) {
+    const auto res =
+        releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
+    XDCHECK(res == ReleaseRes::kReleased);
+  }
 }
 
 template <typename CacheTrait>
@@ -1552,7 +1558,7 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::Item*
 CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
   auto& mmContainer = getMMContainer(tid, pid, cid);
-
+  bool lastTier = tid+1 >= getNumTiers();
   // Keep searching for a candidate until we were able to evict it
   // or until the search limit has been exhausted
   unsigned int searchTries = 0;
@@ -1564,7 +1570,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     typename NvmCacheT::PutToken token;
 
     mmContainer.withEvictionIterator([this, pid, cid, &candidate, &toRecycle,
-                                      &searchTries, &mmContainer,
+                                      &searchTries, &mmContainer, &lastTier,
                                       &token](auto&& itr) {
       if (!itr) {
         ++searchTries;
@@ -1586,10 +1592,12 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
         if (shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
           stats_.evictFailConcurrentFill.inc();
-        } else if (candidate_->markMoving(true)) {
-          XDCHECK(candidate_->isMoving());
+        } else if ( (lastTier && candidate_->markExclusive()) ||
+                    (!lastTier && candidate_->markMoving(true)) ) {
+          XDCHECK(candidate_->isMoving() || candidate_->isExclusive());
           // markExclusive to make sure no other thead is evicting the item
-          // nor holding a handle to that item
+          // nor holding a handle to that item if this is last tier
+          // since we won't be moving the item to the next tier
 
           toRecycle = toRecycle_;
           candidate = candidate_;
@@ -1623,13 +1631,19 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     XDCHECK(toRecycle);
     XDCHECK(candidate);
 
-    auto evictedToNext = tryEvictToNextMemoryTier(*candidate, false /* from BgThread */);
+    auto evictedToNext = lastTier ? nullptr
+        : tryEvictToNextMemoryTier(*candidate, false /* from BgThread */);
     if (!evictedToNext) {
       token = createPutToken(*candidate);
 
       // tryEvictToNextMemoryTier should only fail if allocation of the new item fails
       // in that case, it should be still possible to mark item as exclusive.
-      auto ret = candidate->markExclusiveWhenMoving();
+      //
+      // in case that we are on the last tier, we whould have already marked
+      // as exclusive since we will not be moving the item to the next tier
+      // but rather just evicting all together, no need to
+      // markExclusiveWhenMoving
+      auto ret = lastTier ? true : candidate->markExclusiveWhenMoving();
       XDCHECK(ret);
       
       unlinkItemExclusive(*candidate);
@@ -1732,7 +1746,7 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item, bool fromBgThread) {
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
-  if(item.isChainedItem()) return {}; // TODO: We do not support ChainedItem yet
+  if(item.hasChainedItem()) return WriteHandle{}; // TODO: We do not support ChainedItem yet
   if(item.isExpired()) {
     accessContainer_->remove(item);
     item.unmarkMoving();
