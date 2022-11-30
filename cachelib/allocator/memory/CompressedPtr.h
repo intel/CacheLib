@@ -30,22 +30,21 @@ class SlabAllocator;
 template <typename PtrType, typename AllocatorContainer>
 class PtrCompressor;
 
+// the following are for pointer compression for the memory allocator.  We
+// compress pointers by storing the slab index and the alloc index of the
+// allocation inside the slab. With slab worth kNumSlabBits of data, if we
+// have the min allocation size as 64 bytes, that requires kNumSlabBits - 6
+// bits for storing the alloc index. This leaves the remaining (32 -
+// (kNumSlabBits - 6)) bits for the slab index.  Hence we can index 256 GiB
+// of memory in slabs and index anything more than 64 byte allocations inside
+// the slab using a 32 bit representation.
+//
 // This CompressedPtr makes decompression fast by staying away from division and
-// modulo arithmetic and doing those during the compression time. We most  often
-// decompress a CompressedPtr than compress a pointer  while creating one.  This
-// is used for pointer compression by the memory allocator.
-
-// We compress pointers by storing the tier index, slab index and alloc index of
-// the allocation inside the slab. With slab worth kNumSlabBits (22 bits) of data,
-// if we have the min allocation size as 64 bytes, that requires kNumSlabBits - 6
-// = 16 bits for storing the alloc index.  The tier id occupies the 32nd bit only
-// since its value cannot exceed kMaxTiers (2). This leaves the remaining
-// (32 - (kNumSlabBits - 6) - 1 bit for tier id) =  15 bits  for the  slab  index.
-// Hence we can index 128 GiB of memory in slabs per tier and index anything more
-// than 64 byte allocations inside the slab using a 32 bit representation.
+// modulo arithmetic and doing those during the compression time. We most often
+// decompress a CompressedPtr than compress a pointer while creating one.
 class CACHELIB_PACKED_ATTR CompressedPtr {
  public:
-  using PtrType = uint32_t;
+  using PtrType = uint64_t;
   // Thrift doesn't support unsigned type
   using SerializedPtrType = int64_t;
 
@@ -66,9 +65,9 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
     return static_cast<uint32_t>(1) << (Slab::kMinAllocPower);
   }
 
-  // maximum addressable memory for pointer compression to work.
+  // maximum adressable memory for pointer compression to work.
   static constexpr size_t getMaxAddressableSize() noexcept {
-    return static_cast<size_t>(1) << (kNumSlabIdxBits + Slab::kNumSlabBits + 1);
+    return static_cast<size_t>(1) << (kNumSlabIdxBits + Slab::kNumSlabBits);
   }
 
   // default construct to nullptr.
@@ -93,8 +92,8 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
   PtrType ptr_{kNull};
 
   // create a compressed pointer for a valid memory allocation.
-  CompressedPtr(uint32_t slabIdx, uint32_t allocIdx, bool isMultiTiered, TierId tid = 0)
-      : ptr_(compress(slabIdx, allocIdx, isMultiTiered, tid)) {}
+  CompressedPtr(uint32_t slabIdx, uint32_t allocIdx, TierId tid = 0)
+      : ptr_(compress(slabIdx, allocIdx, tid)) {}
 
   constexpr explicit CompressedPtr(PtrType ptr) noexcept : ptr_{ptr} {}
 
@@ -104,48 +103,45 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
   static constexpr unsigned int kNumAllocIdxBits =
       Slab::kNumSlabBits - Slab::kMinAllocPower;
 
-  // Use 32nd bit position for TierId
-  static constexpr unsigned int kNumTierIdxOffset = 31;
+  // Use topmost 32 bits for TierId
+  // XXX: optimize
+  static constexpr unsigned int kNumTierIdxOffset = 32;
 
   static constexpr PtrType kAllocIdxMask = ((PtrType)1 << kNumAllocIdxBits) - 1;
 
   // kNumTierIdxBits most significant bits
-  static constexpr PtrType kTierIdxMask = (PtrType)1 << kNumTierIdxOffset;
+  static constexpr PtrType kTierIdxMask = (((PtrType)1 << kNumTierIdxOffset) - 1) << (NumBits<PtrType>::value - kNumTierIdxOffset);
 
   // Number of bits for the slab index. This will be the top 16 bits of the
   // compressed ptr.
   static constexpr unsigned int kNumSlabIdxBits =
-      kNumTierIdxOffset - kNumAllocIdxBits; 
+      NumBits<PtrType>::value - kNumTierIdxOffset - kNumAllocIdxBits; 
 
   // Compress the given slabIdx and allocIdx into a 64-bit compressed
   // pointer.
-  static PtrType compress(uint32_t slabIdx, uint32_t allocIdx, bool isMultiTiered, TierId tid) noexcept {
+  static PtrType compress(uint32_t slabIdx, uint32_t allocIdx, TierId tid) noexcept {
     XDCHECK_LE(allocIdx, kAllocIdxMask);
-    if (!isMultiTiered) {
-      XDCHECK_LT(slabIdx, (1u << (kNumSlabIdxBits+1)) - 1);
-      return (slabIdx << kNumAllocIdxBits) + allocIdx;
-    }
     XDCHECK_LT(slabIdx, (1u << kNumSlabIdxBits) - 1);
     return (static_cast<uint64_t>(tid) << kNumTierIdxOffset) + (slabIdx << kNumAllocIdxBits) + allocIdx;
   }
 
   // Get the slab index of the compressed ptr
-  uint32_t getSlabIdx(bool isMultiTiered) const noexcept {
+  uint32_t getSlabIdx() const noexcept {
     XDCHECK(!isNull());
-    auto noTierIdPtr = isMultiTiered ? ptr_ & ~kTierIdxMask : ptr_;
+    auto noTierIdPtr = ptr_ & ~kTierIdxMask;
     return static_cast<uint32_t>(noTierIdPtr >> kNumAllocIdxBits);
   }
 
   // Get the allocation index of the compressed ptr
-  uint32_t getAllocIdx(bool isMultiTiered) const noexcept {
+  uint32_t getAllocIdx() const noexcept {
     XDCHECK(!isNull());
-    auto noTierIdPtr = isMultiTiered ? ptr_ & ~kTierIdxMask : ptr_;
+    auto noTierIdPtr = ptr_ & ~kTierIdxMask;
     return static_cast<uint32_t>(noTierIdPtr & kAllocIdxMask);
   }
 
-  uint32_t getTierId(bool isMultiTiered) const noexcept {
+  uint32_t getTierId() const noexcept {
     XDCHECK(!isNull());
-    return isMultiTiered ? static_cast<uint32_t>(ptr_ >> kNumTierIdxOffset) : 0;
+    return static_cast<uint32_t>(ptr_ >> kNumTierIdxOffset);
   }
 
   void setTierId(TierId tid) noexcept {
@@ -164,11 +160,11 @@ class SingleTierPtrCompressor {
       : allocator_(allocator) {}
 
   const CompressedPtr compress(const PtrType* uncompressed) const {
-    return allocator_.compress(uncompressed, false);
+    return allocator_.compress(uncompressed);
   }
 
   PtrType* unCompress(const CompressedPtr compressed) const {
-    return static_cast<PtrType*>(allocator_.unCompress(compressed, false));
+    return static_cast<PtrType*>(allocator_.unCompress(compressed));
   }
 
   bool operator==(const SingleTierPtrCompressor& rhs) const noexcept {
@@ -200,11 +196,9 @@ class PtrCompressor {
         break;
     }
 
-    bool isMultiTiered = allocators_.size() > 1;
-    auto cptr = allocators_[tid]->compress(uncompressed, isMultiTiered);
-    if (isMultiTiered) { // config has multiple tiers
-      cptr.setTierId(tid);
-    }
+    auto cptr = allocators_[tid]->compress(uncompressed);
+    cptr.setTierId(tid);
+
     return cptr;
   }
 
@@ -212,9 +206,9 @@ class PtrCompressor {
     if (compressed.isNull()) {
       return nullptr;
     }
-    bool isMultiTiered = allocators_.size() > 1;
-    auto &allocator = *allocators_[compressed.getTierId(isMultiTiered)];
-    return static_cast<PtrType*>(allocator.unCompress(compressed, isMultiTiered));
+
+    auto &allocator = *allocators_[compressed.getTierId()];
+    return static_cast<PtrType*>(allocator.unCompress(compressed));
   }
 
   bool operator==(const PtrCompressor& rhs) const noexcept {

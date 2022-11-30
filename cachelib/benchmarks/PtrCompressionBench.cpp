@@ -61,7 +61,7 @@ void buildAllocs(size_t poolSize) {
         void* alloc = ma->allocate(pid, size);
         XDCHECK_GE(size, CompressedPtr::getMinAllocSize());
         if (alloc != nullptr) {
-          validAllocs.push_back({alloc, ma->compress(alloc, false)});
+          validAllocs.push_back({alloc, ma->compress(alloc)});
           validAllocsAlt.push_back({alloc, ma->compressAlt(alloc)});
           numAllocations++;
         }
@@ -83,7 +83,7 @@ BENCHMARK(CompressionAlt) {
 
 BENCHMARK_RELATIVE(Compression) {
   for (const auto& alloc : validAllocs) {
-    CompressedPtr c = m->compress(alloc.first, false);
+    CompressedPtr c = m->compress(alloc.first);
     folly::doNotOptimizeAway(c);
   }
 }
@@ -97,7 +97,7 @@ BENCHMARK(DeCompressAlt) {
 
 BENCHMARK_RELATIVE(DeCompress) {
   for (const auto& alloc : validAllocs) {
-    void* ptr = m->unCompress(alloc.second, false);
+    void* ptr = m->unCompress(alloc.second);
     folly::doNotOptimizeAway(ptr);
   }
 }

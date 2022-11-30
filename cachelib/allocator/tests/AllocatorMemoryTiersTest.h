@@ -136,6 +136,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
         stats = allocator->getGlobalCacheStats();
         slabStats = allocator->getAllocationClassStats(0,0,cid);
     }
+    ASSERT_GE(slabStats.approxFreePercent,9.5);
 
     auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
     auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);

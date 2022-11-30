@@ -401,13 +401,13 @@ TEST_F(MemoryAllocatorTest, PointerCompression) {
   for (const auto& pool : poolAllocs) {
     const auto& allocs = pool.second;
     for (const auto* alloc : allocs) {
-      CompressedPtr ptr = m.compress(alloc, false);
+      CompressedPtr ptr = m.compress(alloc);
       ASSERT_FALSE(ptr.isNull());
-      ASSERT_EQ(alloc, m.unCompress(ptr, false));
+      ASSERT_EQ(alloc, m.unCompress(ptr));
     }
   }
 
-  ASSERT_EQ(nullptr, m.unCompress(m.compress(nullptr, false), false));
+  ASSERT_EQ(nullptr, m.unCompress(m.compress(nullptr)));
 }
 
 TEST_F(MemoryAllocatorTest, Restorable) {

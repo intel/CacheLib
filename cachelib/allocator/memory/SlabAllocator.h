@@ -225,7 +225,7 @@ class SlabAllocator {
   // the corresponding memory allocator. trying to inline this just increases
   // the code size and does not move the needle on the benchmarks much.
   // Calling this with invalid input in optimized build is undefined behavior.
-  CompressedPtr CACHELIB_INLINE compress(const void* ptr, bool isMultiTiered) const {
+  CompressedPtr CACHELIB_INLINE compress(const void* ptr) const {
     if (ptr == nullptr) {
       return CompressedPtr{};
     }
@@ -246,19 +246,19 @@ class SlabAllocator {
         static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(ptr) -
                               reinterpret_cast<const uint8_t*>(slab)) /
         allocSize;
-    return CompressedPtr{slabIndex, allocIdx, isMultiTiered};
+    return CompressedPtr{slabIndex, allocIdx};
   }
 
   // uncompress the point and return the raw ptr.  This function never throws
   // in optimized build and assumes that the caller is responsible for calling
   // it with a valid compressed pointer.
-  void* CACHELIB_INLINE unCompress(const CompressedPtr ptr, bool isMultiTiered) const {
+  void* CACHELIB_INLINE unCompress(const CompressedPtr ptr) const {
     if (ptr.isNull()) {
       return nullptr;
     }
 
-    const SlabIdx slabIndex = ptr.getSlabIdx(isMultiTiered);
-    const uint32_t allocIdx = ptr.getAllocIdx(isMultiTiered);
+    const SlabIdx slabIndex = ptr.getSlabIdx();
+    const uint32_t allocIdx = ptr.getAllocIdx();
     const Slab* slab = &slabMemoryStart_[slabIndex];
 
 #ifndef NDEBUG
