@@ -2070,7 +2070,7 @@ class CacheAllocator : public CacheBase {
       auto promoted = tryPromoteToNextMemoryTier(*candidate, true);
       if (promoted) {
         promotions++;
-  	removeFromMMContainer(*candidate);
+  	    removeFromMMContainer(*candidate);
         XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
      	// it's safe to recycle the item here as there are no more
      	// references and the item could not been marked as moving
@@ -2079,8 +2079,8 @@ class CacheAllocator : public CacheBase {
      	                          /* isNascent */ false);
      	XDCHECK(res == ReleaseRes::kReleased);
       } else {
-	 //we failed to allocate a new item, this item is no  longer moving
-	candidate->unmarkMoving();
+	    //we failed to allocate a new item, this item is no  longer moving
+	    candidate->unmarkMoving();
       }
      
     }
