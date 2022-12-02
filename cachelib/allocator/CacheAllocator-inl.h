@@ -1609,7 +1609,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           if (!toRecycle_->isChainedItem() ||
               &toRecycle->asChainedItem().getParentItem(compressor_) ==
                   candidate)
-            mmContainer.remove(itr);
+            mmContainer.remove(itr); //does not fail - returns void item will be removed!
           return;
         }
 

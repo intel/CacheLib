@@ -2080,7 +2080,13 @@ class CacheAllocator : public CacheBase {
      	XDCHECK(res == ReleaseRes::kReleased);
       } else {
 	    //we failed to allocate a new item, this item is no  longer moving
-	    candidate->unmarkMoving();
+	    auto ref = candidate->unmarkMoving();
+        if (UNLIKELY(ref == 0)) {
+          const auto res =
+              releaseBackToAllocator(*candidate, 
+                      RemoveContext::kNormal, false);
+          XDCHECK(res == ReleaseRes::kReleased);
+        }
       }
      
     }
