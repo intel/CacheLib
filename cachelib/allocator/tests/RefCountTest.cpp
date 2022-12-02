@@ -51,7 +51,7 @@ void RefCountTest::testMultiThreaded() {
         nLocalRef--;
         ref.markAccessible();
       } else {
-        ref.incRef();
+        ref.incRef(true);
         nLocalRef++;
         ref.unmarkAccessible();
       }
@@ -100,12 +100,12 @@ void RefCountTest::testBasic() {
   ASSERT_FALSE(ref.template isFlagSet<RefcountWithFlags::Flags::kMMFlag1>());
 
   for (uint32_t i = 0; i < RefcountWithFlags::kAccessRefMask; i++) {
-    ASSERT_TRUE(ref.incRef());
+    ASSERT_EQ(ref.incRef(true),RefcountWithFlags::incOk);
   }
 
   // Incrementing past the max will fail
   auto rawRef = ref.getRaw();
-  ASSERT_FALSE(ref.incRef());
+  ASSERT_THROW(ref.incRef(true), std::overflow_error);
   ASSERT_EQ(rawRef, ref.getRaw());
 
   // Bumping up access ref shouldn't affect admin ref and flags
@@ -153,20 +153,9 @@ void RefCountTest::testBasic() {
   // conditionally set flags
   ASSERT_FALSE((ref.markExclusive()));
   ref.markInMMContainer();
-  ASSERT_TRUE((ref.markExclusive()));
-  ASSERT_FALSE((ref.isOnlyExclusive()));
+  // only first one succeeds
+  ASSERT_FALSE((ref.markExclusive()));
   ref.unmarkInMMContainer();
-  ref.template setFlag<RefcountWithFlags::Flags::kMMFlag0>();
-  // Have no other admin refcount but with a flag still means "isOnlyExclusive"
-  ASSERT_TRUE((ref.isOnlyExclusive()));
-
-  // Set some flags and verify that "isOnlyExclusive" does not care about flags
-  ref.markIsChainedItem();
-  ASSERT_TRUE(ref.isChainedItem());
-  ASSERT_TRUE((ref.isOnlyExclusive()));
-  ref.unmarkIsChainedItem();
-  ASSERT_FALSE(ref.isChainedItem());
-  ASSERT_TRUE((ref.isOnlyExclusive()));
 }
 } // namespace
 

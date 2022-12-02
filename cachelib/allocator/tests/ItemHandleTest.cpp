@@ -41,8 +41,6 @@ struct TestItem {
   void reset() {}
 
   folly::StringPiece getKey() const { return folly::StringPiece(); }
-
-  bool isIncomplete() const { return false; }
 };
 
 struct TestNvmCache;
