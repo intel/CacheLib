@@ -1686,6 +1686,7 @@ class CacheAllocator : public CacheBase {
   //
   // @throw if any of the conditions for parent or newParent are not met.
   void transferChainLocked(WriteHandle& parent, WriteHandle& newParent);
+  void transferChainLockedForMoving(WriteHandle& parent, WriteHandle& newParent);
 
   // replace a chained item in the existing chain. This needs to be called
   // with the chained item lock held exclusive
@@ -1697,6 +1698,9 @@ class CacheAllocator : public CacheBase {
   // @return handle to the oldItem
   WriteHandle replaceChainedItemLocked(Item& oldItem,
                                        WriteHandle newItemHdl,
+                                       const Item& parent);
+  bool replaceChainedItemLockedForMoving(Item& oldItem,
+                                       WriteHandle& newItemHdl,
                                        const Item& parent);
 
   // Insert an item into MM container. The caller must hold a valid handle for
@@ -1798,7 +1802,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread, WriteHandle& parentHandle);
 
   WriteHandle tryPromoteToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
 
@@ -2226,6 +2230,7 @@ class CacheAllocator : public CacheBase {
   bool recordAccessInMMContainer(Item& item, AccessMode mode);
 
   WriteHandle findChainedItem(const Item& parent) const;
+  ChainedItem* findChainedItemPtr(const Item& parent) const;
 
   // Get the thread local version of the Stats
   detail::Stats& stats() const noexcept { return stats_; }

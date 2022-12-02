@@ -338,7 +338,9 @@ class ChainedHashTable {
    public:
     using Key = typename T::Key;
     using Handle = typename T::Handle;
+    using ItemPtr = typename T::ChainedItem*;
     using HandleMaker = typename T::HandleMaker;
+    //using ItemPtrMaker = typename T::ItemPtrMaker;
     using CompressedPtr = typename T::CompressedPtr;
     using PtrCompressor = typename T::PtrCompressor;
 
@@ -495,6 +497,18 @@ class ChainedHashTable {
     // @throw std::overflow_error is the maximum item refcount is execeeded by
     //        creating this item handle.
     Handle find(Key key) const;
+    
+    // finds the node corresponding to the key in the hashtable and returns a
+    // handle to that node.
+    //
+    // @param key   the lookup key
+    //
+    // @return  Pointer T* if there is a node corresponding to the
+    //          key or a nullptr if not.
+    //
+    // @throw std::overflow_error is the maximum item refcount is execeeded by
+    //        creating this item handle.
+    ItemPtr findPtr(Key key) const;
 
     // for saving the state of the hash table
     //
@@ -694,6 +708,15 @@ const typename T::HandleMaker
   }
   return typename T::Handle{t};
 };
+
+//template <typename T,
+//          typename ChainedHashTable::Hook<T> T::*HookPtr,
+//          typename LockT>
+//const typename T::ItemPtrMaker
+//    ChainedHashTable::Container<T, HookPtr, LockT>::kDefaultItemPtrMaker =
+//        [](T* t) -> typename T::ItemPtr {
+//  return typename T::ItemPtr{t};
+//};
 } // namespace cachelib
 } // namespace facebook
 
