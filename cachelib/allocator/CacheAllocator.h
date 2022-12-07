@@ -1549,8 +1549,13 @@ class CacheAllocator : public CacheBase {
   //            if the item is invalid
   WriteHandle allocateChainedItemInternal(const ReadHandle& parent,
                                           uint32_t size);
+  WriteHandle allocateChainedItemInternalForMoving(const Item& parent,
+                                          uint32_t size);
   
   WriteHandle allocateChainedItemInternalTier(const ReadHandle& parent,
+                                          TierId tid,
+                                          uint32_t size);
+  WriteHandle allocateChainedItemInternalTierForMoving(const Item& parent,
                                           TierId tid,
                                           uint32_t size);
 
@@ -1629,7 +1634,7 @@ class CacheAllocator : public CacheBase {
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
   void moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
-  void moveChainedItemWithSync(ChainedItem& oldItem, WriteHandle& newItemHdl, ReadHandle& parentHandle);
+  void moveChainedItemWithSync(ChainedItem& oldItem, WriteHandle& newItemHdl,                               Item& parent);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
@@ -1686,7 +1691,7 @@ class CacheAllocator : public CacheBase {
   //
   // @throw if any of the conditions for parent or newParent are not met.
   void transferChainLocked(WriteHandle& parent, WriteHandle& newParent);
-  void transferChainLockedForMoving(WriteHandle& parent, WriteHandle& newParent);
+  void transferChainLockedForMoving(Item& parent, WriteHandle& newParent);
 
   // replace a chained item in the existing chain. This needs to be called
   // with the chained item lock held exclusive
@@ -1802,7 +1807,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread, WriteHandle& parentHandle);
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread, Item* parent);
 
   WriteHandle tryPromoteToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
 
