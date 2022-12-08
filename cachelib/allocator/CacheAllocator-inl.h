@@ -1812,19 +1812,18 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         if (lastTier && candidateParent_ != nullptr) {
             candidate_ = candidateParent_;
         } else if (!lastTier && 
-                candidateParent_) // && candidateParent_->markMoving(true)) {
-            candidateParentHdl_ = acquire(candidateParent_);
+                candidateParent_ && candidateParent_->markMoving(true)) {
             chainedLock_ = 
-                chainedItemLocks_.tryExclusive(candidateParentHdl_->getKey());
-            //if (!chainedLock_) {
-                //auto ref = candidateParent_->unmarkMoving();
-                //wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
-                //if (UNLIKELY(ref == 0)) {
-                //  const auto res =
-                //      releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
-                //  XDCHECK(res == ReleaseRes::kReleased);
-                //}
-            //}
+                chainedItemLocks_.tryExclusive(candidateParent_->getKey());
+            if (!chainedLock_) {
+              auto ref = candidateParent_->unmarkMoving();
+              wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
+              if (UNLIKELY(ref == 0)) {
+                const auto res =
+                    releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
+                XDCHECK(res == ReleaseRes::kReleased);
+              }
+            }
         }
   
         if (shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
@@ -1900,16 +1899,16 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           return;
 
         } else if (chainedLock_) {
-            XDCHECK(candidateParentHdl_.get());
+            //XDCHECK(candidateParentHdl_.get());
             //failed to mark chained item as moving
-            //XDCHECK(candidateParent_->isMoving());
-            //auto ref = candidateParent_->unmarkMoving();
-            //wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
-            //if (UNLIKELY(ref == 0)) {
-            //  const auto res =
-            //      releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
-            //  XDCHECK(res == ReleaseRes::kReleased);
-            //}
+            XDCHECK(candidateParent_->isMoving());
+            auto ref = candidateParent_->unmarkMoving();
+            wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
+            if (UNLIKELY(ref == 0)) {
+              const auto res =
+                  releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
+              XDCHECK(res == ReleaseRes::kReleased);
+            }
         //} else if (candidate_->isChainedItem() && markedByUs) {
         //    XDCHECK(!candidateParent_->isMoving());
         //    //we failed to get the chainedLock so parent is definitely not moving
@@ -1936,7 +1935,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     XDCHECK(candidate);
     if (candidate->isChainedItem()) {
         XDCHECK(chainedLock.owns_lock());
-        XDCHECK(candidateParentHdl.get());
+        XDCHECK(candidateParent->isMoving());
     }
     XDCHECK(candidate->isMoving() || candidate->isExclusive());
 
