@@ -974,7 +974,11 @@ CacheAllocator<CacheTrait>::replaceChainedItemLockedForMoving(Item& oldItem,
   auto& newMMContainer = getMMContainer(*newItemHdl);
   // This cannot fail because a new item should not have been inserted
   const auto newRes = newMMContainer.add(*newItemHdl);
+  auto& oldMMContainer = getMMContainer(oldItem);
+  // This cannot fail because a old item should not have have been removed
+  const auto oldRes = oldMMContainer.remove(oldItem);
   XDCHECK(newRes);
+  XDCHECK(oldRes);
   XDCHECK(newItemHdl->isInMMContainer());
   XDCHECK(!oldItem.isInMMContainer());
 
@@ -1555,7 +1559,7 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::moveChainedItemWithSync(
     ChainedItem& oldItem, WriteHandle& newItemHdl, Item& parent) {
-  XDCHECK(oldItem.isMoving());
+  XDCHECK(parent.isMoving());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
@@ -1808,22 +1812,8 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         auto* candidateParent_ = toRecycle_->isChainedItem() 
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_) 
                 : nullptr;
-        std::unique_lock<folly::SharedMutex> chainedLock_;
         if (lastTier && candidateParent_ != nullptr) {
             candidate_ = candidateParent_;
-        } else if (!lastTier && 
-                candidateParent_ && candidateParent_->markMoving(true)) {
-            chainedLock_ = 
-                chainedItemLocks_.tryExclusive(candidateParent_->getKey());
-            if (!chainedLock_) {
-              auto ref = candidateParent_->unmarkMoving();
-              wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
-              if (UNLIKELY(ref == 0)) {
-                const auto res =
-                    releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
-                XDCHECK(res == ReleaseRes::kReleased);
-              }
-            }
         }
   
         if (shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
@@ -1854,14 +1844,9 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           }
           return;
 
-        } else if ( (!lastTier && chainedLock_ &&
-                     candidate_->getRefCount() == 1 &&
-                     candidate_->markMoving(false)) ) {
-          XDCHECK(candidate_->isMoving() || candidate_->isExclusive());
-          toRecycle = toRecycle_;
-          candidate = candidate_;
-          candidateParent = candidateParent_;
-          chainedLock = std::move(chainedLock_);
+        } else if ( !lastTier && candidate_->isChainedItem() &&
+                    candidateParent_->markMoving(true) ) { 
+          XDCHECK(candidateParent_->isMoving());
           //we have to check like they do in evict
           //for slab release
           auto& expectedParent = 
@@ -1884,37 +1869,26 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             }
 
             if (!found) {
-              XDCHECK(false); //should not happen - how can this happen 
+              XDCHECK(false);   //should not happen - how can this happen 
                                 //we tried to grab what we thought was parent handle
                                 //but it got replaced before, this item is marked moving
                                 //so other thread could not get a handle
-              return;
             }
-            mmContainer.remove(itr); //cannot fail - returns void
+            toRecycle = toRecycle_;
+            candidate = candidate_;
+            candidateParent = candidateParent_;
+            return;
           } else {
             //parent and candidate are not in the same chain
             //so we need to abort, we won't even try to evict
-            XDCHECK(candidate_->isMoving());
-          }
-          return;
-
-        } else if (chainedLock_) {
-            //XDCHECK(candidateParentHdl_.get());
-            //failed to mark chained item as moving
             XDCHECK(candidateParent_->isMoving());
             auto ref = candidateParent_->unmarkMoving();
-            wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
             if (UNLIKELY(ref == 0)) {
               const auto res =
                   releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
               XDCHECK(res == ReleaseRes::kReleased);
             }
-        //} else if (candidate_->isChainedItem() && markedByUs) {
-        //    XDCHECK(!candidateParent_->isMoving());
-        //    //we failed to get the chainedLock so parent is definitely not moving
-        //} else {
-        //    XDCHECK(false) << candidate_->toString(); //not chained item failed mark moving/exclusive
-        //                                              //chained item who's parent is moving 
+          }
         }
 
         if (candidate_->hasChainedItem()) {
@@ -1933,53 +1907,20 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
     XDCHECK(toRecycle);
     XDCHECK(candidate);
-    if (candidate->isChainedItem()) {
-        XDCHECK(chainedLock.owns_lock());
-        XDCHECK(candidateParent->isMoving());
-    }
-    XDCHECK(candidate->isMoving() || candidate->isExclusive());
+    XDCHECK(candidate->isChainedItem() ? candidateParent->isMoving() : 
+            candidate->isMoving() || candidate->isExclusive());
 
-    WriteHandle evictedToNext = (!lastTier && !candidate->isInMMContainer()) 
+    WriteHandle evictedToNext = (!lastTier && (!candidate->isInMMContainer() || candidate->isChainedItem()) )
             ? tryEvictToNextMemoryTier(tid, pid, *candidate, 
                     false /* from BgThread */, candidateParent)
             : nullptr;
     if (!evictedToNext) {
-      //if we are chained item, unmark moving and abort since we
-      //couldn't remove from mmContainer (parent mismatch)
-      //if (candidate->isChainedItem() && candidate->isInMMContainer()) {
-      //  auto ref = candidate->unmarkMoving();
-      //  if (UNLIKELY(ref == 0)) {
-      //    const auto res =
-      //        releaseBackToAllocator(*candidate, RemoveContext::kNormal, false);
-      //    XDCHECK(res == ReleaseRes::kReleased);
-      //  }
-      //  ref = candidateParent->unmarkMoving();
-      //  if (UNLIKELY(ref == 0)) {
-      //    const auto res =
-      //        releaseBackToAllocator(*candidateParent, RemoveContext::kNormal, false);
-      //    XDCHECK(res == ReleaseRes::kReleased);
-      //  }
-      //  continue;
-      //BUT we already removed from mmContainer, as we failed to
-      //allocate a chained item in next tier
-      //so now what? try to evict the entire chain.
-      //} else if (candidate->isChainedItem() && 
-      //           !candidate->isInMMContainer()) {
       if (candidate->isChainedItem()) { 
-          //unmark as moving, but we will switch the candidate to 
-          //the parent item
-          auto ref = candidate->unmarkMoving();
-          if (UNLIKELY(ref == 0)) {
-            const auto res =
-                releaseBackToAllocator(*candidate, RemoveContext::kNormal, false);
-            XDCHECK(res == ReleaseRes::kReleased);
-          }
           toRecycle = candidate;
           candidate = candidateParent;
       }
 
       token = createPutToken(*candidate);
-      
       // tryEvictToNextMemoryTier should only fail if allocation of the new item fails
       // in that case, it should be still possible to mark item as exclusive.
       //
@@ -1990,12 +1931,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       auto ret = lastTier ? true : candidate->markExclusiveWhenMoving();
       XDCHECK(ret);
       
-      //item was marked exclusive so we can remove the chained lock
-      if (chainedLock) {
-          chainedLock.unlock();
-      }
       unlinkItemExclusive(*candidate);
-
       // wake up any readers that wait for the move to complete
       // it's safe to do now, as we have the item marked exclusive and
       // no other reader can be added to the waiters list
@@ -2010,11 +1946,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
       XDCHECK(!candidate->isAccessible());
       XDCHECK(candidate->getKey() == evictedToNext->getKey());
-
-      wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
+      if (!candidate->isChainedItem()) {
+        wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
+      } //TODO not sure about the else case when we moved a child to the next tier (who are the waiters??)
     }
 
-    XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
+    // might have a hard time with this assert
+    //XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
 
     // recycle the item. it's safe to do so, even if toReleaseHandle was
     // NULL. If `ref` == 0 then it means that we are the last holder of
@@ -2031,15 +1969,6 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
                            candidate->getConfiguredTTL().count());
     }
 
-    if (chainedLock) {
-        auto ref = candidateParent->unmarkMoving();
-        //wakeUpWaiters(candidateParent->getKey(), acquire(candidateParent));
-        if (UNLIKELY(ref == 0)) {
-          const auto res =
-              releaseBackToAllocator(*candidateParent, RemoveContext::kNormal, false);
-          XDCHECK(res == ReleaseRes::kReleased);
-        }
-    }
     // check if by releasing the item we intend to, we actually
     // recycle the candidate.
     auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
@@ -2105,7 +2034,7 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item, bool fromBgThread,
     Item* parentItem) {
   
-  XDCHECK(item.isMoving());
+  XDCHECK(item.isChainedItem() ? parentItem->isMoving() : item.isMoving());
   XDCHECK(item.getRefCount() == 0 || 
           (item.isChainedItem() && item.getRefCount() == 1));
   if(item.isExpired()) {
@@ -2128,6 +2057,12 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
         if (newItemHdl) {
             moveChainedItemWithSync(item.asChainedItem(), 
                          newItemHdl, *parentItem);
+            auto ref = parentItem->unmarkMoving();
+            if (UNLIKELY(ref == 0)) {
+              const auto res =
+                  releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
+              XDCHECK(res == ReleaseRes::kReleased);
+            }
         }
         
     } else {
@@ -2140,15 +2075,10 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     	                 fromBgThread);
         if (newItemHdl) {
             moveRegularItemWithSync(item, newItemHdl);
+            item.unmarkMoving();
         }
     }
-
-    if (newItemHdl) {
-      item.unmarkMoving();
-      return newItemHdl;
-    } else {
-      return WriteHandle{};
-    }
+    return newItemHdl;
   }
 
   return {};
