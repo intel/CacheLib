@@ -1809,23 +1809,22 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_) 
                 : nullptr;
         std::unique_lock<folly::SharedMutex> chainedLock_;
-        bool markedByUs = false;
         if (lastTier && candidateParent_ != nullptr) {
             candidate_ = candidateParent_;
         } else if (!lastTier && 
-                candidateParent_ && candidateParent_->markMoving(true)) {
-            markedByUs = true;
+                candidateParent_) // && candidateParent_->markMoving(true)) {
+            candidateParentHdl_ = acquire(candidateParent_);
             chainedLock_ = 
-                chainedItemLocks_.tryExclusive(candidateParent_->getKey());
-            if (!chainedLock_) {
-                auto ref = candidateParent_->unmarkMoving();
-                wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
-                if (UNLIKELY(ref == 0)) {
-                  const auto res =
-                      releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
-                  XDCHECK(res == ReleaseRes::kReleased);
-                }
-            }
+                chainedItemLocks_.tryExclusive(candidateParentHdl_->getKey());
+            //if (!chainedLock_) {
+                //auto ref = candidateParent_->unmarkMoving();
+                //wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
+                //if (UNLIKELY(ref == 0)) {
+                //  const auto res =
+                //      releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
+                //  XDCHECK(res == ReleaseRes::kReleased);
+                //}
+            //}
         }
   
         if (shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
@@ -1901,15 +1900,16 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           return;
 
         } else if (chainedLock_) {
+            XDCHECK(candidateParentHdl_.get());
             //failed to mark chained item as moving
-            XDCHECK(candidateParent_->isMoving());
-            auto ref = candidateParent_->unmarkMoving();
-            wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
-            if (UNLIKELY(ref == 0)) {
-              const auto res =
-                  releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
-              XDCHECK(res == ReleaseRes::kReleased);
-            }
+            //XDCHECK(candidateParent_->isMoving());
+            //auto ref = candidateParent_->unmarkMoving();
+            //wakeUpWaiters(candidateParent_->getKey(), WriteHandle{});
+            //if (UNLIKELY(ref == 0)) {
+            //  const auto res =
+            //      releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
+            //  XDCHECK(res == ReleaseRes::kReleased);
+            //}
         //} else if (candidate_->isChainedItem() && markedByUs) {
         //    XDCHECK(!candidateParent_->isMoving());
         //    //we failed to get the chainedLock so parent is definitely not moving
@@ -1924,9 +1924,6 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           stats_.evictFailAC.inc();
         }
         ++itr;
-        if (candidate_->isChainedItem() && markedByUs) {
-            XDCHECK(!candidateParent_->isMoving());
-        }
         XDCHECK(toRecycle == nullptr);
         XDCHECK(candidate == nullptr);
       }
@@ -1939,7 +1936,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     XDCHECK(candidate);
     if (candidate->isChainedItem()) {
         XDCHECK(chainedLock.owns_lock());
-        XDCHECK(candidateParent->isMoving());
+        XDCHECK(candidateParentHdl.get());
     }
     XDCHECK(candidate->isMoving() || candidate->isExclusive());
 
@@ -2037,7 +2034,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
     if (chainedLock) {
         auto ref = candidateParent->unmarkMoving();
-        wakeUpWaiters(candidateParent->getKey(), WriteHandle{});
+        //wakeUpWaiters(candidateParent->getKey(), acquire(candidateParent));
         if (UNLIKELY(ref == 0)) {
           const auto res =
               releaseBackToAllocator(*candidateParent, RemoveContext::kNormal, false);
@@ -2115,7 +2112,9 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   if(item.isExpired()) {
     accessContainer_->remove(item);
     item.unmarkMoving();
-    return acquire(&item); // TODO: wakeUpWaiters with null handle?
+    WriteHandle itemHandle = acquire(&item);
+    wakeUpWaiters(item.getKey(),std::move(itemHandle));
+    return itemHandle;
   }
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
