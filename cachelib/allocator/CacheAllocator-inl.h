@@ -759,7 +759,11 @@ void CacheAllocator<CacheTrait>::transferChainLockedForMoving(
   ChainedItem* curr = &headHandle->asChainedItem();
   const auto newParentPtr = compressor_.compress(newParent.get());
   while (curr) {
-    XDCHECK_EQ(curr == headHandle.get() ? 2u : 1u, curr->getRefCount());
+    //this can be higher because if we just finished copying data
+    //to new item handle, the outstanding handle still exists
+    //and the refcount can be 3 or 2, the handle will be dropped
+    //when waiters are woken up.
+    XDCHECK_GE(curr->getRefCount(), 1u);
     XDCHECK(curr->isInMMContainer());
     curr->changeKey(newParentPtr);
     curr = curr->getNext(compressor_);
@@ -1882,12 +1886,11 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             //parent and candidate are not in the same chain
             //so we need to abort, we won't even try to evict
             XDCHECK(candidateParent_->isMoving());
+            auto ret = candidateParent_->incRef(false);
+            XDCHECK(ret == RefcountWithFlags::incResult::incOk);
             auto ref = candidateParent_->unmarkMoving();
-            if (UNLIKELY(ref == 0)) {
-              const auto res =
-                  releaseBackToAllocator(*candidateParent_, RemoveContext::kNormal, false);
-              XDCHECK(res == ReleaseRes::kReleased);
-            }
+            wakeUpWaiters(candidateParent_->getKey(),
+                    WriteHandle{candidateParent_,*this});
           }
         }
 
@@ -1946,9 +1949,18 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
       XDCHECK(!candidate->isAccessible());
       XDCHECK(candidate->getKey() == evictedToNext->getKey());
-      if (!candidate->isChainedItem()) {
+      if (candidate->isChainedItem()) {
+        //should be no waitiers on chained item because parent is
+        //marked moving
+        //get a handle manually
+        auto ret = candidateParent->incRef(false);
+        XDCHECK(ret == RefcountWithFlags::incResult::incOk);
+        auto ref = candidateParent->unmarkMoving();
+        wakeUpWaiters(candidateParent->getKey(),
+                WriteHandle{candidateParent,*this});
+      } else {
         wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
-      } //TODO not sure about the else case when we moved a child to the next tier (who are the waiters??)
+      }
     }
 
     // might have a hard time with this assert
@@ -2057,12 +2069,6 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
         if (newItemHdl) {
             moveChainedItemWithSync(item.asChainedItem(), 
                          newItemHdl, *parentItem);
-            auto ref = parentItem->unmarkMoving();
-            if (UNLIKELY(ref == 0)) {
-              const auto res =
-                  releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
-              XDCHECK(res == ReleaseRes::kReleased);
-            }
         }
         
     } else {
