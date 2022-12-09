@@ -463,11 +463,11 @@ typename T::Handle ChainedHashTable::Container<T, HookPtr, LockT>::find(
 template <typename T,
           typename ChainedHashTable::Hook<T> T::*HookPtr,
           typename LockT>
-typename T::ChainedItem* ChainedHashTable::Container<T, HookPtr, LockT>::findPtr(
+T* ChainedHashTable::Container<T, HookPtr, LockT>::findPtr(
     Key key) const {
   const auto bucket = ht_.getBucket(key);
   auto l = locks_.lockShared(bucket);
-  return static_cast<ItemPtr>(ht_.findInBucket(key, bucket));
+  return ht_.findInBucket(key, bucket);
 }
 
 template <typename T,

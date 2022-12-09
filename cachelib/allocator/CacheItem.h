@@ -136,6 +136,8 @@ class CACHELIB_PACKED_ATTR CacheItem {
   using WriteHandle = detail::WriteHandleImpl<CacheItem>;
   using Handle = WriteHandle;
   using HandleMaker = std::function<Handle(CacheItem*)>;
+  using NodePtrMaker = std::function<CacheItem*>;
+  using NodePtr = CacheItem*;
 
   /**
    * Item* and ChainedItem* are represented in this compressed form

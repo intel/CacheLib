@@ -100,7 +100,7 @@ void RefCountTest::testBasic() {
   ASSERT_FALSE(ref.template isFlagSet<RefcountWithFlags::Flags::kMMFlag1>());
 
   for (uint32_t i = 0; i < RefcountWithFlags::kAccessRefMask; i++) {
-    ASSERT_TRUE(ref.incRef(true));
+    ASSERT_EQ(ref.incRef(true),RefcountWithFlags::incOk);
   }
 
   // Incrementing past the max will fail
