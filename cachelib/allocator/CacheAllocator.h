@@ -2095,8 +2095,8 @@ class CacheAllocator : public CacheBase {
      	                          /* isNascent */ false);
      	XDCHECK(res == ReleaseRes::kReleased);
       } else {
-	 //we failed to allocate a new item, this item is no  longer moving
-	candidate->unmarkMoving();
+	    //we failed to allocate a new item, this item is no  longer moving
+	    candidate->unmarkMoving();
       }
      
     }
