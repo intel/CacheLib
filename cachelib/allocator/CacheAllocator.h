@@ -1797,6 +1797,12 @@ class CacheAllocator : public CacheBase {
 
   WriteHandle tryPromoteToNextMemoryTier(Item& item, bool fromBgThread);
 
+  // wakes up waiters if there are any
+  void maybeWakeUpWaiters(Item& item, WriteHandle handle);
+
+  // unmarks item as moving and wakes up any waiters waiting on that item
+  typename RefcountWithFlags::Value unmarkMovingAndMaybeWakeUpWaiters(Item &item, WriteHandle handle = {});
+
   // Try to move the item down to the next memory tier
   //
   // @param item the item to evict
