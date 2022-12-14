@@ -1797,6 +1797,18 @@ class CacheAllocator : public CacheBase {
 
   WriteHandle tryPromoteToNextMemoryTier(Item& item, bool fromBgThread);
 
+  // Wakes up waiters if there are any
+  //
+  // @param item    wakes waiters that are waiting on that item
+  // @param handle  handle to pass to the waiters
+  void maybeWakeUpWaiters(Item& item, WriteHandle handle);
+
+  // Unmarks item as moving and wakes up any waiters waiting on that item
+  //
+  // @param item    wakes waiters that are waiting on that item
+  // @param handle  handle to pass to the waiters
+  typename RefcountWithFlags::Value unmarkMovingAndMaybeWakeUpWaiters(Item &item, WriteHandle handle);
+
   // Try to move the item down to the next memory tier
   //
   // @param item the item to evict
@@ -2072,15 +2084,16 @@ class CacheAllocator : public CacheBase {
         promotions++;
   	    removeFromMMContainer(*candidate);
         XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
-     	// it's safe to recycle the item here as there are no more
-     	// references and the item could not been marked as moving
-     	// by other thread since it's detached from MMContainer.
-     	auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-     	                          /* isNascent */ false);
-     	XDCHECK(res == ReleaseRes::kReleased);
+        // it's safe to recycle the item here as there are no more
+        // references and the item could not been marked as moving
+        // by other thread since it's detached from MMContainer.
+        auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
+                                  /* isNascent */ false);
+        XDCHECK(res == ReleaseRes::kReleased);
+        maybeWakeUpWaiters(*candidate, std::move(promoted));
       } else {
-	    //we failed to allocate a new item, this item is no  longer moving
-	    auto ref = candidate->unmarkMoving();
+        // we failed to allocate a new item, this item is no  longer moving
+        auto ref = unmarkMovingAndMaybeWakeUpWaiters(*candidate, {});
         if (UNLIKELY(ref == 0)) {
           const auto res =
               releaseBackToAllocator(*candidate, 
