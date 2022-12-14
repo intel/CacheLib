@@ -1590,7 +1590,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_)
                 : toRecycle_;
 
-        if (shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
+        if (lastTier) {
+          // if it's last tier, the item will be evicted
+          // need to create put token before marking it exclusive
+          token = createPutToken(*candidate_);
+        }
+
+        if (lastTier && shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
           stats_.evictFailConcurrentFill.inc();
         } else if ( (lastTier && candidate_->markExclusive()) ||
                     (!lastTier && candidate_->markMoving(true)) ) {
@@ -1634,8 +1640,9 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     auto evictedToNext = lastTier ? nullptr
         : tryEvictToNextMemoryTier(*candidate, false /* from BgThread */);
     if (!evictedToNext) {
-      token = createPutToken(*candidate);
-
+      if (!token.isValid()) {
+        token = createPutToken(*candidate);
+      }
       // tryEvictToNextMemoryTier should only fail if allocation of the new item fails
       // in that case, it should be still possible to mark item as exclusive.
       //
