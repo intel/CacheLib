@@ -1286,7 +1286,7 @@ CacheAllocator<CacheTrait>::handleWithWaitContextForMovingItem(Item& item) {
 }
 
 template <typename CacheTrait>
-size_t CacheAllocator<CacheTrait>::wakeUpWaiters(folly::StringPiece key,
+size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
   WriteHandle&& handle) {
   std::unique_ptr<MoveCtx> ctx;
   auto shard = getShardForKey(key);
@@ -1657,7 +1657,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       // wake up any readers that wait for the move to complete
       // it's safe to do now, as we have the item marked exclusive and
       // no other reader can be added to the waiters list
-      wakeUpWaiters(candidate->getKey(), WriteHandle{});
+      wakeUpWaiters(*candidate, {});
 
       if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
         nvmCache_->put(*candidate, std::move(token));
@@ -1668,7 +1668,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       XDCHECK(!candidate->isAccessible());
       XDCHECK(candidate->getKey() == evictedToNext->getKey());
 
-      wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
+      wakeUpWaiters(*candidate, std::move(evictedToNext));
     }
 
     XDCHECK(!candidate->isExclusive() && !candidate->isMoving());
@@ -1757,7 +1757,7 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   if(item.isExpired()) {
     accessContainer_->remove(item);
     item.unmarkMoving();
-    return acquire(&item); // TODO: wakeUpWaiters with null handle?
+    return acquire(&item);
   }
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
@@ -2985,6 +2985,14 @@ void CacheAllocator<CacheTrait>::throttleWith(util::Throttler& t,
 }
 
 template <typename CacheTrait>
+typename RefcountWithFlags::Value CacheAllocator<CacheTrait>::unmarkMovingAndWakeUpWaiters(Item &item, WriteHandle handle)
+{
+  auto ret = item.unmarkMoving();
+  wakeUpWaiters(item, std::move(handle));
+  return ret;
+}
+
+template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveForSlabRelease(
     const SlabReleaseContext& ctx, Item& oldItem, util::Throttler& throttler) {
   if (!config_.moveCb) {
@@ -3002,7 +3010,8 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(
 
     // Nothing to move and the key is likely also bogus for chained items.
     if (oldItem.isOnlyMoving()) {
-      oldItem.unmarkMoving();
+      auto ret = unmarkMovingAndWakeUpWaiters(oldItem, {});
+      XDCHECK(ret == 0);
       const auto res =
           releaseBackToAllocator(oldItem, RemoveContext::kNormal, false);
       XDCHECK(res == ReleaseRes::kReleased);
@@ -3051,8 +3060,8 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(
   }
 
   auto tid = getTierId(oldItem);
-  auto ref = oldItem.unmarkMoving();
-  XDCHECK(ref, 0);
+  auto ref = unmarkMovingAndWakeUpWaiters(oldItem, std::move(newItemHdl));
+  XDCHECK(ref == 0);
 
   const auto allocInfo = allocator_[tid]->getAllocInfo(oldItem.getMemory());
   allocator_[tid]->free(&oldItem);
@@ -3172,9 +3181,26 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
     }
   }
 
-  return oldItem.isChainedItem()
-             ? moveChainedItem(oldItem.asChainedItem(), newItemHdl)
-             : moveRegularItem(oldItem, newItemHdl);
+  // TODO: we can unify move*Item and move*ItemWithSync by always
+  // using the moving bit to block readers.
+  if (getNumTiers() == 1) {
+    return oldItem.isChainedItem()
+              ? moveChainedItem(oldItem.asChainedItem(), newItemHdl)
+              : moveRegularItem(oldItem, newItemHdl);
+  } else {
+    // TODO: add support for chained items
+    moveRegularItemWithSync(oldItem, newItemHdl);
+    return true;
+  }
+}
+
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::wakeUpWaiters(Item& item, WriteHandle handle)
+{
+  // readers do not block on 'moving' items in case there is only one tier
+  if (getNumTiers() > 1) {
+    wakeUpWaitersLocked(item.getKey(), std::move(handle));
+  }
 }
 
 template <typename CacheTrait>
@@ -3187,7 +3213,7 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     stats_.numEvictionAttempts.inc();
 
     if (shutDownInProgress_) {
-      item.unmarkMoving();
+      auto ref = unmarkMovingAndWakeUpWaiters(item, {});
       allocator_[getTierId(item)]->abortSlabRelease(ctx);
       throw exception::SlabReleaseAborted(
           folly::sformat("Slab Release aborted while trying to evict"
@@ -3212,7 +3238,8 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     // nothing needs to be done. We simply need to unmark moving bit and free
     // the item.
     if (item.isOnlyMoving()) {
-      item.unmarkMoving();
+      auto ref = unmarkMovingAndWakeUpWaiters(item, {});
+      XDCHECK(ref == 0);
       const auto res =
           releaseBackToAllocator(item, RemoveContext::kNormal, false);
       XDCHECK(ReleaseRes::kReleased == res);
@@ -3268,13 +3295,13 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
       if (evicted->markExclusive()) {
         // unmark the child so it will be freed
         item.unmarkMoving();
+  
         unlinkItemExclusive(*evicted);
-        if (getNumTiers() > 1) {
-            // wake up any readers that wait for the move to complete
-            // it's safe to do now, as we have the item marked exclusive and
-            // no other reader can be added to the waiters list
-            wakeUpWaiters(evicted->getKey(), WriteHandle{});
-        }
+
+        // wake up any readers that wait for the move to complete
+        // it's safe to do now, as we have the item marked exclusive and
+        // no other reader can be added to the waiters list
+        wakeUpWaiters(*evicted, {});
       } else {
         continue;
       }
@@ -3284,12 +3311,10 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
       token = createPutToken(*evicted);
       if (evicted->markExclusiveWhenMoving()) {
         unlinkItemExclusive(*evicted);
-        if (getNumTiers() > 1) {
-      	  // wake up any readers that wait for the move to complete
-      	  // it's safe to do now, as we have the item marked exclusive and
-      	  // no other reader can be added to the waiters list
-      	  wakeUpWaiters(evicted->getKey(), WriteHandle{});
-        }
+        // wake up any readers that wait for the move to complete
+        // it's safe to do now, as we have the item marked exclusive and
+        // no other reader can be added to the waiters list
+        wakeUpWaiters(*evicted, {});
       } else {
         continue;
       }
