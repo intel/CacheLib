@@ -988,7 +988,8 @@ CacheAllocator<CacheTrait>::acquire(Item* it) {
 
   SCOPE_FAIL { stats_.numRefcountOverflow.inc(); };
 
-  auto failIfMoving = getNumTiers() > 1;
+  // TODO: do not block incRef for child items to avoid deadlock
+  auto failIfMoving = getNumTiers() > 1 && !it->isChainedItem();
   auto incRes = incRef(*it, failIfMoving);
   if (LIKELY(incRes == RefcountWithFlags::incResult::incOk)) {
     return WriteHandle{it, *this};
@@ -3024,7 +3025,8 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
   // a regular item or chained item is synchronized with any potential
   // user-side mutation.
   std::unique_ptr<SyncObj> syncObj;
-  if (config_.movingSync) {
+  if (config_.movingSync && getNumTiers() == 1) {
+    // TODO: use moving-bit synchronization for single tier as well
     if (!oldItem.isChainedItem()) {
       syncObj = config_.movingSync(oldItem.getKey());
     } else {
@@ -3122,47 +3124,51 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     Item* evicted;
     if (item.isChainedItem()) {
       auto& expectedParent = item.asChainedItem().getParentItem(compressor_);
-      const std::string parentKey = expectedParent.getKey().str();
-      auto l = chainedItemLocks_.lockExclusive(parentKey);
 
-      // check if the child is still in mmContainer and the expected parent is
-      // valid under the chained item lock.
-      if (expectedParent.getKey() != parentKey || !item.isInMMContainer() ||
-          item.isOnlyMoving() ||
-          &expectedParent != &item.asChainedItem().getParentItem(compressor_) ||
-          !expectedParent.isAccessible() || !expectedParent.hasChainedItem()) {
-        continue;
-      }
+      if (getNumTiers() == 1) {
+        // TODO: unify this with multi-tier implementation
+        // right now, taking a chained item lock here would lead to deadlock
+        const std::string parentKey = expectedParent.getKey().str();
+        auto l = chainedItemLocks_.lockExclusive(parentKey);
 
-      // search if the child is present in the chain
-      {
-        auto parentHandle = findInternal(parentKey);
-        if (!parentHandle || parentHandle != &expectedParent) {
+        // check if the child is still in mmContainer and the expected parent is
+        // valid under the chained item lock.
+        if (expectedParent.getKey() != parentKey || !item.isInMMContainer() ||
+            item.isOnlyMoving() ||
+            &expectedParent != &item.asChainedItem().getParentItem(compressor_) ||
+            !expectedParent.isAccessible() || !expectedParent.hasChainedItem()) {
           continue;
         }
 
-        ChainedItem* head = nullptr;
-        { // scope for the handle
-          auto headHandle = findChainedItem(expectedParent);
-          head = headHandle ? &headHandle->asChainedItem() : nullptr;
-        }
-
-        bool found = false;
-        while (head) {
-          if (head == &item) {
-            found = true;
-            break;
+        // search if the child is present in the chain
+        {
+          auto parentHandle = findInternal(parentKey);
+          if (!parentHandle || parentHandle != &expectedParent) {
+            continue;
           }
-          head = head->getNext(compressor_);
-        }
 
-        if (!found) {
-          continue;
+          ChainedItem* head = nullptr;
+          { // scope for the handle
+            auto headHandle = findChainedItem(expectedParent);
+            head = headHandle ? &headHandle->asChainedItem() : nullptr;
+          }
+
+          bool found = false;
+          while (head) {
+            if (head == &item) {
+              found = true;
+              break;
+            }
+            head = head->getNext(compressor_);
+          }
+
+          if (!found) {
+            continue;
+          }
         }
       }
 
       evicted = &expectedParent;
-
       token = createPutToken(*evicted);
       if (evicted->markForEviction()) {
         // unmark the child so it will be freed
@@ -3173,6 +3179,9 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
         // no other reader can be added to the waiters list
         wakeUpWaiters(*evicted, {});
       } else {
+        // TODO: potential deadlock with markUseful for parent item
+        // for now, we do not block any reader on child items but this
+        // should probably be fixed
         continue;
       }
     } else {
@@ -3204,7 +3213,17 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     XDCHECK(evicted->getRefCount() == 0);
     const auto res =
         releaseBackToAllocator(*evicted, RemoveContext::kEviction, false);
-    XDCHECK(res == ReleaseRes::kReleased);
+
+    if (getNumTiers() == 1) {
+      XDCHECK(res == ReleaseRes::kReleased);
+    } else {
+      const bool isAlreadyFreed =
+          !markMovingForSlabRelease(ctx, &item, throttler);
+      if (!isAlreadyFreed) {
+        continue;
+      }
+    }
+  
     return;
   }
 }
@@ -3252,11 +3271,15 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
   bool itemFreed = true;
   bool markedMoving = false;
   TierId tid = getTierId(alloc);
-  const auto fn = [&markedMoving, &itemFreed](void* memory) {
+  auto numTiers = getNumTiers();
+  const auto fn = [&markedMoving, &itemFreed, numTiers](void* memory) {
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);
-    if (item->markMoving(false)) {
+    // TODO: for chained items, moving bit is only used to avoid
+    // freeing the item prematurely
+    auto failIfRefNotZero = numTiers > 1 && !item->isChainedItem();
+    if (item->markMoving(failIfRefNotZero)) {
       markedMoving = true;
     }
   };
