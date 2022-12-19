@@ -10,3 +10,6 @@ if [ "$1" == "long" ]; then
 else
     find -type f \( -not -name "*bench*" -and -not -name "navy*" \) -executable | grep -vF "$BLACKLIST" | xargs -n1 bash -c
 fi
+
+../bin/cachebench --json_test_config ../test_configs/consistency/navy.json
+../bin/cachebench --json_test_config ../test_configs/consistency/navy-multi-tier.json
