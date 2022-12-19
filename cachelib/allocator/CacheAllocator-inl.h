@@ -1315,7 +1315,6 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
 
   XDCHECK_EQ(newItemHdl->getSize(), oldItem.getSize());
-  XDCHECK_NE(getTierId(oldItem), getTierId(*newItemHdl));
 
   // take care of the flags before we expose the item to be accessed. this
   // will ensure that when another thread removes the item from RAM, we issue
@@ -1359,7 +1358,6 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   auto& newContainer = getMMContainer(*newItemHdl);
   auto mmContainerAdded = newContainer.add(*newItemHdl);
   XDCHECK(mmContainerAdded);
-  
 
   // no one can add or remove chained items at this point
   if (oldItem.hasChainedItem()) {
@@ -3188,9 +3186,14 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
               ? moveChainedItem(oldItem.asChainedItem(), newItemHdl)
               : moveRegularItem(oldItem, newItemHdl);
   } else {
-    // TODO: add support for chained items
-    moveRegularItemWithSync(oldItem, newItemHdl);
-    return true;
+    if (oldItem.isChainedItem() || oldItem.hasChainedItem()) {
+      // TODO: add support for chained items
+      return false;
+    } else {
+      moveRegularItemWithSync(oldItem, newItemHdl);
+      removeFromMMContainer(oldItem);
+      return true;
+    }
   }
 }
 
