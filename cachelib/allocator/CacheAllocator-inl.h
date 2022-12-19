@@ -591,14 +591,14 @@ void CacheAllocator<CacheTrait>::addChainedItem(WriteHandle& parent,
   // Count a new child
   stats_.numChainedChildItems.inc();
 
-  insertInMMContainer(*child);
-
   // Increment refcount since this chained item is now owned by the parent
   // Parent will decrement the refcount upon release. Since this is an
   // internal refcount, we dont include it in active handle tracking.
   auto ret = child->incRef(true);
   XDCHECK(ret == RefcountWithFlags::incResult::incOk);
   XDCHECK_EQ(2u, child->getRefCount());
+
+  insertInMMContainer(*child);
 
   invalidateNvm(*parent);
   if (auto eventTracker = getEventTracker()) {
