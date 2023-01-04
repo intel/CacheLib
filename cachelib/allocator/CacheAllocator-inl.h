@@ -53,6 +53,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(
     : isOnShm_{type != InitMemType::kNone ? true
                                           : config.memMonitoringEnabled()},
       config_(config.validate()),
+      memoryTierConfigs(config.getMemoryTierConfigs()),
       tempShm_(type == InitMemType::kNone && isOnShm_
                    ? std::make_unique<TempShmMapping>(config_.size)
                    : nullptr),
@@ -112,7 +113,9 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts() {
   // TODO: we support single tier so far
   XDCHECK_EQ(memoryTierConfigs.size(), 1ul);
   opts.memBindNumaNodes = memoryTierConfigs[0].getMemBind();
-
+  if (memoryTierConfigs.size() > 1) {
+    throw std::invalid_argument("CacheLib only supports a single memory tier");
+  }
   return opts;
 }
 
@@ -2175,6 +2178,13 @@ std::set<PoolId> CacheAllocator<CacheTrait>::getRegularPoolIdsForResize()
 template <typename CacheTrait>
 const std::string CacheAllocator<CacheTrait>::getCacheName() const {
   return config_.cacheName;
+}
+
+template <typename CacheTrait>
+size_t CacheAllocator<CacheTrait>::getPoolSize(PoolId poolId) const {
+  const auto& pool = allocator_->getPool(poolId);
+  size_t poolSize = pool.getPoolSize();
+  return poolSize;
 }
 
 template <typename CacheTrait>

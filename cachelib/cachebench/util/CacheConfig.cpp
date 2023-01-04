@@ -100,6 +100,13 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, nvmAdmissionRetentionTimeThreshold);
 
   JSONSetVal(configJson, customConfigJson);
+ 
+  JSONSetVal(configJson, usePosixShm);
+  if (configJson.count("memoryTiers")) {
+    for (auto& it : configJson["memoryTiers"]) {
+      memoryTierConfigs.push_back(MemoryTierConfig(it).getMemoryTierCacheConfig());
+    }
+  }
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
