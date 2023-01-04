@@ -53,6 +53,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(
     : isOnShm_{type != InitMemType::kNone ? true
                                           : config.memMonitoringEnabled()},
       config_(config.validate()),
+      memoryTierConfigs(config.getMemoryTierConfigs()),
       tempShm_(type == InitMemType::kNone && isOnShm_
                    ? std::make_unique<TempShmMapping>(config_.size)
                    : nullptr),
@@ -112,7 +113,6 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts() {
   // TODO: we support single tier so far
   XDCHECK_EQ(memoryTierConfigs.size(), 1ul);
   opts.memBindNumaNodes = memoryTierConfigs[0].getMemBind();
-
   return opts;
 }
 
