@@ -36,13 +36,14 @@ class PtrCompressor;
 // is used for pointer compression by the memory allocator.
 
 // We compress pointers by storing the tier index, slab index and alloc index of
-// the allocation inside the slab. With slab worth kNumSlabBits (22 bits) of data,
-// if we have the min allocation size as 64 bytes, that requires kNumSlabBits - 6
-// = 16 bits for storing the alloc index.  The tier id occupies the 32nd bit only
-// since its value cannot exceed kMaxTiers (2). This leaves the remaining
-// (32 - (kNumSlabBits - 6) - 1 bit for tier id) =  15 bits  for the  slab  index.
-// Hence we can index 128 GiB of memory in slabs per tier and index anything more
-// than 64 byte allocations inside the slab using a 32 bit representation.
+// the allocation inside the slab. With slab worth kNumSlabBits (22 bits) of
+// data, if we have the min allocation size as 64 bytes, that requires
+// kNumSlabBits - 6 = 16 bits for storing the alloc index.  The tier id occupies
+// the 32nd bit only since its value cannot exceed kMaxTiers (2). This leaves
+// the remaining (32 - (kNumSlabBits - 6) - 1 bit for tier id) =  15 bits  for
+// the  slab  index. Hence we can index 128 GiB of memory in slabs per tier and
+// index anything more than 64 byte allocations inside the slab using a 32 bit
+// representation.
 class CACHELIB_PACKED_ATTR CompressedPtr {
  public:
   using PtrType = uint32_t;
@@ -93,7 +94,10 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
   PtrType ptr_{kNull};
 
   // create a compressed pointer for a valid memory allocation.
-  CompressedPtr(uint32_t slabIdx, uint32_t allocIdx, bool isMultiTiered, TierId tid = 0)
+  CompressedPtr(uint32_t slabIdx,
+                uint32_t allocIdx,
+                bool isMultiTiered,
+                TierId tid = 0)
       : ptr_(compress(slabIdx, allocIdx, isMultiTiered, tid)) {}
 
   constexpr explicit CompressedPtr(PtrType ptr) noexcept : ptr_{ptr} {}
@@ -115,18 +119,22 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
   // Number of bits for the slab index. This will be the top 16 bits of the
   // compressed ptr.
   static constexpr unsigned int kNumSlabIdxBits =
-      kNumTierIdxOffset - kNumAllocIdxBits; 
+      kNumTierIdxOffset - kNumAllocIdxBits;
 
   // Compress the given slabIdx and allocIdx into a 64-bit compressed
   // pointer.
-  static PtrType compress(uint32_t slabIdx, uint32_t allocIdx, bool isMultiTiered, TierId tid) noexcept {
+  static PtrType compress(uint32_t slabIdx,
+                          uint32_t allocIdx,
+                          bool isMultiTiered,
+                          TierId tid) noexcept {
     XDCHECK_LE(allocIdx, kAllocIdxMask);
     if (!isMultiTiered) {
-      XDCHECK_LT(slabIdx, (1u << (kNumSlabIdxBits+1)) - 1);
+      XDCHECK_LT(slabIdx, (1u << (kNumSlabIdxBits + 1)) - 1);
       return (slabIdx << kNumAllocIdxBits) + allocIdx;
     }
     XDCHECK_LT(slabIdx, (1u << kNumSlabIdxBits) - 1);
-    return (static_cast<uint64_t>(tid) << kNumTierIdxOffset) + (slabIdx << kNumAllocIdxBits) + allocIdx;
+    return (static_cast<uint32_t>(tid) << kNumTierIdxOffset) +
+           (slabIdx << kNumAllocIdxBits) + allocIdx;
   }
 
   // Get the slab index of the compressed ptr
@@ -149,7 +157,7 @@ class CACHELIB_PACKED_ATTR CompressedPtr {
   }
 
   void setTierId(TierId tid) noexcept {
-    ptr_ += static_cast<uint64_t>(tid) << kNumTierIdxOffset;
+    ptr_ += static_cast<uint32_t>(tid) << kNumTierIdxOffset;
   }
 
   friend SlabAllocator;
@@ -196,7 +204,8 @@ class PtrCompressor {
 
     TierId tid;
     for (tid = 0; tid < allocators_.size(); tid++) {
-      if (allocators_[tid]->isMemoryInAllocator(static_cast<const void*>(uncompressed)))
+      if (allocators_[tid]->isMemoryInAllocator(
+              static_cast<const void*>(uncompressed)))
         break;
     }
 
@@ -213,8 +222,9 @@ class PtrCompressor {
       return nullptr;
     }
     bool isMultiTiered = allocators_.size() > 1;
-    auto &allocator = *allocators_[compressed.getTierId(isMultiTiered)];
-    return static_cast<PtrType*>(allocator.unCompress(compressed, isMultiTiered));
+    auto& allocator = *allocators_[compressed.getTierId(isMultiTiered)];
+    return static_cast<PtrType*>(
+        allocator.unCompress(compressed, isMultiTiered));
   }
 
   bool operator==(const PtrCompressor& rhs) const noexcept {
