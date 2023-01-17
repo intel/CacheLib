@@ -1190,7 +1190,7 @@ class CacheAllocator : public CacheBase {
   CacheMemoryStats getCacheMemoryStats() const override final;
 
   // return stats for Allocation Class
-  ACStats getACStats(PoolId pid, ClassId cid) const override final;
+  ACStats getACStats(TierId tid, PoolId pid, ClassId cid) const override final;
 
   // return the nvm cache stats map
   util::StatsMap getNvmCacheStatsMap() const override final;

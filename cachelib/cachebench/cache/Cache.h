@@ -325,8 +325,8 @@ class Cache {
   // return the stats for the pool.
   PoolStats getPoolStats(PoolId pid) const { return cache_->getPoolStats(pid); }
 
-  ACStats getACStats(PoolId pid, ClassId cid) const {
-    return cache_->getACStats(pid, cid);
+  ACStats getACStats(TierId tid, PoolId pid, ClassId cid) const {
+    return cache_->getACStats(tid, pid, cid);
   }
 
   // return the total number of inconsistent operations detected since start.
