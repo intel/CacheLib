@@ -620,12 +620,14 @@ Stats Cache<Allocator>::getStats() const {
     aggregate += poolStats;
   }
 
-  std::map<PoolId, std::map<ClassId, ACStats>> allocationClassStats{};
+  std::map<TierId, std::map<PoolId, std::map<ClassId, ACStats>>> allocationClassStats{};
 
   for (size_t pid = 0; pid < pools_.size(); pid++) {
     auto cids = cache_->getPoolStats(static_cast<PoolId>(pid)).getClassIds();
-    for (auto cid : cids)
-      allocationClassStats[pid][cid] = cache_->getACStats(pid, cid);
+    for (TierId tid = 0; tid < cache_->getNumTiers(); tid++) {
+      for (auto cid : cids)
+        allocationClassStats[tid][pid][cid] = cache_->getACStats(tid, pid, cid);
+    }
   }
 
   const auto cacheStats = cache_->getGlobalCacheStats();

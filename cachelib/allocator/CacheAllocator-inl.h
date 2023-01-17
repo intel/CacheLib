@@ -2419,9 +2419,10 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
 }
 
 template <typename CacheTrait>
-ACStats CacheAllocator<CacheTrait>::getACStats(PoolId poolId,
+ACStats CacheAllocator<CacheTrait>::getACStats(TierId tid,
+                                               PoolId poolId,
                                                ClassId classId) const {
-  const auto& pool = allocator_[currentTier()]->getPool(poolId);
+  const auto& pool = allocator_[tid]->getPool(poolId);
   const auto& ac = pool.getAllocationClass(classId);
   return ac.getStats();
 }

@@ -101,7 +101,7 @@ struct Stats {
   uint64_t invalidDestructorCount{0};
   int64_t unDestructedItemCount{0};
 
-  std::map<PoolId, std::map<ClassId, ACStats>> allocationClassStats;
+  std::map<TierId, std::map<PoolId, std::map<ClassId, ACStats>>> allocationClassStats;
 
   // populate the counters related to nvm usage. Cache implementation can decide
   // what to populate since not all of those are interesting when running
@@ -156,24 +156,26 @@ struct Stats {
       };
 
       auto foreachAC = [&](auto cb) {
-        for (auto& pidStat : allocationClassStats) {
-          for (auto& cidStat : pidStat.second) {
-            cb(pidStat.first, cidStat.first, cidStat.second);
+        for (auto& tidStat : allocationClassStats) {
+          for (auto& pidStat : tidStat.second) {
+            for (auto& cidStat : pidStat.second) {
+              cb(tidStat.first, pidStat.first, cidStat.first, cidStat.second);
+            }
           }
         }
       };
 
-      foreachAC([&](auto pid, auto cid, auto stats) {
+      foreachAC([&](auto tid, auto pid, auto cid, auto stats) {
         auto [allocSizeSuffix, allocSize] = formatMemory(stats.allocSize);
         auto [memorySizeSuffix, memorySize] =
             formatMemory(stats.totalAllocatedSize());
-        out << folly::sformat("pid{:2} cid{:4} {:8.2f}{} memorySize: {:8.2f}{}",
-                              pid, cid, allocSize, allocSizeSuffix, memorySize,
+        out << folly::sformat("tid{:2} pid{:2} cid{:4} {:8.2f}{} memorySize: {:8.2f}{}",
+                              tid, pid, cid, allocSize, allocSizeSuffix, memorySize,
                               memorySizeSuffix)
             << std::endl;
       });
 
-      foreachAC([&](auto pid, auto cid, auto stats) {
+      foreachAC([&](auto tid, auto pid, auto cid, auto stats) {
         auto [allocSizeSuffix, allocSize] = formatMemory(stats.allocSize);
 
         // If the pool is not full, extrapolate usageFraction for AC assuming it
