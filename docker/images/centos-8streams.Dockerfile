@@ -13,3 +13,6 @@ glibc-devel.i686
 
 COPY ./install-cachelib-deps.sh ./install-cachelib-deps.sh
 RUN ./install-cachelib-deps.sh
+
+COPY ./install-dml.sh ./install-dml.sh
+RUN ./install-dml.sh
