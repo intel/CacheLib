@@ -37,6 +37,8 @@ target_link_libraries(cachelib_cachebench PUBLIC
   cachelib_datatype
   cachelib_allocator
   gflags
+  dmlhl
+  dl
 )
 
 if ((CMAKE_SYSTEM_NAME STREQUAL Linux) AND
