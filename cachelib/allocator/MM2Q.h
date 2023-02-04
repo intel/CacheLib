@@ -66,6 +66,7 @@ class MM2Q {
   enum LruType { Warm, WarmTail, Hot, Cold, ColdTail, NumTypes };
 
   // Config class for MM2Q
+  // TODO: implement support for useCombinedLockForIterators
   struct Config {
     // Create from serialized config
     explicit Config(SerializationConfigType configState)
