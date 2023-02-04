@@ -1458,17 +1458,17 @@ class CacheAllocator : public CacheBase {
   // @return  handle to the parent item if the validations pass
   //          otherwise, an empty Handle is returned.
   //
-  ReadHandle validateAndGetParentHandleForChainedMoveLocked(
+  WriteHandle validateAndGetParentHandleForChainedMoveLocked(
       const ChainedItem& item, const Key& parentKey);
 
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
   //
-  // @param oldItem    the item we want to allocate a new item for
+  // @param item   reference to the item we want to allocate a new item for
   //
   // @return  handle to the newly allocated item
   //
-  WriteHandle allocateNewItemForOldItem(const Item& oldItem);
+  WriteHandle allocateNewItemForOldItem(const Item& item);
 
   // internal helper that grabs a refcounted handle to the item. This does
   // not record the access to reflect in the mmContainer.
@@ -1527,7 +1527,7 @@ class CacheAllocator : public CacheBase {
   // callback is responsible for copying the contents and fixing the semantics
   // of chained item.
   //
-  // @param oldItem     Reference to the item being moved
+  // @param oldItem     item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
   // @return true  If the move was completed, and the containers were updated
@@ -1782,13 +1782,14 @@ class CacheAllocator : public CacheBase {
   //
   //
   // @param ctx         slab release context
-  // @param item        old item to be moved elsewhere
+  // @param oldItem     old item to be moved elsewhere
+  // @param handle      handle to the item or to it's parent (if chained)
   // @param throttler   slow this function down as not to take too much cpu
   //
   // @return    true  if the item has been moved
   //            false if we have exhausted moving attempts
   bool moveForSlabRelease(const SlabReleaseContext& ctx,
-                          Item& item,
+                          Item& oldItem,
                           util::Throttler& throttler);
 
   // "Move" (by copying) the content in this item to another memory
@@ -1811,18 +1812,7 @@ class CacheAllocator : public CacheBase {
                            Item& item,
                            util::Throttler& throttler);
 
-  // Helper function to evict a normal item for slab release
-  //
-  // @return last handle for corresponding to item on success. empty handle on
-  // failure. caller can retry if needed.
-  WriteHandle evictNormalItemForSlabRelease(Item& item);
-
-  // Helper function to evict a child item for slab release
-  // As a side effect, the parent item is also evicted
-  //
-  // @return  last handle to the parent item of the child on success. empty
-  // handle on failure. caller can retry.
-  WriteHandle evictChainedItemForSlabRelease(ChainedItem& item);
+  typename NvmCacheT::PutToken createPutToken(Item& item);
 
   // Helper function to remove a item if expired.
   //
@@ -1945,16 +1935,12 @@ class CacheAllocator : public CacheBase {
   std::optional<bool> saveNvmCache();
   void saveRamCache();
 
-  static bool itemExclusivePredicate(const Item& item) {
-    return item.getRefCount() == 0;
+  static bool itemSlabMovePredicate(const Item& item) {
+    return item.isMoving() && item.getRefCount() == 0;
   }
 
   static bool itemExpiryPredicate(const Item& item) {
     return item.getRefCount() == 1 && item.isExpired();
-  }
-
-  static bool parentEvictForSlabReleasePredicate(const Item& item) {
-    return item.getRefCount() == 1 && !item.isMoving();
   }
 
   std::unique_ptr<Deserializer> createDeserializer();
