@@ -1482,11 +1482,11 @@ class CacheAllocator : public CacheBase {
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
   //
-  // @param oldItem    the item we want to allocate a new item for
+  // @param item   reference to the item we want to allocate a new item for
   //
   // @return  handle to the newly allocated item
   //
-  WriteHandle allocateNewItemForOldItem(const Item& oldItem);
+  WriteHandle allocateNewItemForOldItem(const Item& item);
 
   // internal helper that grabs a refcounted handle to the item. This does
   // not record the access to reflect in the mmContainer.
@@ -1545,7 +1545,7 @@ class CacheAllocator : public CacheBase {
   // callback is responsible for copying the contents and fixing the semantics
   // of chained item.
   //
-  // @param oldItem     Reference to the item being moved
+  // @param oldItem     item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
   //
   // @return true  If the move was completed, and the containers were updated
@@ -1981,16 +1981,12 @@ class CacheAllocator : public CacheBase {
   std::optional<bool> saveNvmCache();
   void saveRamCache();
 
-  static bool itemExclusivePredicate(const Item& item) {
-    return item.getRefCount() == 0;
+  static bool itemSlabMovePredicate(const Item& item) {
+    return item.isMoving() && item.getRefCount() == 0;
   }
 
   static bool itemExpiryPredicate(const Item& item) {
     return item.getRefCount() == 1 && item.isExpired();
-  }
-
-  static bool parentEvictForSlabReleasePredicate(const Item& item) {
-    return item.getRefCount() == 1 && !item.isMoving();
   }
 
   std::unique_ptr<Deserializer> createDeserializer();

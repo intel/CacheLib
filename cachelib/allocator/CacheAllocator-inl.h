@@ -1344,12 +1344,9 @@ CacheAllocator<CacheTrait>::getNextCandidate(PoolId pid,
               ? &toRecycle_->asChainedItem().getParentItem(compressor_)
               : toRecycle_;
 
-      const bool evictToNvmCache = shouldWriteToNvmCache(*candidate_);
-      auto putToken = evictToNvmCache
-                          ? nvmCache_->createPutToken(candidate_->getKey())
-                          : typename NvmCacheT::PutToken{};
+      auto putToken = createPutToken(*candidate_);
 
-      if (evictToNvmCache && !putToken.isValid()) {
+      if (shouldWriteToNvmCache(*candidate_) && !putToken.isValid()) {
         stats_.evictFailConcurrentFill.inc();
         ++itr;
         continue;
@@ -1972,13 +1969,13 @@ std::vector<std::string> CacheAllocator<CacheTrait>::dumpEvictionIterator(
   std::vector<std::string> content;
 
   auto& mm = *mmContainers_[pid][cid];
-  auto evictItr = mm.getEvictionIterator();
-  size_t i = 0;
-  while (evictItr && i < numItems) {
-    content.push_back(evictItr->toString());
-    ++evictItr;
-    ++i;
-  }
+
+  mm.withEvictionIterator([&content, numItems](auto&& itr) {
+    while (itr && content.size() < numItems) {
+      content.push_back(itr->toString());
+      ++itr;
+    }
+  });
 
   return content;
 }
@@ -2619,6 +2616,7 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(Item& oldItem) {
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
+  XDCHECK(oldItem.isMoving());
   if (oldItem.isChainedItem()) {
     const Item& parentItem = oldItem.asChainedItem().getParentItem(compressor_);
 
@@ -2632,7 +2630,7 @@ CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
     XDCHECK_EQ(newItemHdl->getSize(), oldChainedItem.getSize());
     XDCHECK_EQ(reinterpret_cast<uintptr_t>(&parentItem),
                reinterpret_cast<uintptr_t>(
-                   &oldChainedItem.getParentItem(compressor_)));
+                   &newItemHdl->asChainedItem().getParentItem(compressor_)));
 
     return newItemHdl;
   }
