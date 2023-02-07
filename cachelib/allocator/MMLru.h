@@ -230,12 +230,13 @@ class MMLru {
     //     lruInsertionPointSpec = 2, we insert at a point 1/4th from tail
     uint8_t lruInsertionPointSpec{0};
 
+    // Whether to use combined locking for withEvictionIterator.
+    bool useCombinedLockForIterators{true};
+
     // Minimum interval between reconfigurations. If 0, reconfigure is never
     // called.
     std::chrono::seconds mmReconfigureIntervalSecs{};
 
-    // Whether to use combined locking for withEvictionIterator.
-    bool useCombinedLockForIterators{false};
   };
 
   // The container object which can be used to keep track of objects of type

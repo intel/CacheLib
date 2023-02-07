@@ -82,8 +82,10 @@ TEST(ItemTest, ExpiryTime) {
   EXPECT_TRUE(result);
   EXPECT_EQ(tenMins, item->getConfiguredTTL());
 
+  // So that exclusive bit will be set
+  item->markAccessible();
   // Test that writes fail while the item is moving
-  result = item->markMoving();
+  result = item->markMoving(true);
   EXPECT_TRUE(result);
   result = item->updateExpiryTime(0);
   EXPECT_FALSE(result);

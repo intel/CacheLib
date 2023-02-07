@@ -400,6 +400,12 @@ struct ReadHandleImpl {
       }
     }
 
+   protected:
+    friend class ReadHandleImpl;
+    // Method used only by ReadHandleImpl ctor
+    void discard() {
+      it_.store(nullptr, std::memory_order_relaxed);
+    }
    private:
     // we are waiting on Item* to be set to a value. One of the valid values is
     // nullptr. So choose something that we dont expect to indicate a ptr
@@ -479,7 +485,8 @@ struct ReadHandleImpl {
 
   // Handle which has the item already
   FOLLY_ALWAYS_INLINE ReadHandleImpl(Item* it, CacheT& alloc) noexcept
-      : alloc_(&alloc), it_(it) {}
+      : alloc_(&alloc), it_(it) {
+  }
 
   // handle that has a wait context allocated. Used for async handles
   // In this case, the it_ will be filled in asynchronously and mulitple
