@@ -23,6 +23,8 @@
 #include <folly/fibers/TimedMutex.h>
 #include <folly/logging/xlog.h>
 #include <folly/synchronization/SanitizeThread.h>
+#include <folly/hash/Hash.h>
+#include <folly/container/F14Map.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -1572,15 +1574,6 @@ class CacheAllocator : public CacheBase {
   //              not exist.
   FOLLY_ALWAYS_INLINE WriteHandle findFastImpl(Key key, AccessMode mode);
 
-  // Moves a regular item to a different memory tier.
-  //
-  // @param oldItem     Reference to the item being moved
-  // @param newItemHdl  Reference to the handle of the new item being moved into
-  //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
-  bool moveRegularItemOnEviction(Item& oldItem, WriteHandle& newItemHdl);
-
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
   // callback is responsible for copying the contents and fixing the semantics
@@ -1777,6 +1770,27 @@ class CacheAllocator : public CacheBase {
                                            unsigned int& searchTries);
 
   using EvictionIterator = typename MMContainer::LockedIterator;
+
+  // Try to move the item down to the next memory tier
+  //
+  // @param tid current tier ID of the item
+  // @param pid the pool ID the item belong to.
+  // @param item the item to evict
+  // @param fromBgThread whether this is called from BG thread
+  //
+  // @return valid handle to the item. This will be the last
+  //         handle to the item. On failure an empty handle.
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item,
+                                       bool fromBgThread);
+
+  // Try to move the item down to the next memory tier
+  //
+  // @param item the item to evict
+  // @param fromBgThread whether this is called from BG thread
+  //
+  // @return valid handle to the item. This will be the last
+  //         handle to the item. On failure an empty handle. 
+  WriteHandle tryEvictToNextMemoryTier(Item& item, bool fromBgThread);
 
   // Wakes up waiters if there are any
   //
