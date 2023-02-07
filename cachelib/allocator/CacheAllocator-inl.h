@@ -309,7 +309,8 @@ void CacheAllocator<CacheTrait>::initWorkers() {
   if (config_.backgroundEvictorEnabled()) {
     startNewBackgroundEvictor(config_.backgroundEvictorInterval,
                               config_.backgroundEvictorStrategy,
-                              config_.backgroundEvictorThreads);
+                              config_.backgroundEvictorThreads,
+                              config_.dsaEnabled);
   }
 
   if (config_.backgroundPromoterEnabled()) {
@@ -1410,8 +1411,8 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
-    Item& oldItem, WriteHandle& newItemHdl, DmlHandlerCont& handlers) {
+void CacheAllocator<CacheTrait>::beforeRegularItemMoveAsync(
+    Item& oldItem, WriteHandle& newItemHdl) {
   XDCHECK(oldItem.isMoving());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
@@ -1441,15 +1442,11 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   };
 
   auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl, predicate);
+}
 
-  dml::const_data_view src_view = dml::make_view(
-      reinterpret_cast<uint8_t*>(oldItem.getMemory()), oldItem.getSize());
-  dml::data_view dst_view =
-      dml::make_view(reinterpret_cast<uint8_t*>(newItemHdl->getMemory()),
-                     newItemHdl->getSize());
-  handlers.emplace_back(
-      dml::submit<dml::hardware>(dml::mem_copy, src_view, dst_view));
-
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::afterRegularItemMoveAsync(
+    Item& oldItem, WriteHandle& newItemHdl) {
   // Adding the item to mmContainer has to succeed since no one can remove the
   // item
   auto& newContainer = getMMContainer(*newItemHdl);
@@ -1485,6 +1482,7 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
         releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
     XDCHECK(res == ReleaseRes::kReleased);
   }
+  oldItem.unmarkMoving();
 }
 
 template <typename CacheTrait>
@@ -1848,7 +1846,8 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
                                                      PoolId pid,
-                                                     Item& item) {
+                                                     Item& item,
+                                                     bool useDsa) {
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
   if (item.hasChainedItem())
@@ -1869,8 +1868,12 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      moveRegularItemWithSync(item, newItemHdl);
-      item.unmarkMoving();
+      if (!useDsa) {
+        moveRegularItemWithSync(item, newItemHdl);
+        item.unmarkMoving();
+      } else {
+        beforeRegularItemMoveAsync(item, newItemHdl);
+      }
       return newItemHdl;
     } else {
       return WriteHandle{};
@@ -1882,56 +1885,10 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
-                                                     PoolId pid,
-                                                     Item& item,
-                                                     DmlHandlerCont& handlers) {
-  XDCHECK(item.isMoving());
-  XDCHECK(item.getRefCount() == 0);
-  if (item.hasChainedItem())
-    return WriteHandle{}; // TODO: We do not support ChainedItem yet
-  if (item.isExpired()) {
-    accessContainer_->remove(item);
-    item.unmarkMoving();
-    return acquire(&item);
-  }
-
-  TierId nextTier = tid; // TODO - calculate this based on some admission policy
-  while (++nextTier < getNumTiers()) { // try to evict down to the next memory
-                                       // tiers
-    // allocateInternal might trigger another eviction
-    auto newItemHdl = allocateInternalTier(
-        nextTier, pid, item.getKey(), item.getSize(), item.getCreationTime(),
-        item.getExpiryTime(), true /* from BgThread */);
-
-    if (newItemHdl) {
-      XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      moveRegularItemWithSync(item, newItemHdl, handlers);
-      item.unmarkMoving();
-      return newItemHdl;
-    } else {
-      return WriteHandle{};
-    }
-  }
-
-  return {};
-}
-
-template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item) {
+CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item, bool useDsa) {
   auto tid = getTierId(item);
   auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
-  return tryEvictToNextMemoryTier(tid, pid, item);
-}
-
-template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item,
-                                                     DmlHandlerCont& handlers) {
-  auto tid = getTierId(item);
-  auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
-  return tryEvictToNextMemoryTier(tid, pid, item, handlers);
+  return tryEvictToNextMemoryTier(tid, pid, item, useDsa);
 }
 
 template <typename CacheTrait>
@@ -3356,7 +3313,7 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::wakeUpWaiters(Item& item, WriteHandle handle) {
+void CacheAllocator<CacheTrait>::wakeUpWaiters(Item& item, WriteHandle&& handle) {
   // readers do not block on 'moving' items in case there is only one tier
   if (getNumTiers() > 1) {
     wakeUpWaitersLocked(item.getKey(), std::move(handle));
@@ -4262,7 +4219,8 @@ template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::startNewBackgroundEvictor(
     std::chrono::milliseconds interval,
     std::shared_ptr<BackgroundMoverStrategy> strategy,
-    size_t threads) {
+    size_t threads,
+    bool dsaEnabled) {
   XDCHECK(threads > 0);
   backgroundEvictor_.resize(threads);
   bool result = true;
@@ -4270,7 +4228,7 @@ bool CacheAllocator<CacheTrait>::startNewBackgroundEvictor(
   for (size_t i = 0; i < threads; i++) {
     auto ret = startNewWorker("BackgroundEvictor" + std::to_string(i),
                               backgroundEvictor_[i], interval, strategy,
-                              MoverDir::Evict);
+                              MoverDir::Evict, dsaEnabled);
     result = result && ret;
 
     if (result) {

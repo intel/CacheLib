@@ -8,7 +8,7 @@ DEVID=${1}
 DEV=dsa${DEVID}
 DEVWQ=${DEV}/wq${DEVID}.
 
-MAXWQ=8
+MAXWQ=1
 echo "INFO: WQ Count hardcoded to ${MAXWQ}"
 MAXENGINE=4
 echo "INFO: ENGINE Count hardcoded to ${MAXENGINE}"
@@ -31,12 +31,12 @@ for ((i=0; i < $MAXWQ; i++))
 do
     sudo accel-config config-wq ${DEVWQ}${i} --group-id=0
     sudo accel-config config-wq ${DEVWQ}${i} --priority=5
-    sudo accel-config config-wq ${DEVWQ}${i} --wq-size=16
+    sudo accel-config config-wq ${DEVWQ}${i} --wq-size=128
     sudo accel-config config-wq ${DEVWQ}${i} --max-batch-size=128
     sudo accel-config config-wq ${DEVWQ}${i} --type=user
     sudo accel-config config-wq ${DEVWQ}${i} --name="dsa-test"
     sudo accel-config config-wq ${DEVWQ}${i} --mode=shared
-    sudo accel-config config-wq ${DEVWQ}${i} --threshold=15
+    sudo accel-config config-wq ${DEVWQ}${i} --threshold=127
     sudo accel-config config-wq ${DEVWQ}${i} --driver-name="user"
 done
 

@@ -21,11 +21,16 @@ template <typename CacheT>
 BackgroundMover<CacheT>::BackgroundMover(
     Cache& cache,
     std::shared_ptr<BackgroundMoverStrategy> strategy,
-    MoverDir direction)
+    MoverDir direction,
+    bool dsaEnabled)
     : cache_(cache), strategy_(strategy), direction_(direction) {
   if (direction_ == MoverDir::Evict) {
-    moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItems;
-
+    if (dsaEnabled) {
+      moverFunc =
+          BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItemsUsingDsa;
+    } else {
+      moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItems;
+    }
   } else if (direction_ == MoverDir::Promote) {
     moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndPromoteItems;
   }

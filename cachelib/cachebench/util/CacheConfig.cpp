@@ -16,11 +16,11 @@
 
 #include "cachelib/cachebench/util/CacheConfig.h"
 
+#include "cachelib/allocator/FreeThresholdStrategy.h"
 #include "cachelib/allocator/HitsPerSlabStrategy.h"
 #include "cachelib/allocator/LruTailAgeStrategy.h"
-#include "cachelib/allocator/RandomStrategy.h"
-#include "cachelib/allocator/FreeThresholdStrategy.h"
 #include "cachelib/allocator/PromotionStrategy.h"
+#include "cachelib/allocator/RandomStrategy.h"
 
 namespace facebook {
 namespace cachelib {
@@ -33,6 +33,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, backgroundEvictorIntervalMilSec);
   JSONSetVal(configJson, backgroundPromoterIntervalMilSec);
   JSONSetVal(configJson, backgroundEvictorStrategy);
+  JSONSetVal(configJson, dsaEnabled);
   JSONSetVal(configJson, moveOnSlabRelease);
   JSONSetVal(configJson, rebalanceStrategy);
   JSONSetVal(configJson, rebalanceMinSlabs);
@@ -99,7 +100,6 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
 
   JSONSetVal(configJson, customConfigJson);
 
-
   JSONSetVal(configJson, lowEvictionAcWatermark);
   JSONSetVal(configJson, highEvictionAcWatermark);
   JSONSetVal(configJson, minAcAllocationWatermark);
@@ -120,13 +120,14 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
 
   if (configJson.count("memoryTiers")) {
     for (auto& it : configJson["memoryTiers"]) {
-      memoryTierConfigs.push_back(MemoryTierConfig(it).getMemoryTierCacheConfig());
+      memoryTierConfigs.push_back(
+          MemoryTierConfig(it).getMemoryTierCacheConfig());
     }
   }
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 928>();
+  checkCorrectSize<CacheConfig, 936>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
@@ -156,7 +157,6 @@ std::shared_ptr<RebalanceStrategy> CacheConfig::getRebalanceStrategy() const {
   }
 }
 
-
 MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, file);
   JSONSetVal(configJson, ratio);
@@ -164,57 +164,62 @@ MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   checkCorrectSize<MemoryTierConfig, 72>();
 }
 
-std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundEvictorStrategy() const {
+std::shared_ptr<BackgroundMoverStrategy>
+CacheConfig::getBackgroundEvictorStrategy() const {
   if (backgroundEvictorIntervalMilSec == 0) {
     return nullptr;
   }
-  return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+  return std::make_shared<FreeThresholdStrategy>(
+      lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch,
+      minEvictionBatch);
 }
 
-std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundPromoterStrategy() const {
+std::shared_ptr<BackgroundMoverStrategy>
+CacheConfig::getBackgroundPromoterStrategy() const {
   if (backgroundPromoterIntervalMilSec == 0) {
     return nullptr;
   }
-  return std::make_shared<PromotionStrategy>(promotionAcWatermark, maxPromotionBatch, minPromotionBatch);
+  return std::make_shared<PromotionStrategy>(
+      promotionAcWatermark, maxPromotionBatch, minPromotionBatch);
 }
 
-static bool starts_with() {return true;}
+static bool starts_with() { return true; }
 
 std::vector<size_t> MemoryTierConfig::parseNumaNodes() {
   std::vector<size_t> numaNodes;
 
   std::vector<folly::StringPiece> tokens;
   folly::split(",", memBindNodes, tokens, true /*ignore empty*/);
-  for(const auto &token : tokens) {
-    if(token.startsWith("!")) {
-      throw std::invalid_argument(folly::sformat(
-        "invalid NUMA nodes binding in memory tier config: {} "
-        "inverse !N or !N-N is not supported "
-        "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so forth.",
-        token));
-    }
-    else if(token.startsWith("+")) {
-      throw std::invalid_argument(folly::sformat(
-        "invalid NUMA nodes binding in memory tier config: {} "
-        "relative nodes are not supported. "
-        "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so forth.",
-        token));
-    }
-    else if (token.contains("-")) {
+  for (const auto& token : tokens) {
+    if (token.startsWith("!")) {
+      throw std::invalid_argument(
+          folly::sformat("invalid NUMA nodes binding in memory tier config: {} "
+                         "inverse !N or !N-N is not supported "
+                         "nodes may be specified as N,N,N or N-N or N,N-N or "
+                         "N-N,N-N and so forth.",
+                         token));
+    } else if (token.startsWith("+")) {
+      throw std::invalid_argument(
+          folly::sformat("invalid NUMA nodes binding in memory tier config: {} "
+                         "relative nodes are not supported. "
+                         "nodes may be specified as N,N,N or N-N or N,N-N or "
+                         "N-N,N-N and so forth.",
+                         token));
+    } else if (token.contains("-")) {
       size_t begin, end;
-      if(folly::split("-", token, begin, end) && begin < end) {
-        while(begin <=end) {
+      if (folly::split("-", token, begin, end) && begin < end) {
+        while (begin <= end) {
           numaNodes.push_back(begin++);
         }
       } else {
         throw std::invalid_argument(folly::sformat(
-        "invalid NUMA nodes binding in memory tier config: {} "
-        "Invalid range format. "
-        "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so forth.",
-        token));
+            "invalid NUMA nodes binding in memory tier config: {} "
+            "Invalid range format. "
+            "nodes may be specified as N,N,N or N-N or N,N-N or N-N,N-N and so "
+            "forth.",
+            token));
       }
-    }
-    else {
+    } else {
       numaNodes.push_back(folly::to<size_t>(token));
     }
   }

@@ -1077,7 +1077,8 @@ class CacheAllocator : public CacheBase {
   bool startNewBackgroundEvictor(
       std::chrono::milliseconds interval,
       std::shared_ptr<BackgroundMoverStrategy> strategy,
-      size_t threads);
+      size_t threads,
+      bool dsaEnabled);
 
   // Stop existing workers with a timeout
   bool stopPoolRebalancer(std::chrono::seconds timeout = std::chrono::seconds{
@@ -1639,20 +1640,23 @@ class CacheAllocator : public CacheBase {
   //               successfully.
   void moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
 
-  using DmlHandlerType =
-      dml::handler<dml::mem_copy_operation, std::allocator<std::uint8_t>>;
-  using DmlHandlerCont = std::vector<DmlHandlerType>;
-
-  // Moves a regular item to a different memory tier using DSA.
+  // Procedure before regular item async move to a different memory tier using
+  // DSA.
   //
   // @param oldItem     Reference to the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
-  // @param handlers    Reference to the DML handles
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  void moveRegularItemWithSync(Item& oldItem,
-                               WriteHandle& newItemHdl,
-                               DmlHandlerCont& handlers);
+  void beforeRegularItemMoveAsync(Item& oldItem, WriteHandle& newItemHdl);
+
+  // Procedure after regular item async move to a different memory tier using
+  // DSA.
+  //
+  // @param oldItem     Reference to the item being moved
+  // @param newItemHdl  Reference to the handle of the new item being moved into
+  // @return true  If the move was completed, and the containers were updated
+  //               successfully.
+  void afterRegularItemMoveAsync(Item& oldItem, WriteHandle& newItemHdl);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
@@ -1818,24 +1822,14 @@ class CacheAllocator : public CacheBase {
   // @param tid current tier ID of the item
   // @param pid the pool ID the item belong to.
   // @param item the item to evict
-  //
-  // @return valid handle to the item. This will be the last
-  //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item);
-
-  // Try to move the item down to the next memory tier using DSA
-  //
-  // @param tid current tier ID of the item
-  // @param pid the pool ID the item belong to.
-  // @param item the item to evict
-  // @param handlers the container for DML handlers
+  // @param useDsa to use DSA or not
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
   WriteHandle tryEvictToNextMemoryTier(TierId tid,
                                        PoolId pid,
                                        Item& item,
-                                       DmlHandlerCont& handlers);
+                                       bool useDsa = false);
 
   WriteHandle tryPromoteToNextMemoryTier(TierId tid,
                                          PoolId pid,
@@ -1848,7 +1842,7 @@ class CacheAllocator : public CacheBase {
   //
   // @param item    wakes waiters that are waiting on that item
   // @param handle  handle to pass to the waiters
-  void wakeUpWaiters(Item& item, WriteHandle handle);
+  void wakeUpWaiters(Item& item, WriteHandle&& handle);
 
   // Unmarks item as moving and wakes up any waiters waiting on that item
   //
@@ -1860,19 +1854,11 @@ class CacheAllocator : public CacheBase {
   // Try to move the item down to the next memory tier
   //
   // @param item the item to evict
+  // @param useDsa to use DSA or not
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(Item& item);
-
-  // Try to move the item down to the next memory tier using DSA
-  //
-  // @param item the item to evict
-  // @param handlers container for DML item handles
-  //
-  // @return valid handle to the item. This will be the last
-  //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(Item& item, DmlHandlerCont& handlers);
+  WriteHandle tryEvictToNextMemoryTier(Item& item, bool useDsa = false);
 
   size_t memoryTierSize(TierId tid) const;
 
@@ -2071,10 +2057,8 @@ class CacheAllocator : public CacheBase {
           }
         });
 
-    DmlHandlerCont handlers;
-    handlers.reserve(candidates.size());
     for (Item* candidate : candidates) {
-      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, handlers);
+      auto evictedToNext = tryEvictToNextMemoryTier(*candidate);
       if (!evictedToNext) {
         auto token = createPutToken(*candidate);
         auto ret = candidate->markExclusiveWhenMoving();
@@ -2109,6 +2093,125 @@ class CacheAllocator : public CacheBase {
       // references and the item could not been marked as moving
       // by other thread since it's detached from MMContainer.
       auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
+                                        /* isNascent */ false);
+      XDCHECK(res == ReleaseRes::kReleased);
+    }
+    return evictions;
+  }
+
+  // exposed for the background evictor to iterate through the memory and evict
+  // in batch. This should improve insertion path for tiered memory config
+  size_t traverseAndEvictItemsUsingDsa(unsigned int tid,
+                                       unsigned int pid,
+                                       unsigned int cid,
+                                       size_t batch) {
+    auto& mmContainer = getMMContainer(tid, pid, cid);
+    size_t evictions = 0;
+    size_t evictionCandidates = 0;
+    std::vector<Item*> candidates;
+    candidates.reserve(batch);
+
+    size_t tries = 0;
+    mmContainer.withEvictionIterator(
+        [&tries, &candidates, &batch, &mmContainer, this](auto&& itr) {
+          while (candidates.size() < batch &&
+                 (config_.maxEvictionPromotionHotness == 0 ||
+                  tries < config_.maxEvictionPromotionHotness) &&
+                 itr) {
+            tries++;
+            Item* candidate = itr.get();
+            XDCHECK(candidate);
+
+            if (candidate->isChainedItem()) {
+              throw std::runtime_error("Not supported for chained items");
+            }
+
+            if (candidate->markMoving(true)) {
+              mmContainer.remove(itr);
+              candidates.push_back(candidate);
+            }
+
+            ++itr;
+          }
+        });
+
+    std::vector<WriteHandle> newItemHandles;
+    newItemHandles.reserve(batch);
+    unsigned int validHandleCnt = 0;
+    for (Item* candidate : candidates) {
+      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true);
+      newItemHandles.emplace_back(std::move(evictedToNext));
+      if (newItemHandles.back()) {
+        validHandleCnt++;
+        continue;
+      }
+      auto token = createPutToken(*candidate);
+      auto ret = candidate->markExclusiveWhenMoving();
+      XDCHECK(ret);
+      unlinkItemExclusive(*candidate);
+      // wake up any readers that wait for the move to complete
+      // it's safe to do now, as we have the item marked exclusive and
+      // no other reader can be added to the waiters list
+      wakeUpWaiters(*candidate, WriteHandle{});
+
+      if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
+        nvmCache_->put(*candidate, std::move(token));
+      }
+    }
+
+    /* Set up batch copy of items using DML */
+    auto sequence =
+        dml::sequence(validHandleCnt, std::allocator<dml::byte_t>());
+    for (auto index = 0U; index < candidates.size(); index++) {
+      if (!newItemHandles[index]) {
+        continue;
+      }
+      dml::const_data_view srcView = dml::make_view(
+          reinterpret_cast<uint8_t*>(candidates[index]->getMemory()),
+          candidates[index]->getSize());
+      dml::data_view dstView = dml::make_view(
+          reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
+          newItemHandles[index]->getSize());
+      if (sequence.add(dml::mem_copy, srcView, dstView) !=
+          dml::status_code::ok) {
+        throw std::runtime_error(
+            "failed to add dml::mem_copy operation to the sequence.");
+      }
+    }
+
+    /* Copy the item batch using dml::hardware (DSA) */
+    auto result = dml::execute<dml::hardware>(dml::batch, sequence);
+    if (result.status != dml::status_code::ok) {
+      throw std::runtime_error("dml::execute failed");
+    }
+
+    for (auto index = 0U; index < candidates.size(); index++) {
+      if (newItemHandles[index]) {
+        afterRegularItemMoveAsync(*candidates[index], newItemHandles[index]);
+        evictions++;
+        XDCHECK(!newItemHandles[index]->isExclusive() &&
+                !newItemHandles[index]->isMoving());
+        XDCHECK(!candidates[index]->isExclusive() &&
+                !candidates[index]->isMoving());
+        XDCHECK(!candidates[index]->isAccessible());
+        XDCHECK(candidates[index]->getKey() == newItemHandles[index]->getKey());
+
+        wakeUpWaiters(*candidates[index], std::move(newItemHandles[index]));
+      }
+      XDCHECK(!candidates[index]->isExclusive() &&
+              !candidates[index]->isMoving());
+
+      if (candidates[index]->hasChainedItem()) {
+        (*stats_.chainedItemEvictions)[pid][cid].inc();
+      } else {
+        (*stats_.regularItemEvictions)[pid][cid].inc();
+      }
+
+      // it's safe to recycle the item here as there are no more
+      // references and the item could not been marked as moving
+      // by other thread since it's detached from MMContainer.
+      auto res = releaseBackToAllocator(*candidates[index],
+                                        RemoveContext::kEviction,
                                         /* isNascent */ false);
       XDCHECK(res == ReleaseRes::kReleased);
     }
@@ -2606,7 +2709,7 @@ class CacheAllocator : public CacheBase {
   friend class GET_DECORATED_CLASS_NAME(objcache::test,
                                         ObjectCache,
                                         ObjectHandleInvalid);
-};
+}; // namespace facebook
 } // namespace cachelib
 } // namespace facebook
 #include "cachelib/allocator/CacheAllocator-inl.h"
