@@ -69,6 +69,11 @@ class AllocatorTest : public SlabAllocatorTestBase {
                                 PoolId pid,
                                 const std::vector<uint32_t>& sizes,
                                 unsigned int keyLen);
+  void fillUpPoolUntilEvictions(AllocatorT& alloc,
+                                TierId tid,
+                                PoolId pid,
+                                const std::vector<uint32_t>& sizes,
+                                unsigned int keyLen);
   void fillUpOneSlab(AllocatorT& alloc,
                      PoolId poolId,
                      const uint32_t size,
@@ -196,6 +201,30 @@ void AllocatorTest<AllocatorT>::fillUpPoolUntilEvictions(
       const size_t prev = alloc.getPool(poolId).getCurrentAllocSize();
       auto handle = util::allocateAccessible(alloc, poolId, key, size);
       if (handle && prev != alloc.getPool(poolId).getCurrentAllocSize()) {
+        // this means we did not cause an eviction.
+        ASSERT_GE(handle->getSize(), size);
+        allocs++;
+      }
+    }
+  } while (allocs != 0);
+}
+
+template <typename AllocatorT>
+void AllocatorTest<AllocatorT>::fillUpPoolUntilEvictions(
+    AllocatorT& alloc,
+    TierId tid,
+    PoolId poolId,
+    const std::vector<uint32_t>& sizes,
+    unsigned int keyLen) {
+  unsigned int allocs = 0;
+  do {
+    allocs = 0;
+    for (const auto size : sizes) {
+      const auto key = getRandomNewKey(alloc, keyLen);
+      ASSERT_EQ(alloc.find(key), nullptr);
+      const size_t prev = alloc.getPoolByTid(poolId, tid).getCurrentAllocSize();
+      auto handle = util::allocateAccessible(alloc, poolId, key, size);
+      if (handle && prev != alloc.getPoolByTid(poolId, tid).getCurrentAllocSize()) {
         // this means we did not cause an eviction.
         ASSERT_GE(handle->getSize(), size);
         allocs++;
