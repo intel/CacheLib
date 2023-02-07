@@ -92,7 +92,7 @@ struct CacheConfig : public JSONConfig {
   bool lruUpdateOnWrite{false};
   bool lruUpdateOnRead{true};
   bool tryLockUpdate{false};
-  bool useCombinedLockForIterators{false};
+  bool useCombinedLockForIterators{true};
 
   // LRU param
   uint64_t lruIpSpec{0};
