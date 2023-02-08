@@ -2005,6 +2005,8 @@ class CacheAllocator : public CacheBase {
     return memoryTierConfigs.size();
   }
 
+  size_t memoryTierSize(TierId tid) const;
+
   // Whether the memory allocator for this cache allocator was created on shared
   // memory. The hash table, chained item hash table etc is also created on
   // shared memory except for temporary shared memory mode when they're created
