@@ -124,12 +124,12 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     const auto& mpStats = allocator->getPoolByTid(poolId, 0).getStats(); 
     //cache is 10MB should move about 1MB to reach 10% free
     uint32_t approxEvict = (1024*1024)/mpStats.acStats.at(cid).allocSize;
-    while (stats.evictionStats.numMovedItems < approxEvict*0.95 && slabStats.approxFreePercent >= 9.5) {
+    while (stats.evictionStats.numMovedItems < approxEvict*0.95 && slabStats.usageFraction() >= 0.095) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         stats = allocator->getGlobalCacheStats();
         slabStats = allocator->getACStats(0,0,cid);
     }
-    ASSERT_GE(slabStats.approxFreePercent,9.5);
+    ASSERT_GE(slabStats.usageFraction(),0.095);
 
     auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
     auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);

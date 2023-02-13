@@ -36,12 +36,12 @@ std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
   std::vector<size_t> batches{};
   for (auto [tid, pid, cid] : acVec) {
     auto stats = cache.getACStats(tid, pid, cid);
-    if (stats.approxFreePercent >= highEvictionAcWatermark) {
+    if (stats.usageFraction()*100 >= highEvictionAcWatermark) {
       batches.push_back(0);
     } else {
-      auto toFreeMemPercent = highEvictionAcWatermark - stats.approxFreePercent;
+      auto toFreeMemPercent = highEvictionAcWatermark - stats.usageFraction()*100;
       auto toFreeItems = static_cast<size_t>(
-          toFreeMemPercent * stats.memorySize / stats.allocSize);
+          toFreeMemPercent * (stats.totalSlabs() * Slab::kSize) / stats.allocSize);
       batches.push_back(toFreeItems);
     }
   }

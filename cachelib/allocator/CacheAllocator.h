@@ -1980,9 +1980,9 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         if (candidate->markMoving(true)) {
           mmContainer.remove(itr);
           candidates.push_back(candidate);
+        } else {
+            ++itr;
         }
-
-        ++itr;
       }
     });
 

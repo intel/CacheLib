@@ -385,7 +385,7 @@ template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(TierId tid, PoolId pid, ClassId cid) {
   // TODO: should we also work on lower tiers? should we have separate set of params?
   if (tid == 1) return false;
-  return getACStats(tid, pid, cid).approxFreePercent <= config_.lowEvictionAcWatermark;
+  return getACStats(tid, pid, cid).usageFraction()*100 <= config_.lowEvictionAcWatermark;
 }
  
 template <typename CacheTrait>

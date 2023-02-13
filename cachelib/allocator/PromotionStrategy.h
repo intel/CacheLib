@@ -40,12 +40,12 @@ class PromotionStrategy : public BackgroundMoverStrategy {
     for (auto [tid, pid, cid] : acVec) {
       XDCHECK(tid > 0);
       auto stats = cache.getACStats(tid - 1, pid, cid);
-      if (stats.approxFreePercent < promotionAcWatermark)
+      if (stats.usageFraction()*100 < promotionAcWatermark)
         batches.push_back(0);
       else {
         auto maxPossibleItemsToPromote = static_cast<size_t>(
-            (promotionAcWatermark - stats.approxFreePercent) *
-            stats.memorySize / stats.allocSize);
+            (promotionAcWatermark - stats.usageFraction()*100) *
+            (stats.totalSlabs() * Slab::kSize) / stats.allocSize);
         batches.push_back(maxPossibleItemsToPromote);
       }
     }
