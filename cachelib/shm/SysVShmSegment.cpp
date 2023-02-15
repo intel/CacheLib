@@ -189,29 +189,29 @@ void shmCtlImpl(int shmid, int cmd, shmid_ds* buf) {
   }
 }
 
-void mbindImpl(void* addr,
-               unsigned long len,
-               int mode,
-               const NumaBitMask& memBindNumaNodes,
-               unsigned int flags,
-               bool mlockMem) {
-  auto nodesMask = memBindNumaNodes.getNativeBitmask();
-
-  long ret = mbind(addr, len, mode, nodesMask->maskp, nodesMask->size, flags);
-
-  if (ret != 0) {
-    util::throwSystemError(
-        errno, folly::sformat("mbind() failed: {}", std::strerror(errno)));
-  }
-  
-  if (mlockMem) {
-    ret = mlock(addr,len); 
-    if (ret != 0) {
-      util::throwSystemError(
-          errno, folly::sformat("mloclock res {}", std::strerror(errno)));
-    }
-  }
-}
+//void mbindImpl(void* addr,
+//               unsigned long len,
+//               int mode,
+//               const NumaBitMask& memBindNumaNodes,
+//               unsigned int flags,
+//               bool mlockMem) {
+//  auto nodesMask = memBindNumaNodes.getNativeBitmask();
+//
+//  long ret = mbind(addr, len, mode, nodesMask->maskp, nodesMask->size, flags);
+//
+//  if (ret != 0) {
+//    util::throwSystemError(
+//        errno, folly::sformat("mbind() failed: {}", std::strerror(errno)));
+//  }
+//  
+//  if (mlockMem) {
+//    ret = mlock(addr,len); 
+//    if (ret != 0) {
+//      util::throwSystemError(
+//          errno, folly::sformat("mloclockfailed: {}", std::strerror(errno)));
+//    }
+//  }
+//}
 
 } // namespace detail
 
@@ -309,7 +309,7 @@ void SysVShmSegment::memBind(void* addr) const {
   if (opts_.memBindNumaNodes.empty()) {
     return;
   }
-  detail::mbindImpl(addr, getSize(), MPOL_BIND, opts_.memBindNumaNodes, 0, true);
+  util::mbindMemory(addr, getSize(), MPOL_BIND, opts_.memBindNumaNodes, 0);
 }
 
 void SysVShmSegment::markForRemoval() {

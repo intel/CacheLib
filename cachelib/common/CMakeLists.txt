@@ -41,6 +41,7 @@ target_link_libraries(cachelib_common PUBLIC
   Folly::folly_exception_counter
   dmlhl
   dl
+  numa
 )
 
 install(TARGETS cachelib_common

@@ -61,6 +61,7 @@
 #include "cachelib/allocator/PoolOptimizer.h"
 #include "cachelib/allocator/PoolRebalancer.h"
 #include "cachelib/allocator/PoolResizer.h"
+#include "cachelib/allocator/PrivateMemoryManager.h"
 #include "cachelib/allocator/ReadOnlySharedCacheView.h"
 #include "cachelib/allocator/Reaper.h"
 #include "cachelib/allocator/RebalanceStrategy.h"
@@ -2468,9 +2469,14 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
                   std::chrono::seconds timeout = std::chrono::seconds{0});
 
   ShmSegmentOpts createShmCacheOpts(TierId tid);
+  PrivateSegmentOpts createPrivateSegmentOpts(TierId tid);
   std::unique_ptr<MemoryAllocator> createNewMemoryAllocator(TierId tid);
+  std::unique_ptr<MemoryAllocator> createNewPrivateMemoryAllocator(TierId tid);
   std::unique_ptr<MemoryAllocator> restoreMemoryAllocator(TierId tid);
   std::unique_ptr<CCacheManager> restoreCCacheManager(TierId tid);
+  std::unique_ptr<MemoryAllocator> createNewMemoryAllocator();
+  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator();
+  std::unique_ptr<CCacheManager> restoreCCacheManager();
 
   PoolIds filterCompactCachePools(const PoolIds& poolIds) const;
 
@@ -2518,6 +2524,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
   std::vector<std::unique_ptr<MemoryAllocator>> initAllocator(InitMemType type);
 
   std::vector<std::unique_ptr<MemoryAllocator>> createPrivateAllocator();
+  std::vector<std::unique_ptr<MemoryAllocator>> createPrivateMemoryAllocators();
   std::vector<std::unique_ptr<MemoryAllocator>> createAllocators();
   std::vector<std::unique_ptr<MemoryAllocator>> restoreAllocators();
 
@@ -2683,6 +2690,8 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
   // Manages the temporary shared memory segment for memory allocator that
   // is not persisted when cache process exits.
   std::unique_ptr<TempShmMapping> tempShm_;
+
+  std::unique_ptr<PrivateMemoryManager> privMemManager_;
 
   std::unique_ptr<ShmManager> shmManager_;
 
