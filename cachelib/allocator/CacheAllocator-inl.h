@@ -1479,28 +1479,43 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
   auto evictedToNext = lastTier ? nullptr
       : tryEvictToNextMemoryTier(*candidate, false);
   if (!evictedToNext) {
-    if (!token.isValid()) {
+    //if insertOrReplace was called during move
+    //then candidate will not be accessible (failed replace during tryEvict)
+    // - therefore this was why we failed to
+    //   evict to the next tier and insertOrReplace
+    //   will remove from NVM cache
+    //however, if candidate is accessible
+    //that means the allocation in the next
+    //tier failed - so we will continue to
+    //evict the item to NVM cache
+    bool failedToReplace = !candidate->isAccessible();
+    if (!token.isValid() && !failedToReplace) {
       token = createPutToken(*candidate);
     }
-    // tryEvictToNextMemoryTier should only fail if allocation of the new item fails
-    // in that case, it should be still possible to mark item as exclusive.
+    // tryEvictToNextMemoryTier can fail if:
+    //    a) allocation of the new item fails in that case,
+    //       it should be still possible to mark item for eviction.
+    //    b) another thread calls insertOrReplace and the item
+    //       is no longer accessible
     //
     // in case that we are on the last tier, we whould have already marked
     // as exclusive since we will not be moving the item to the next tier
     // but rather just evicting all together, no need to
-    // markExclusiveWhenMoving
+    // markForEvictionWhenMoving
     auto ret = lastTier ? true : candidate->markForEvictionWhenMoving();
     XDCHECK(ret);
 
     unlinkItemForEviction(*candidate);
+    
+    if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)
+            && !failedToReplace) {
+      nvmCache_->put(*candidate, std::move(token));
+    }
     // wake up any readers that wait for the move to complete
     // it's safe to do now, as we have the item marked exclusive and
     // no other reader can be added to the waiters list
     wakeUpWaiters(candidate->getKey(), {});
 
-    if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
-      nvmCache_->put(*candidate, std::move(token));
-    }
   } else {
     XDCHECK(!evictedToNext->isMarkedForEviction() && !evictedToNext->isMoving());
     XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
