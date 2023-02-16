@@ -47,6 +47,9 @@ template <typename AllocatorT>
 class AllocatorHitStatsTest;
 
 template <typename AllocatorT>
+class AllocatorMemoryTiersTest;
+
+template <typename AllocatorT>
 class MapTest;
 
 class CacheAllocatorTestWrapper;
@@ -473,6 +476,8 @@ class CACHELIB_PACKED_ATTR CacheItem {
   FRIEND_TEST(ItemTest, NonStringKey);
   template <typename AllocatorT>
   friend class facebook::cachelib::tests::AllocatorHitStatsTest;
+  template <typename AllocatorT>
+  friend class facebook::cachelib::tests::AllocatorMemoryTiersTest;
 };
 
 // A chained item has a hook pointing to the next chained item. The hook is

@@ -1293,8 +1293,21 @@ size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
+bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     Item& oldItem, WriteHandle& newItemHdl) {
+  //on function exit - the new item handle is no longer moving
+  //and other threads may access it - but in case where
+  //we failed to replace in access container we can give the
+  //new item back to the allocator
+  auto guard = folly::makeGuard([&]() {
+    auto ref = newItemHdl->unmarkMoving();
+    if (UNLIKELY(ref == 0)) {
+      const auto res =
+          releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
+      XDCHECK(res == ReleaseRes::kReleased);
+    }
+  });
+
   XDCHECK(oldItem.isMoving());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
@@ -1325,6 +1338,22 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 
   auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl,
                                    predicate);
+  // another thread may have called insertOrReplace which could have
+  // marked this item as unaccessible causing the replaceIf
+  // in the access container to fail - in this case we want
+  // to abort the move since the item is no longer valid
+  if (!replaced) {
+      return false;
+  }
+  // what if another thread calls insertOrReplace now when
+  // the item is moving and already replaced in the hash table?
+  // 1. it succeeds in updating the hash table - so there is
+  //    no guarentee that isAccessible() is true
+  // 2. it will then try to remove from MM container
+  //     - this operation will wait for newItemHdl to
+  //       be unmarkedMoving via the waitContext
+  // 3. replaced handle is returned and eventually drops
+  //    ref to 0 and the item is recycled back to allocator.
 
   if (config_.moveCb) {
     // Execute the move callback. We cannot make any guarantees about the
@@ -1366,14 +1395,7 @@ void CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     XDCHECK(newItemHdl->hasChainedItem());
   }
   newItemHdl.unmarkNascent();
-  auto ref = newItemHdl->unmarkMoving();
-  //remove because there is a chance the new item was not
-  //added to the access container
-  if (UNLIKELY(ref == 0)) {
-    const auto res =
-        releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
-    XDCHECK(res == ReleaseRes::kReleased);
-  }
+  return true;
 }
 
 template <typename CacheTrait>
@@ -1626,28 +1648,43 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
   auto evictedToNext = lastTier ? nullptr
       : tryEvictToNextMemoryTier(*candidate, false);
   if (!evictedToNext) {
-    if (!token.isValid()) {
+    //if insertOrReplace was called during move
+    //then candidate will not be accessible (failed replace during tryEvict)
+    // - therefore this was why we failed to
+    //   evict to the next tier and insertOrReplace
+    //   will remove from NVM cache
+    //however, if candidate is accessible
+    //that means the allocation in the next
+    //tier failed - so we will continue to
+    //evict the item to NVM cache
+    bool failedToReplace = !candidate->isAccessible();
+    if (!token.isValid() && !failedToReplace) {
       token = createPutToken(*candidate);
     }
-    // tryEvictToNextMemoryTier should only fail if allocation of the new item fails
-    // in that case, it should be still possible to mark item as exclusive.
+    // tryEvictToNextMemoryTier can fail if:
+    //    a) allocation of the new item fails in that case,
+    //       it should be still possible to mark item for eviction.
+    //    b) another thread calls insertOrReplace and the item
+    //       is no longer accessible
     //
     // in case that we are on the last tier, we whould have already marked
     // as exclusive since we will not be moving the item to the next tier
     // but rather just evicting all together, no need to
-    // markExclusiveWhenMoving
+    // markForEvictionWhenMoving
     auto ret = lastTier ? true : candidate->markForEvictionWhenMoving();
     XDCHECK(ret);
 
     unlinkItemForEviction(*candidate);
+    
+    if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)
+            && !failedToReplace) {
+      nvmCache_->put(*candidate, std::move(token));
+    }
     // wake up any readers that wait for the move to complete
     // it's safe to do now, as we have the item marked exclusive and
     // no other reader can be added to the waiters list
     wakeUpWaiters(*candidate, {});
 
-    if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
-      nvmCache_->put(*candidate, std::move(token));
-    }
   } else {
     XDCHECK(!evictedToNext->isMarkedForEviction() && !evictedToNext->isMoving());
     XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
@@ -1776,7 +1813,10 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      moveRegularItemWithSync(item, newItemHdl);
+      if (!moveRegularItemWithSync(item, newItemHdl)) {
+          return WriteHandle{};
+      }
+      XDCHECK_EQ(newItemHdl->getKey(),item.getKey());
       item.unmarkMoving();
       return newItemHdl;
     } else {
@@ -1815,7 +1855,9 @@ CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      moveRegularItemWithSync(item, newItemHdl);
+      if (!moveRegularItemWithSync(item, newItemHdl)) {
+          return WriteHandle{};
+      }
       item.unmarkMoving();
       return newItemHdl;
     } else {
@@ -3175,9 +3217,23 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
       // TODO: add support for chained items
       return false;
     } else {
-      moveRegularItemWithSync(oldItem, newItemHdl);
-      removeFromMMContainer(oldItem);
-      return true;
+      //move can fail if another thread calls insertOrReplace
+      //in this case oldItem is no longer valid (not accessible, 
+      //it gets removed from MMContainer and evictForSlabRelease
+      //will send it back to the allocator
+      bool ret = moveRegularItemWithSync(oldItem, newItemHdl);
+      if (!ret) {
+          //we failed to move - newItemHdl was released back to allocator
+          //by the moveRegularItemWithSync but oldItem is not accessible
+          //and no longer valid - we need to clean it up here
+          XDCHECK(!oldItem.isAccessible());
+          oldItem.markForEvictionWhenMoving();
+          unlinkItemForEviction(oldItem);
+          wakeUpWaiters(oldItem, {});
+      } else {
+        removeFromMMContainer(oldItem);
+      }
+      return ret;
     }
   }
 }

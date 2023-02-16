@@ -22,6 +22,10 @@
 #include "cachelib/allocator/FreeThresholdStrategy.h"
 #include "cachelib/allocator/PromotionStrategy.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <semaphore.h>
 #include <folly/synchronization/Latch.h>
 
 namespace facebook {
@@ -58,6 +62,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
       ASSERT_NO_THROW(alloc->insertOrReplace(handle));
     }
   }
+  
  public:
   void testMultiTiersInvalid() {
     typename AllocatorT::Config config;
@@ -201,7 +206,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
 
     t->join();
   }
-
+  
   void testMultiTiersReplaceDuringEviction() {
     std::unique_ptr<AllocatorT> alloc;
     PoolId pool;
@@ -234,6 +239,127 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     testMultiTiersAsyncOpDuringMove(alloc, pool, quit, moveCb);
 
     t->join();
+
+  }
+
+
+  void gdb_sync1() {}
+  void gdb_sync2() {}
+  void gdb_sync3() {}
+  using ReadHandle = typename AllocatorT::ReadHandle;
+  void testMultiTiersReplaceDuringEvictionWithReader() {
+    sem_unlink ("/gdb1_sem");
+    sem_t *sem = sem_open ("/gdb1_sem", O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, 0);
+    int gdbfd = open("/tmp/gdb1.gdb",O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    char gdbcmds[] = 
+                     "set attached=1\n"
+                     "break gdb_sync1\n"
+                     "break gdb_sync2\n"
+                     "break moveRegularItemWithSync\n"
+                     "c\n"
+                     "set scheduler-locking on\n"
+                     "thread 1\n"
+                     "c\n"
+                     "thread 4\n"
+                     "c\n"
+                     "thread 5\n"
+                     "break nativeFutexWaitImpl thread 5\n"
+                     "c\n"
+                     "thread 4\n"
+                     "break nativeFutexWaitImpl thread 4\n"
+                     "c\n"
+                     "thread 1\n"
+                     "break releaseBackToAllocator\n"
+                     "c\n"
+                     "c\n"
+                     "thread 5\n"
+                     "c\n"
+                     "thread 4\n"
+                     "c\n"
+                     "thread 1\n"
+                     "break gdb_sync3\n"
+                     "c\n"
+                     "quit\n";
+    int ret = write(gdbfd,gdbcmds,strlen(gdbcmds));
+    int ppid = getpid(); //parent pid
+    //int pid = 0;
+    int pid = fork();
+    if (pid == 0) {
+        sem_wait(sem);
+        sem_close(sem);
+        sem_unlink("/gdb1_sem");
+        char cmdpid[256];
+        sprintf(cmdpid,"%d",ppid);
+        int f = execlp("gdb","gdb","--pid",cmdpid,"--batch-silent","--command=/tmp/gdb1.gdb",(char*) 0);
+        ASSERT(f != -1);
+    }
+    sem_post(sem);
+    //wait for gdb to run
+    int attached = 0;
+    while (attached == 0);
+    
+    std::unique_ptr<AllocatorT> alloc;
+    PoolId pool;
+    bool quit = false;
+    
+    typename AllocatorT::Config config;
+    config.setCacheSize(4 * Slab::kSize);
+    config.enableCachePersistence("/tmp");
+    config.configureMemoryTiers({
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind(std::string("0")),
+        MemoryTierCacheConfig::fromShm()
+            .setRatio(1).setMemBind(std::string("0"))
+    });
+
+    alloc = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
+    ASSERT(alloc != nullptr);
+    pool = alloc->addPool("default", alloc->getCacheMemoryStats().ramCacheSize);
+
+    int i = 0;
+    typename AllocatorT::Item* evicted;
+    std::unique_ptr<std::thread> t;
+    std::unique_ptr<std::thread> r;
+    while(!quit) {
+      auto handle = alloc->allocate(pool, std::to_string(++i), std::string("value").size());
+      ASSERT(handle != nullptr);
+      if (i == 1) {
+          evicted = static_cast<typename AllocatorT::Item*>(handle.get());
+          folly::Latch latch_t(1);
+          t = std::make_unique<std::thread>([&](){
+                auto handleNew = alloc->allocate(pool, std::to_string(1), std::string("new value").size());
+                ASSERT(handleNew != nullptr);
+                latch_t.count_down();
+                //first breakpoint will be this one because 
+                //thread 1 still has more items to fill up the
+                //cache before an evict is evicted
+                gdb_sync1();
+                ASSERT(evicted->isMoving());
+                //need to suspend thread 1 - who is doing the eviction
+                //gdb will do this for us
+                folly::Latch latch(1);
+                r = std::make_unique<std::thread>([&](){
+                    ASSERT(evicted->isMoving());
+                    latch.count_down();
+                    auto handleEvict = alloc->find(std::to_string(1));
+                    //does find block until done moving?? yes
+                    while (evicted->isMarkedForEviction()); //move will fail
+                    XDCHECK(handleEvict == nullptr) << handleEvict->toString();
+                    ASSERT(handleEvict == nullptr);
+                });
+                latch.wait();
+                gdb_sync2();
+                alloc->insertOrReplace(handleNew);
+                ASSERT(!evicted->isAccessible()); //move failed
+                quit = true;
+              });
+          latch_t.wait();
+      }
+      ASSERT_NO_THROW(alloc->insertOrReplace(handle));
+    }
+    t->join();
+    r->join();
+    gdb_sync3();
   }
 };
 } // namespace tests
