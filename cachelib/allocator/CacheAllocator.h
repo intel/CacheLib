@@ -1439,7 +1439,8 @@ class CacheAllocator : public CacheBase {
   // succeeded. After this call, the item is unlinked from Access and
   // MM Containers. The item is no longer marked as exclusive and it's
   // ref count is 0 - it's available for recycling.
-  void unlinkItemForEviction(Item& it);
+  // @return true if item was marked to remove from NVM
+  bool unlinkItemForEviction(Item& it);
 
   // acquires an handle on the item. returns an empty handle if it is null.
   // @param it    pointer to an item
@@ -1617,7 +1618,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  void moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
+  bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
