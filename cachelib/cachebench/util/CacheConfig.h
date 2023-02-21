@@ -18,9 +18,9 @@
 
 #include <any>
 
+#include "cachelib/allocator/BackgroundMoverStrategy.h"
 #include "cachelib/allocator/CacheAllocator.h"
 #include "cachelib/allocator/RebalanceStrategy.h"
-#include "cachelib/allocator/BackgroundMoverStrategy.h"
 #include "cachelib/cachebench/util/JSONConfig.h"
 #include "cachelib/common/Ticker.h"
 #include "cachelib/navy/common/Device.h"
@@ -57,7 +57,7 @@ struct MemoryTierConfig : public JSONConfig {
   size_t ratio{0};
   std::string memBindNodes{""};
 
-private:
+ private:
   MemoryTierCacheConfig memoryTierCacheConfigFromSource() {
     if (file.empty()) {
       return MemoryTierCacheConfig::fromShm();
@@ -81,6 +81,7 @@ struct CacheConfig : public JSONConfig {
   uint64_t poolRebalanceIntervalSec{0};
   uint64_t backgroundEvictorIntervalMilSec{0};
   uint64_t backgroundPromoterIntervalMilSec{0};
+  bool dsaEnabled{false};
   std::string rebalanceStrategy;
   std::string backgroundEvictorStrategy;
   uint64_t rebalanceMinSlabs{1};
@@ -269,17 +270,18 @@ struct CacheConfig : public JSONConfig {
   double maxAcAllocationWatermark{0.0};
 
   double numDuplicateElements{0.0}; // inclusivness of the cache
-  double syncPromotion{0.0}; // can promotion be done synchronously in user thread
-  
+  double syncPromotion{0.0}; // can promotion be done synchronously in user
+                             // thread
+
   uint64_t evictorThreads{1};
   uint64_t promoterThreads{1};
-  
+
   uint64_t maxEvictionBatch{40};
   uint64_t maxPromotionBatch{10};
-  
+
   uint64_t minEvictionBatch{5};
   uint64_t minPromotionBatch{5};
-  
+
   uint64_t maxEvictionPromotionHotness{60};
 
   //
@@ -318,7 +320,8 @@ struct CacheConfig : public JSONConfig {
 
   std::shared_ptr<RebalanceStrategy> getRebalanceStrategy() const;
   std::shared_ptr<BackgroundMoverStrategy> getBackgroundEvictorStrategy() const;
-  std::shared_ptr<BackgroundMoverStrategy> getBackgroundPromoterStrategy() const;
+  std::shared_ptr<BackgroundMoverStrategy> getBackgroundPromoterStrategy()
+      const;
 };
 } // namespace cachebench
 } // namespace cachelib
