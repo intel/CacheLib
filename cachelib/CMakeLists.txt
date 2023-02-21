@@ -351,6 +351,8 @@ target_link_libraries(cachelib INTERFACE
      cachelib_shm
      cachelib_navy
      cachelib_allocator
+     dmlhl
+     dl
      )
 target_include_directories(
   cachelib

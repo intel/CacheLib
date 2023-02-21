@@ -64,6 +64,8 @@ target_link_libraries(cachelib_allocator PUBLIC
   cachelib_navy
   cachelib_common
   cachelib_shm
+  dmlhl
+  dl
   )
 
 if ((CMAKE_SYSTEM_NAME STREQUAL Linux) AND
