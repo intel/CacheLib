@@ -13,7 +13,9 @@ glibc-devel.i686 \
 xmlto \
 uuid \
 libuuid-devel \
-json-c-devel
+json-c-devel \
+perf \
+numactl
 
 COPY ./install-cachelib-deps.sh ./install-cachelib-deps.sh
 RUN ./install-cachelib-deps.sh
