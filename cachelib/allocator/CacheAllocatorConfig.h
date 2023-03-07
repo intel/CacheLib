@@ -640,6 +640,13 @@ class CacheAllocatorConfig {
 
   uint64_t maxEvictionPromotionHotness{60};
 
+  bool disableEvictionToMemory{false};
+  double minAcAllocationWatermark{0.0};
+  double maxAcAllocationWatermark{0.0};
+  double acTopTierEvictionWatermark{0.0}; // TODO: make it per TIER?
+  uint64_t sizeThresholdPolicy{0};   
+  double defaultTierChancePercentage{100.0}; // TODO: default could be based on ratio
+  uint64_t forceAllocationTier{UINT64_MAX};
 
   friend CacheT;
 

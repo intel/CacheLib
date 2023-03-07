@@ -421,7 +421,18 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   // TODO: per-tier
   (*stats_.allocAttempts)[pid][cid].inc();
   
-  void* memory = allocator_[tid]->allocate(pid, requiredSize);
+  void *memory = nullptr;
+
+  if (tid == 0 && config_.acTopTierEvictionWatermark > 0.0
+    && 100.0 * (1 - getACStats(tid, pid, cid).usageFraction()) < config_.acTopTierEvictionWatermark) {
+    memory = findEviction(tid, pid, cid);
+  } 
+
+  if (memory == nullptr) {
+    // TODO: should we try allocate item even if this will result in violating
+    // acTopTierEvictionWatermark?
+    memory = allocator_[tid]->allocate(pid, requiredSize);
+  }
   
   if (backgroundEvictor_.size() && !fromBgThread && (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
     backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
@@ -468,6 +479,78 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
 }
 
 template <typename CacheTrait>
+TierId
+CacheAllocator<CacheTrait>::getTargetTierForItem(PoolId pid,
+                                             typename Item::Key key,
+                                             uint32_t size,
+                                             uint32_t creationTime,
+                                             uint32_t expiryTime) {
+  if (getNumTiers() == 1)
+    return 0;
+
+  if (config_.forceAllocationTier != UINT64_MAX) {
+    return config_.forceAllocationTier;
+  }
+
+  const TierId defaultTargetTier = 0;
+
+  const auto requiredSize = Item::getRequiredSize(key, size);
+  const auto cid = allocator_[defaultTargetTier]->getAllocationClassId(pid, requiredSize);
+
+  auto freePercentage = 100.0 * (1 - getACStats(defaultTargetTier, pid, cid).usageFraction());
+
+  // TODO: COULD we implement BG worker which would move slabs around
+  // so that there is similar amount of free space in each pool/ac.
+  // Should this be responsibility of BG evictor?
+
+  if (freePercentage >= config_.maxAcAllocationWatermark)
+    return defaultTargetTier;
+
+  if (freePercentage <= config_.minAcAllocationWatermark)
+    return defaultTargetTier + 1;
+
+  // TODO: we can think about creating different allocation classes for different memory tiers
+  // and we could look at possible fragmentation when deciding where to put the item
+  if (config_.sizeThresholdPolicy)
+    return requiredSize < config_.sizeThresholdPolicy ? defaultTargetTier : defaultTargetTier + 1;
+
+  // TODO: (e.g. always put chained items to second tier)
+  // if (chainedItemsPolicy)
+  //  return item.isChainedItem() ? defaultTargetTier + 1 : defaultTargetTier;
+
+  // TODO:
+  // if (expiryTimePolicy)
+  //   return (expiryTime - creationTime) < expiryTimePolicy ? defaultTargetTier : defaultTargetTier + 1;
+
+  // TODO:
+  // if (keyPolicy) // this can be based on key length or some other properties
+  //  return getTargetTierForKey(key);
+
+  // TODO:
+  // if (compressabilityPolicy) // if compresses well store on CXL? latency will be higher anyway
+  //  return TODO;
+
+  if (config_.defaultTierChancePercentage >= 100.00) {
+    return 0;
+  }
+
+  return (folly::Random::rand32() % 100) < config_.defaultTierChancePercentage ? defaultTargetTier : defaultTargetTier + 1;
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::shouldEvictToNextMemoryTier(
+    TierId sourceTierId, TierId targetTierId, PoolId pid, Item& item)
+{
+  if (config_.disableEvictionToMemory)
+    return false;
+
+  // TODO: implement more advanced admission policies for memory tiers, for example:
+  // - always evict big items to NVMe only
+  // - do not evict an item if pressure on target Tier is high
+  return true;
+}
+
+template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              typename Item::Key key,
@@ -475,12 +558,8 @@ CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              uint32_t creationTime,
                                              uint32_t expiryTime,
                                              bool fromBgThread) {
-  auto tid = 0; /* TODO: consult admission policy */
-  for(TierId tid = 0; tid < getNumTiers(); ++tid) {
-    auto handle = allocateInternalTier(tid, pid, key, size, creationTime, expiryTime, fromBgThread);
-    if (handle) return handle;
-  }
-  return {};
+  auto tid = getTargetTierForItem(pid, key, size, creationTime, expiryTime);
+  return allocateInternalTier(tid, pid, key, size, creationTime, expiryTime, fromBgThread);
 }
 
 template <typename CacheTrait>
@@ -1780,8 +1859,11 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     return acquire(&item);
   }
 
-  TierId nextTier = tid; // TODO - calculate this based on some admission policy
+  TierId nextTier = tid;
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
+    if (!shouldEvictToNextMemoryTier(tid, nextTier, pid, item))
+      continue;
+
     // allocateInternal might trigger another eviction
     auto newItemHdl = allocateInternalTier(nextTier, pid,
                      item.getKey(),

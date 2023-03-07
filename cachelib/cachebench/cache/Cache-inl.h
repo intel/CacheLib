@@ -113,6 +113,19 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   allocatorConfig_.minEvictionBatch = config_.minEvictionBatch;
   allocatorConfig_.minPromotionBatch = config_.minPromotionBatch;
   allocatorConfig_.maxEvictionPromotionHotness = config_.maxEvictionPromotionHotness;
+  allocatorConfig_.forceAllocationTier = config_.forceAllocationTier;
+
+  allocatorConfig_.disableEvictionToMemory = config_.disableEvictionToMemory;
+  allocatorConfig_.lowEvictionAcWatermark = config_.lowEvictionAcWatermark;
+  allocatorConfig_.highEvictionAcWatermark = config_.highEvictionAcWatermark;
+  allocatorConfig_.minAcAllocationWatermark = config_.minAcAllocationWatermark;
+  allocatorConfig_.maxAcAllocationWatermark = config_.maxAcAllocationWatermark;
+  allocatorConfig_.sizeThresholdPolicy = config_.sizeThresholdPolicy;
+  allocatorConfig_.defaultTierChancePercentage = config_.defaultTierChancePercentage;
+  allocatorConfig_.numDuplicateElements = config_.numDuplicateElements;
+  allocatorConfig_.syncPromotion = config_.syncPromotion;
+  allocatorConfig_.promotionAcWatermark = config_.promotionAcWatermark;
+  allocatorConfig_.acTopTierEvictionWatermark = config_.acTopTierEvictionWatermark;
 
   if (config_.enableItemDestructorCheck) {
     auto removeCB = [&](const typename Allocator::DestructorData& data) {

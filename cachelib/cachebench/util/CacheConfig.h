@@ -53,6 +53,8 @@ struct MemoryTierConfig : public JSONConfig {
     MemoryTierCacheConfig config = MemoryTierCacheConfig::fromShm();
     config.setRatio(ratio);
     config.setMemBind(NumaBitMask(memBindNodes));
+    config.markUsefulChance = markUsefulChance;
+    config.lruInsertionPointSpec = lruInsertionPointSpec;
     return config;
   }
 
@@ -60,6 +62,9 @@ struct MemoryTierConfig : public JSONConfig {
   size_t ratio{0};
   // Allocate memory only from specified NUMA nodes
   std::string memBindNodes{""};
+
+  double markUsefulChance{100.0};
+  uint32_t lruInsertionPointSpec{0};
 };
 
 struct CacheConfig : public JSONConfig {
@@ -273,6 +278,13 @@ struct CacheConfig : public JSONConfig {
   uint64_t minPromotionBatch{5};
   
   uint64_t maxEvictionPromotionHotness{60};
+
+  bool disableEvictionToMemory{false};
+
+  double acTopTierEvictionWatermark{0.0};
+  uint64_t sizeThresholdPolicy{0};   
+  double defaultTierChancePercentage{100.0};
+  uint64_t forceAllocationTier{UINT64_MAX};
 
   //
   // Options below are not to be populated with JSON
