@@ -1024,16 +1024,21 @@ CacheAllocator<CacheTrait>::acquire(Item* it) {
   SCOPE_FAIL { stats_.numRefcountOverflow.inc(); };
 
   // TODO: do not block incRef for child items to avoid deadlock
-  auto failIfMoving = getNumTiers() > 1 && !it->isChainedItem();
-  auto incRes = incRef(*it, failIfMoving);
-  if (LIKELY(incRes == RefcountWithFlags::incResult::incOk)) {
-    return WriteHandle{it, *this};
-  } else if (incRes == RefcountWithFlags::incResult::incFailedEviction){
-    // item is being evicted
-    return WriteHandle{};
-  } else {
-    // item is being moved - wait for completion
-    return handleWithWaitContextForMovingItem(*it);
+  const auto failIfMoving = getNumTiers() > 1 && !it->isChainedItem();
+
+  while (true) {
+    auto incRes = incRef(*it, failIfMoving);
+    if (LIKELY(incRes == RefcountWithFlags::incResult::incOk)) {
+      return WriteHandle{it, *this};
+    } else if (incRes == RefcountWithFlags::incResult::incFailedEviction){
+      // item is being evicted
+      return WriteHandle{};
+    } else {
+      // item is being moved - wait for completion
+      WriteHandle handle;
+      if (tryGetHandleWithWaitContextForMovingItem(*it, handle))
+        return handle;
+    }
   }
 }
 
@@ -1255,12 +1260,16 @@ CacheAllocator<CacheTrait>::insertOrReplace(const WriteHandle& handle) {
  *  3. Wait until the moving thread will complete its job.
  */
 template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::handleWithWaitContextForMovingItem(Item& item) {
+bool
+CacheAllocator<CacheTrait>::tryGetHandleWithWaitContextForMovingItem(Item& item, WriteHandle& handle) {
   auto shard = getShardForKey(item.getKey());
   auto& movesMap = getMoveMapForShard(shard);
   {
     auto lock = getMoveLockForShard(shard);
+
+    // item might have been evicted or moved before the lock was acquired
+    if (!item.isMoving())
+      return false;
 
     WriteHandle hdl{*this};
     auto waitContext = hdl.getItemWaitContext();
@@ -1268,7 +1277,8 @@ CacheAllocator<CacheTrait>::handleWithWaitContextForMovingItem(Item& item) {
     auto ret = movesMap.try_emplace(item.getKey(), std::make_unique<MoveCtx>());
     ret.first->second->addWaiter(std::move(waitContext));
 
-    return hdl;
+    handle = std::move(hdl);
+    return true;
   }
 }
 
