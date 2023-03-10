@@ -2250,7 +2250,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
 
   size_t memoryTierSize(TierId tid) const;
 
-  WriteHandle handleWithWaitContextForMovingItem(Item& item);
+  bool tryGetHandleWithWaitContextForMovingItem(Item& item, WriteHandle& handle);
 
   size_t wakeUpWaitersLocked(folly::StringPiece key, WriteHandle&& handle);
 
