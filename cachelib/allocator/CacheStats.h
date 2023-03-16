@@ -94,6 +94,9 @@ struct MMContainerStat {
   uint64_t numColdAccesses;
   uint64_t numWarmAccesses;
   uint64_t numTailAccesses;
+
+  // aggregate stats together (accross tiers)
+  MMContainerStat& operator+=(const MMContainerStat& other);
 };
 
 // cache related stats for a given allocation class.
@@ -114,13 +117,16 @@ struct CacheStat {
   uint64_t fragmentationSize{0};
 
   // number of hits for this container.
-  uint64_t numHits;
+  uint64_t numHits{0};
 
   // number of evictions from this class id that was of a chained item
-  uint64_t chainedItemEvictions;
+  uint64_t chainedItemEvictions{0};
 
   // number of regular items that were evicted from this classId
-  uint64_t regularItemEvictions;
+  uint64_t regularItemEvictions{0};
+
+  // number of items that are moved to next tier
+  uint64_t numWritebacks{0};
 
   // the stats from the mm container
   MMContainerStat containerStat;
@@ -199,6 +205,9 @@ struct PoolStats {
   // number of evictions for this pool
   uint64_t numEvictions() const noexcept;
 
+  // number of writebacks for this pool
+  uint64_t numWritebacks() const noexcept;
+
   // number of all items in this pool
   uint64_t numItems() const noexcept;
 
@@ -207,6 +216,9 @@ struct PoolStats {
 
   // total number of allocations currently in this pool
   uint64_t numActiveAllocs() const noexcept;
+
+  // number of hits for an alloc class in this pool
+  uint64_t numHits() const noexcept;
 
   // number of hits for an alloc class in this pool
   uint64_t numHitsForClass(ClassId cid) const {
@@ -442,16 +454,22 @@ struct GlobalCacheStats {
   uint64_t numNvmItemRemovedSetSize{0};
 
   // number of attempts to allocate an item
-  uint64_t allocAttempts{0};
+  std::vector<uint64_t> allocAttempts;
 
   // number of eviction attempts
-  uint64_t evictionAttempts{0};
+  std::vector<uint64_t> evictionAttempts;
 
   // number of failures to allocate an item due to internal error
-  uint64_t allocFailures{0};
+  std::vector<uint64_t> allocFailures;
 
   // number of evictions across all the pools in the cache.
-  uint64_t numEvictions{0};
+  std::vector<uint64_t> numEvictions;
+
+  // number of writebacks across all the pools in the cache.
+  std::vector<uint64_t> numWritebacks;
+
+  // number of hits per tier across all the pools in the cache.
+  std::vector<uint64_t> numCacheHits;
 
   // number of allocation attempts with invalid input params.
   uint64_t invalidAllocs{0};
