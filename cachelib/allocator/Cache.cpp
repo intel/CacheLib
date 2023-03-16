@@ -235,17 +235,18 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
       statPrefix + "cache.size.configured",
       memStats.configuredRamCacheSize + memStats.nvmCacheSize);
 
+  //TODO: add specific per-tier counters
   const auto stats = getGlobalCacheStats();
   counters_.updateDelta(statPrefix + "cache.alloc_attempts",
-                        stats.allocAttempts);
+                        std::accumulate(stats.allocAttempts.begin(), stats.allocAttempts.end(),0));
   counters_.updateDelta(statPrefix + "cache.eviction_attempts",
-                        stats.evictionAttempts);
+                        std::accumulate(stats.evictionAttempts.begin(),stats.evictionAttempts.end(),0));
   counters_.updateDelta(statPrefix + "cache.alloc_failures",
-                        stats.allocFailures);
+                        std::accumulate(stats.allocFailures.begin(),stats.allocFailures.end(),0));
   counters_.updateDelta(statPrefix + "cache.invalid_allocs",
                         stats.invalidAllocs);
   const std::string ramEvictionKey = statPrefix + "ram.evictions";
-  counters_.updateDelta(ramEvictionKey, stats.numEvictions);
+  counters_.updateDelta(ramEvictionKey, std::accumulate(stats.numEvictions.begin(),stats.numEvictions.end(),0));
   // get the new delta to see if uploading any eviction age stats or lifetime
   // stats makes sense.
   uint64_t ramEvictionDelta = counters_.getDelta(ramEvictionKey);

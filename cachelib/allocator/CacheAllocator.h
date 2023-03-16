@@ -1233,6 +1233,8 @@ class CacheAllocator : public CacheBase {
 
   // pool stats by pool id
   PoolStats getPoolStats(PoolId pid) const override final;
+  // pool stats by tier id and pool id
+  PoolStats getPoolStats(TierId tid, PoolId pid) const;
 
   // This can be expensive so it is not part of PoolStats
   PoolEvictionAgeStats getPoolEvictionAgeStats(
@@ -2015,9 +2017,9 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
 
       if (candidate->hasChainedItem()) {
-        (*stats_.chainedItemEvictions)[pid][cid].inc();
+        (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
       } else {
-        (*stats_.regularItemEvictions)[pid][cid].inc();
+        (*stats_.regularItemEvictions)[tid][pid][cid].inc();
       }
 
       // it's safe to recycle the item here as there are no more

@@ -418,8 +418,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   util::RollingLatencyTracker rollTracker{
       (*stats_.classAllocLatency)[tid][pid][cid]};
 
-  // TODO: per-tier
-  (*stats_.allocAttempts)[pid][cid].inc();
+  (*stats_.allocAttempts)[tid][pid][cid].inc();
   
   void* memory = allocator_[tid]->allocate(pid, requiredSize);
   
@@ -445,12 +444,12 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
     handle = acquire(new (memory) Item(key, size, creationTime, expiryTime));
     if (handle) {
       handle.markNascent();
-      (*stats_.fragmentationSize)[pid][cid].add(
+      (*stats_.fragmentationSize)[tid][pid][cid].add(
           util::getFragmentation(*this, *handle));
     }
 
   } else { // failed to allocate memory.
-    (*stats_.allocFailures)[pid][cid].inc(); // TODO: per-tier
+    (*stats_.allocFailures)[tid][pid][cid].inc();
     // wake up rebalancer
     if (poolRebalancer_) {
       poolRebalancer_->wakeUp();
@@ -522,16 +521,14 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(
   util::RollingLatencyTracker rollTracker{
       (*stats_.classAllocLatency)[tid][pid][cid]};
   
-  // TODO: per-tier? Right now stats_ are not used in any public periodic
-  // worker
-  (*stats_.allocAttempts)[pid][cid].inc();
+  (*stats_.allocAttempts)[tid][pid][cid].inc();
 
   void* memory = allocator_[tid]->allocate(pid, requiredSize);
   if (memory == nullptr) {
     memory = findEviction(tid, pid, cid);
   }
   if (memory == nullptr) {
-    (*stats_.allocFailures)[pid][cid].inc();
+    (*stats_.allocFailures)[tid][pid][cid].inc();
     return WriteHandle{};
   }
 
@@ -543,7 +540,7 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(
 
   if (child) {
     child.markNascent();
-    (*stats_.fragmentationSize)[pid][cid].add(
+    (*stats_.fragmentationSize)[tid][pid][cid].add(
         util::getFragmentation(*this, *child));
   }
 
@@ -858,7 +855,7 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
     stats_.perPoolEvictionAgeSecs_[allocInfo.poolId].trackValue(refreshTime);
   }
 
-  (*stats_.fragmentationSize)[allocInfo.poolId][allocInfo.classId].sub(
+  (*stats_.fragmentationSize)[tid][allocInfo.poolId][allocInfo.classId].sub(
       util::getFragmentation(*this, it));
 
   // Chained items can only end up in this place if the user has allocated
@@ -941,7 +938,7 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
 
       const auto childInfo =
           allocator_[tid]->getAllocInfo(static_cast<const void*>(head));
-      (*stats_.fragmentationSize)[childInfo.poolId][childInfo.classId].sub(
+      (*stats_.fragmentationSize)[tid][childInfo.poolId][childInfo.classId].sub(
           util::getFragmentation(*this, *head));
 
       removeFromMMContainer(*head);
@@ -1585,12 +1582,12 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     Item* candidate = nullptr;
     typename NvmCacheT::PutToken token;
 
-    mmContainer.withEvictionIterator([this, pid, cid, &candidate, &toRecycle,
+    mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate, &toRecycle,
                                       &searchTries, &mmContainer, &lastTier,
                                       &token](auto&& itr) {
       if (!itr) {
         ++searchTries;
-        (*stats_.evictionAttempts)[pid][cid].inc();
+        (*stats_.evictionAttempts)[tid][pid][cid].inc();
         return;
       }
 
@@ -1598,7 +1595,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
               config_.evictionSearchTries > searchTries) &&
              itr) {
         ++searchTries;
-        (*stats_.evictionAttempts)[pid][cid].inc();
+        (*stats_.evictionAttempts)[tid][pid][cid].inc();
 
         auto* toRecycle_ = itr.get();
         auto* candidate_ =
@@ -1698,6 +1695,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       XDCHECK(!candidate->isAccessible());
       XDCHECK(candidate->getKey() == evictedToNext->getKey());
 
+      (*stats_.numWritebacks)[tid][pid][cid].inc();
       wakeUpWaiters(*candidate, std::move(evictedToNext));
     }
 
@@ -1707,9 +1705,9 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     // NULL. If `ref` == 0 then it means that we are the last holder of
     // that item.
     if (candidate->hasChainedItem()) {
-      (*stats_.chainedItemEvictions)[pid][cid].inc();
+      (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
     } else {
-      (*stats_.regularItemEvictions)[pid][cid].inc();
+      (*stats_.regularItemEvictions)[tid][pid][cid].inc();
     }
 
     if (auto eventTracker = getEventTracker()) {
@@ -2304,7 +2302,7 @@ bool CacheAllocator<CacheTrait>::recordAccessInMMContainer(Item& item,
   const auto tid = getTierId(item);
   const auto allocInfo =
       allocator_[tid]->getAllocInfo(static_cast<const void*>(&item));
-  (*stats_.cacheHits)[allocInfo.poolId][allocInfo.classId].inc();
+  (*stats_.cacheHits)[tid][allocInfo.poolId][allocInfo.classId].inc();
 
   // track recently accessed items if needed
   if (UNLIKELY(config_.trackRecentItemsForDump)) {
@@ -2773,6 +2771,8 @@ size_t CacheAllocator<CacheTrait>::getPoolSize(PoolId poolId) const {
 
 template <typename CacheTrait>
 PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
+  //this pool ref is just used to get class ids, which will be the
+  //same across tiers
   const auto& pool = allocator_[currentTier()]->getPool(poolId);
   const auto& allocSizes = pool.getAllocSizes();
   auto mpStats = pool.getStats();
@@ -2791,25 +2791,96 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
   // TODO export evictions, numItems etc from compact cache directly.
   if (!isCompactCache) {
     for (const ClassId cid : classIds) {
-      uint64_t classHits = (*stats_.cacheHits)[poolId][cid].get();
-      XDCHECK(mmContainers_[currentTier()][poolId][cid],
-              folly::sformat("Pid {}, Cid {} not initialized.", poolId, cid));
+      uint64_t allocAttempts, evictionAttempts, allocFailures,
+               fragmentationSize, classHits, chainedItemEvictions,
+               regularItemEvictions, numWritebacks = 0;
+      MMContainerStat mmContainerStats;
+      for (TierId tid = 0; tid < getNumTiers(); tid++) {
+        allocAttempts += (*stats_.allocAttempts)[tid][poolId][cid].get();
+        evictionAttempts += (*stats_.evictionAttempts)[tid][poolId][cid].get();
+        allocFailures += (*stats_.allocFailures)[tid][poolId][cid].get();
+        fragmentationSize += (*stats_.fragmentationSize)[tid][poolId][cid].get();
+        classHits += (*stats_.cacheHits)[tid][poolId][cid].get();
+        chainedItemEvictions += (*stats_.chainedItemEvictions)[tid][poolId][cid].get();
+        regularItemEvictions += (*stats_.regularItemEvictions)[tid][poolId][cid].get();
+        numWritebacks += (*stats_.numWritebacks)[tid][poolId][cid].get();
+        mmContainerStats += getMMContainerStat(tid, poolId, cid);
+        XDCHECK(mmContainers_[tid][poolId][cid],
+                folly::sformat("Tid {}, Pid {}, Cid {} not initialized.", tid, poolId, cid));
+      }
       cacheStats.insert(
           {cid,
-           {allocSizes[cid], (*stats_.allocAttempts)[poolId][cid].get(),
-            (*stats_.evictionAttempts)[poolId][cid].get(),
-            (*stats_.allocFailures)[poolId][cid].get(),
-            (*stats_.fragmentationSize)[poolId][cid].get(), classHits,
-            (*stats_.chainedItemEvictions)[poolId][cid].get(),
-            (*stats_.regularItemEvictions)[poolId][cid].get(),
-            getMMContainerStat(currentTier(), poolId, cid)}});
+           {allocSizes[cid],
+            allocAttempts,
+            evictionAttempts,
+            allocFailures,
+            fragmentationSize,
+            classHits,
+            chainedItemEvictions,
+            regularItemEvictions,
+            numWritebacks,
+            mmContainerStats}});
       totalHits += classHits;
     }
   }
 
   PoolStats ret;
   ret.isCompactCache = isCompactCache;
+  //pool name is also shared among tiers
   ret.poolName = allocator_[currentTier()]->getPoolName(poolId);
+  ret.poolSize = pool.getPoolSize();
+  ret.poolUsableSize = pool.getPoolUsableSize();
+  ret.poolAdvisedSize = pool.getPoolAdvisedSize();
+  ret.cacheStats = std::move(cacheStats);
+  ret.mpStats = std::move(mpStats);
+  ret.numPoolGetHits = totalHits;
+  ret.evictionAgeSecs = stats_.perPoolEvictionAgeSecs_[poolId].estimate();
+
+  return ret;
+}
+
+template <typename CacheTrait>
+PoolStats CacheAllocator<CacheTrait>::getPoolStats(TierId tid, PoolId poolId) const {
+  const auto& pool = allocator_[tid]->getPool(poolId);
+  const auto& allocSizes = pool.getAllocSizes();
+  auto mpStats = pool.getStats();
+  const auto& classIds = mpStats.classIds;
+
+  // check if this is a compact cache.
+  bool isCompactCache = false;
+  {
+    folly::SharedMutex::ReadHolder lock(compactCachePoolsLock_);
+    isCompactCache = isCompactCachePool_[poolId];
+  }
+
+  std::unordered_map<ClassId, CacheStat> cacheStats;
+  uint64_t totalHits = 0;
+  // cacheStats is only menaningful for pools that are not compact caches.
+  // TODO export evictions, numItems etc from compact cache directly.
+  if (!isCompactCache) {
+    for (const ClassId cid : classIds) {
+      uint64_t classHits = (*stats_.cacheHits)[tid][poolId][cid].get();
+      XDCHECK(mmContainers_[tid][poolId][cid],
+              folly::sformat("Tid {}, Pid {}, Cid {} not initialized.", tid, poolId, cid));
+      cacheStats.insert(
+          {cid,
+           {allocSizes[cid],
+            (*stats_.allocAttempts)[tid][poolId][cid].get(),
+            (*stats_.evictionAttempts)[tid][poolId][cid].get(),
+            (*stats_.allocFailures)[tid][poolId][cid].get(),
+            (*stats_.fragmentationSize)[tid][poolId][cid].get(),
+            classHits,
+            (*stats_.chainedItemEvictions)[tid][poolId][cid].get(),
+            (*stats_.regularItemEvictions)[tid][poolId][cid].get(),
+            (*stats_.numWritebacks)[tid][poolId][cid].get(),
+            getMMContainerStat(tid, poolId, cid)}});
+      totalHits += classHits;
+    }
+  }
+
+  PoolStats ret;
+  ret.isCompactCache = isCompactCache;
+  ret.poolName = allocator_[tid]->getPoolName(poolId);
   ret.poolSize = pool.getPoolSize();
   ret.poolUsableSize = pool.getPoolUsableSize();
   ret.poolAdvisedSize = pool.getPoolAdvisedSize();
@@ -3072,7 +3143,7 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(
   const auto allocInfo = allocator_[tid]->getAllocInfo(oldItem.getMemory());
   allocator_[tid]->free(&oldItem);
 
-  (*stats_.fragmentationSize)[allocInfo.poolId][allocInfo.classId].sub(
+  (*stats_.fragmentationSize)[tid][allocInfo.poolId][allocInfo.classId].sub(
       util::getFragmentation(*this, oldItem));
   stats_.numMoveSuccesses.inc();
   return true;
@@ -3351,12 +3422,13 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
       nvmCache_->put(*evicted, std::move(token));
     }
 
+    const auto tid = getTierId(*evicted);
     const auto allocInfo =
-        allocator_[getTierId(*evicted)]->getAllocInfo(static_cast<const void*>(evicted));
+        allocator_[tid]->getAllocInfo(static_cast<const void*>(evicted));
     if (evicted->hasChainedItem()) {
-      (*stats_.chainedItemEvictions)[allocInfo.poolId][allocInfo.classId].inc();
+      (*stats_.chainedItemEvictions)[tid][allocInfo.poolId][allocInfo.classId].inc();
     } else {
-      (*stats_.regularItemEvictions)[allocInfo.poolId][allocInfo.classId].inc();
+      (*stats_.regularItemEvictions)[tid][allocInfo.poolId][allocInfo.classId].inc();
     }
 
     stats_.numEvictionSuccesses.inc();
@@ -3579,8 +3651,13 @@ folly::IOBufQueue CacheAllocator<CacheTrait>::saveStateToIOBuf() {
     for (PoolId pid : pools) {
       for (unsigned int cid = 0; cid < (*stats_.fragmentationSize)[pid].size();
            ++cid) {
+        uint64_t fragmentationSize = 0;
+        for (TierId tid = 0; tid < getNumTiers(); tid++) {
+            fragmentationSize += (*stats_.fragmentationSize)[tid][pid][cid].get();
+        }
         metadata_.fragmentationSize()[pid][static_cast<ClassId>(cid)] =
-            (*stats_.fragmentationSize)[pid][cid].get();
+            fragmentationSize;
+
       }
       if (isCompactCachePool_[pid]) {
         metadata_.compactCachePools()->push_back(pid);
@@ -3826,8 +3903,19 @@ void CacheAllocator<CacheTrait>::initStats() {
   // deserialize the fragmentation size of each thread.
   for (const auto& pid : *metadata_.fragmentationSize()) {
     for (const auto& cid : pid.second) {
-      (*stats_.fragmentationSize)[pid.first][cid.first].set(
-          static_cast<uint64_t>(cid.second));
+      //in multi-tier we serialized as the sum - no way
+      //to get back so just divide the two for now
+      //TODO: proper multi-tier serialization
+      uint64_t total = static_cast<uint64_t>(cid.second);
+      uint64_t part = total / getNumTiers();
+      uint64_t sum = 0;
+      for (TierId tid = 1; tid < getNumTiers(); tid++) {
+        (*stats_.fragmentationSize)[tid][pid.first][cid.first].set(part);
+        sum += part;
+      }
+      uint64_t leftover = total - sum;
+      (*stats_.fragmentationSize)[0][pid.first][cid.first].set(leftover);
+
     }
   }
 
