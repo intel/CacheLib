@@ -2031,7 +2031,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
   }
 
   size_t traverseAndPromoteItems(unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
-auto& mmContainer = getMMContainer(tid, pid, cid);
+    auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t promotions = 0;
     std::vector<Item*> candidates;
     candidates.reserve(batch);
@@ -2051,6 +2051,8 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         // TODO: only allow it for read-only items?
         // or implement mvcc
         if (candidate->markMoving(true)) {
+          // promotions should rarely fail since we already marked moving
+          mmContainer.remove(itr);
           candidates.push_back(candidate);
         }
 
@@ -2062,15 +2064,18 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       auto promoted = tryPromoteToNextMemoryTier(*candidate, true);
       if (promoted) {
         promotions++;
-  	    removeFromMMContainer(*candidate);
         XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
         // it's safe to recycle the item here as there are no more
         // references and the item could not been marked as moving
         // by other thread since it's detached from MMContainer.
+        //
+        // but we need to wake up waiters before releasing
+        // since candidate's key can change after being sent
+        // back to allocator
+        wakeUpWaiters(*candidate, std::move(promoted));
         auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
                                   /* isNascent */ false);
         XDCHECK(res == ReleaseRes::kReleased);
-        wakeUpWaiters(*candidate, std::move(promoted));
       } else {
         // we failed to allocate a new item, this item is no  longer moving
         auto ref = unmarkMovingAndWakeUpWaiters(*candidate, {});
