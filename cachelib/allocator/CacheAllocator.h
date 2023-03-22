@@ -2078,15 +2078,36 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         XDCHECK(res == ReleaseRes::kReleased);
       } else {
         // we failed to allocate a new item, this item is no  longer moving
-        auto ref = unmarkMovingAndWakeUpWaiters(*candidate, {});
+        auto ref = candidate->unmarkMoving();
         if (UNLIKELY(ref == 0)) {
+	  wakeUpWaiters(*candidate,{});
           const auto res =
               releaseBackToAllocator(*candidate, 
                       RemoveContext::kNormal, false);
           XDCHECK(res == ReleaseRes::kReleased);
+        } else if (candidate->isAccessible()) {
+          //case where we failed to allocate in lower tier
+          //item is still present in accessContainer
+          //item is no longer moving - acquire and
+          //wake up waiters with this handle
+	  auto hdl = acquire(candidate);
+	  insertInMMContainer(*hdl);
+	  wakeUpWaiters(*candidate,std::move(hdl));
+        } else if (!candidate->isAccessible()) {
+          //case where we failed to replace in access
+          //container due to another thread calling insertOrReplace
+          //unmark moving and return null handle
+	  wakeUpWaiters(*candidate,{});
+	  if (UNLIKELY(ref == 0)) {
+              const auto res =
+                releaseBackToAllocator(*candidate, RemoveContext::kNormal,
+                                        false);
+              XDCHECK(res == ReleaseRes::kReleased);
+          }
+        } else {
+          XDCHECK(false);
         }
       }
-     
     }
     return promotions;
   }
