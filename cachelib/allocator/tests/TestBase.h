@@ -69,6 +69,11 @@ class AllocatorTest : public SlabAllocatorTestBase {
                                 PoolId pid,
                                 const std::vector<uint32_t>& sizes,
                                 unsigned int keyLen);
+  void fillUpPoolUntilEvictions(AllocatorT& alloc,
+                                TierId tid,
+                                PoolId pid,
+                                const std::vector<uint32_t>& sizes,
+                                unsigned int keyLen);
   void fillUpOneSlab(AllocatorT& alloc,
                      PoolId poolId,
                      const uint32_t size,

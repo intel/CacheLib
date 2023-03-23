@@ -93,6 +93,62 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     ASSERT_NO_THROW(alloc->insertOrReplace(handle));
   }
   
+  void testMultiTiersValidStats() {
+    typename AllocatorT::Config config;
+    size_t nSlabs = 20;
+    config.setCacheSize(nSlabs * Slab::kSize);
+    config.enableCachePersistence("/tmp");
+    ASSERT_NO_THROW(config.configureMemoryTiers(
+        {MemoryTierCacheConfig::fromShm().setRatio(1).setMemBind(
+             std::string("0")),
+         MemoryTierCacheConfig::fromShm().setRatio(2).setMemBind(
+             std::string("0"))}));
+
+    auto alloc = std::make_unique<AllocatorT>(AllocatorT::SharedMemNew, config);
+    ASSERT(alloc != nullptr);
+    size_t keyLen = 8;
+    auto pool = alloc->addPool("default", alloc->getCacheMemoryStats().ramCacheSize);
+    std::vector<uint32_t> valsize = {1000};
+    std::vector<uint32_t> itemCount;
+    std::vector<uint32_t> evictCount;
+    for (uint32_t tid = 0; tid < 2; tid++) {
+        this->fillUpPoolUntilEvictions(*alloc, tid, pool, valsize, keyLen);
+        auto stats = alloc->getPoolStats(tid, pool);
+        const auto& classIds = stats.mpStats.classIds;
+        uint32_t prev = 0;
+        ClassId cid = 0;
+        for (const ClassId c : classIds) {
+            uint32_t currSize = stats.cacheStats[c].allocSize;
+            if (prev <= valsize[0] && valsize[0] <= currSize) {
+                cid = c;
+                break;
+            }
+            prev = currSize;
+        }
+
+        std::cout << "Tid: " << tid << " cid: " << static_cast<uint32_t>(cid)
+                  << " items: " << stats.cacheStats[cid].numItems()
+                  << " evicts: " << stats.cacheStats[cid].numEvictions()
+                  << std::endl;
+        ASSERT_GE(stats.cacheStats[cid].numItems(), 1);
+        ASSERT_EQ(stats.cacheStats[cid].numEvictions(), 1);
+        itemCount.push_back(stats.cacheStats[cid].numItems());
+        evictCount.push_back(stats.cacheStats[cid].numEvictions());
+        //first tier should have some writebacks to second tier
+        //second tier should not have any writebacks since it
+        //is last memory tier
+        if (tid == 0) {
+            ASSERT_EQ(stats.cacheStats[cid].numWritebacks, 1);
+        } else {
+            ASSERT_EQ(0, stats.cacheStats[cid].numWritebacks);
+        }
+    }
+    for (uint32_t tid = 1; tid < 2; tid++) {
+        ASSERT_NE(itemCount[tid],itemCount[tid-1]);
+        ASSERT_EQ(evictCount[tid],evictCount[tid-1]);
+    }
+  }
+
   void testMultiTiersBackgroundMovers() {
     typename AllocatorT::Config config;
     config.setCacheSize(10 * Slab::kSize);
