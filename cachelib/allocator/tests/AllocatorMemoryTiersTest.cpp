@@ -25,6 +25,7 @@ using LruAllocatorMemoryTiersTest = AllocatorMemoryTiersTest<LruAllocator>;
 // TODO(MEMORY_TIER): add more tests with different eviction policies
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersInvalid) { this->testMultiTiersInvalid(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValid) { this->testMultiTiersValid(); }
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValidStats) { this->testMultiTiersValidStats(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValidMixed) { this->testMultiTiersValidMixed(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersBackgroundMovers ) { this->testMultiTiersBackgroundMovers(); }
 TEST_F(LruAllocatorMemoryTiersTest, MultiTiersRemoveDuringEviction) { this->testMultiTiersRemoveDuringEviction(); }
