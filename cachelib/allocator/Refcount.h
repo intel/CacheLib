@@ -320,15 +320,23 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
    *
    * Unmarking moving does not depend on `isInMMContainer`
    */
-  bool markMoving(bool failIfRefNotZero) {
-    auto predicate = [failIfRefNotZero](const Value curValue) {
+  bool markMoving() {
+    auto predicate = [](const Value curValue) {
       Value conditionBitMask = getAdminRef<kLinked>();
       const bool flagSet = curValue & conditionBitMask;
       const bool alreadyExclusive = curValue & getAdminRef<kExclusive>();
-      if (failIfRefNotZero && (curValue & kAccessRefMask) != 0) {
+      const bool isChained = curValue & getFlag<kIsChainedItem>();
+
+      // chained item can have ref count == 1, this just means it's linked in the chain
+      if (isChained && (curValue & kAccessRefMask) > 1) {
+        return false;
+      } else if (!isChained && (curValue & kAccessRefMask) != 0) {
         return false;
       }
-      if (!flagSet || alreadyExclusive) {
+      // when we mark a chained item as moving it - it may not
+      // be in the mmContainer
+      if ( (!isChained && (!flagSet || alreadyExclusive)) ||
+           ( isChained && alreadyExclusive) ) {
         return false;
       }
       if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {

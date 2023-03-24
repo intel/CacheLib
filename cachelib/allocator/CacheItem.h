@@ -381,7 +381,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
    * Unmarking moving will also return the refcount at the moment of
    * unmarking.
    */
-  bool markMoving(bool failIfRefNotZero);
+  bool markMoving();
   RefcountWithFlags::Value unmarkMoving() noexcept;
   bool isMoving() const noexcept;
   bool isOnlyMoving() const noexcept;
