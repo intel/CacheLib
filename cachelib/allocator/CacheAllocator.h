@@ -1544,6 +1544,25 @@ class CacheAllocator : public CacheBase {
   WriteHandle allocateChainedItemInternal(const ReadHandle& parent,
                                           uint32_t size);
 
+  // Allocate a chained item to a specific tier
+  //
+  // The resulting chained item does not have a parent item and
+  // will be freed once the handle is dropped
+  //
+  // The parent handle parameter here is mainly used to find the
+  // correct pool to allocate memory for this chained item
+  //
+  // @param parent    handle to the cache item
+  // @param size      the size for the chained allocation
+  // @param tid       the tier to allocate on
+  //
+  // @return    handle to the chained allocation
+  // @throw     std::invalid_argument if the size requested is invalid or
+  //            if the item is invalid
+  WriteHandle allocateChainedItemInternalTier(const ReadHandle& parent,
+                                          uint32_t size,
+                                          TierId tid);
+
   // Given an item and its parentKey, validate that the parentKey
   // corresponds to an item that's the parent of the supplied item.
   //
@@ -1620,6 +1639,16 @@ class CacheAllocator : public CacheBase {
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
   bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
+  
+  // Moves a chained item to a different memory tier.
+  //
+  // @param oldItem     Reference to the item being moved
+  // @param newItemHdl  Reference to the handle of the new item being moved into
+  // @param parentHandle Reference to the handle of the parent item
+  //
+  // @return true  If the move was completed, and the containers were updated
+  //               successfully.
+  bool moveChainedItemWithSync(ChainedItem& oldItem, WriteHandle& newItemHdl, WriteHandle& parentHandle);
 
   // Moves a regular item to a different slab. This should only be used during
   // slab release after the item's exclusive bit has been set. The user supplied
@@ -1689,6 +1718,9 @@ class CacheAllocator : public CacheBase {
                                        WriteHandle newItemHdl,
                                        const Item& parent);
 
+  void replaceChainedItemLockedForMoving(Item& oldItem,
+                                       WriteHandle& newItemHdl,
+                                       const Item& parent);
   // Insert an item into MM container. The caller must hold a valid handle for
   // the item.
   //
@@ -1979,7 +2011,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           throw std::runtime_error("Not supported for chained items");
         }
 
-        if (candidate->markMoving(true)) {
+        if (candidate->markMoving()) {
           mmContainer.remove(itr);
           candidates.push_back(candidate);
         } else {
@@ -2052,7 +2084,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
 
         // TODO: only allow it for read-only items?
         // or implement mvcc
-        if (candidate->markMoving(true)) {
+        if (candidate->markMoving()) {
           // promotions should rarely fail since we already marked moving
           mmContainer.remove(itr);
           candidates.push_back(candidate);
