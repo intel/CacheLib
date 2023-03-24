@@ -1386,7 +1386,6 @@ bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
                 oldItem.getSize());
   }
 
-
   // Adding the item to mmContainer has to succeed since no one can remove the item
   auto& newContainer = getMMContainer(*newItemHdl);
   auto mmContainerAdded = newContainer.add(*newItemHdl);
@@ -3661,8 +3660,6 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);
-    // TODO: for chained items, moving bit is only used to avoid
-    // freeing the item prematurely
     if (item->markMoving()) {
       markedMoving = true;
     }
