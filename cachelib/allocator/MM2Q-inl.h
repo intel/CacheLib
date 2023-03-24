@@ -249,6 +249,12 @@ MM2Q::Container<T, HookPtr>::getEvictionIterator() const noexcept {
 
 template <typename T, MM2Q::Hook<T> T::*HookPtr>
 template <typename F>
+void MM2Q::Container<T, HookPtr>::withContainerLock(F&& fun) {
+  lruMutex_->lock_combine([this, &fun]() { fun(); });
+}
+
+template <typename T, MM2Q::Hook<T> T::*HookPtr>
+template <typename F>
 void MM2Q::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
   if (config_.useCombinedLockForIterators) {
     lruMutex_->lock_combine([this, &fun]() { fun(Iterator{lru_.rbegin()}); });

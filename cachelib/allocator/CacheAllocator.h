@@ -1387,7 +1387,7 @@ class CacheAllocator : public CacheBase {
 
  private:
   // wrapper around Item's refcount and active handle tracking
-  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(Item& it, bool failIfMoving);
+  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(Item& it);
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef(Item& it);
 
   // drops the refcount and if needed, frees the allocation back to the memory
@@ -1551,6 +1551,26 @@ class CacheAllocator : public CacheBase {
   WriteHandle allocateChainedItemInternal(const ReadHandle& parent,
                                           uint32_t size);
 
+  // Allocate a chained item to a specific tier
+  //
+  // The resulting chained item does not have a parent item yet
+  // and if we fail to link to the chain for any reasoin
+  // the chained item will be freed once the handle is dropped.
+  //
+  // The parent item parameter here is mainly used to find the
+  // correct pool to allocate memory for this chained item
+  //
+  // @param parent    parent item
+  // @param size      the size for the chained allocation
+  // @param tid       the tier to allocate on
+  //
+  // @return    handle to the chained allocation
+  // @throw     std::invalid_argument if the size requested is invalid or
+  //            if the item is invalid
+  WriteHandle allocateChainedItemInternalTier(const Item& parent,
+                                          uint32_t size,
+                                          TierId tid);
+
   // Given an item and its parentKey, validate that the parentKey
   // corresponds to an item that's the parent of the supplied item.
   //
@@ -1626,19 +1646,17 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
+  bool moveRegularItem(Item& oldItem, WriteHandle& newItemHdl);
 
-  // Moves a regular item to a different slab. This should only be used during
-  // slab release after the item's exclusive bit has been set. The user supplied
-  // callback is responsible for copying the contents and fixing the semantics
-  // of chained item.
+  // Moves a chained item to a different memory tier.
   //
-  // @param oldItem     item being moved
+  // @param oldItem     Reference to the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
+  // @param parentHandle Reference to the handle of the parent item
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveRegularItem(Item& oldItem, WriteHandle& newItemHdl);
+  bool moveChainedItem(ChainedItem& oldItem, WriteHandle& newItemHdl, Item& parentItem);
 
   // template class for viewAsChainedAllocs that takes either ReadHandle or
   // WriteHandle
@@ -1651,29 +1669,12 @@ class CacheAllocator : public CacheBase {
   template <typename Handle>
   folly::IOBuf convertToIOBufT(Handle& handle);
 
-  // Moves a chained item to a different slab. This should only be used during
-  // slab release after the item's exclusive bit has been set. The user supplied
-  // callback is responsible for copying the contents and fixing the semantics
-  // of chained item.
-  //
-  // Note: If we have successfully moved the old item into the new, the
-  //       newItemHdl is reset and no longer usable by the caller.
-  //
-  // @param oldItem       Reference to the item being moved
-  // @param newItemHdl    Reference to the handle of the new item being
-  //                      moved into
-  //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
-  bool moveChainedItem(ChainedItem& oldItem, WriteHandle& newItemHdl);
-
   // Transfers the chain ownership from parent to newParent. Parent
   // will be unmarked as having chained allocations. Parent will not be null
   // after calling this API.
   //
-  // Parent and NewParent must be valid handles to items with same key and
-  // parent must have chained items and parent handle must be the only
-  // outstanding handle for parent. New parent must be without any chained item
+  // NewParent must be valid handles to item with same key as Parent and
+  // Parent must have chained items. New parent must be without any chained item
   // handles.
   //
   // Chained item lock for the parent's key needs to be held in exclusive mode.
@@ -1682,7 +1683,7 @@ class CacheAllocator : public CacheBase {
   // @param newParent the new parent for the chain
   //
   // @throw if any of the conditions for parent or newParent are not met.
-  void transferChainLocked(WriteHandle& parent, WriteHandle& newParent);
+  void transferChainLocked(Item& parent, WriteHandle& newParent);
 
   // replace a chained item in the existing chain. This needs to be called
   // with the chained item lock held exclusive
@@ -1695,6 +1696,24 @@ class CacheAllocator : public CacheBase {
   WriteHandle replaceChainedItemLocked(Item& oldItem,
                                        WriteHandle newItemHdl,
                                        const Item& parent);
+
+  //
+  // Performs the actual inplace replace - it is called from
+  // moveChainedItem and replaceChainedItemLocked
+  // must hold chainedItemLock
+  //
+  // @param oldItem  the item we are replacing in the chain
+  // @param newItem  the item we are replacing it with
+  // @param parent   the parent for the chain
+  // @param fromMove used to determine if the replaced was called from
+  //                 moveChainedItem - we avoid the handle destructor
+  //                 in this case.
+  //
+  // @return handle to the oldItem
+  void replaceInChainLocked(Item& oldItem,
+                            WriteHandle& newItemHdl,
+                            const Item& parent,
+                            bool fromMove);
 
   // Insert an item into MM container. The caller must hold a valid handle for
   // the item.
@@ -1986,7 +2005,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           throw std::runtime_error("Not supported for chained items");
         }
 
-        if (candidate->markMoving(true)) {
+        if (candidate->markMoving()) {
           mmContainer.remove(itr);
           candidates.push_back(candidate);
         } else {
@@ -2059,7 +2078,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
 
         // TODO: only allow it for read-only items?
         // or implement mvcc
-        if (candidate->markMoving(true)) {
+        if (candidate->markMoving()) {
           // promotions should rarely fail since we already marked moving
           mmContainer.remove(itr);
           candidates.push_back(candidate);

@@ -4852,7 +4852,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
         }
 
         /* sleep override */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       }
     };
 
@@ -4860,7 +4860,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     auto releaseFn = [&] {
       for (unsigned int i = 0; i < 5;) {
         /* sleep override */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         ClassId cid = static_cast<ClassId>(i);
         alloc.releaseSlab(pid, cid, SlabReleaseMode::kRebalance);
@@ -5077,7 +5077,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     auto releaseFn = [&] {
       for (unsigned int i = 0; i < 5;) {
         /* sleep override */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         ClassId cid = static_cast<ClassId>(i);
         alloc.releaseSlab(pid, cid, SlabReleaseMode::kRebalance);
@@ -5136,9 +5136,10 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     lookupFn("yolo");
   }
 
-  // while a chained item could be moved, try to transfer its parent and
-  // validate that move succeeds correctly.
-  void testTransferChainWhileMoving() {
+  // while a chained item could be moved - it is sync on parent moving bit.
+  // try to transfer its parent after we moved and
+  // validate that transfer succeeds correctly.
+  void testTransferChainAfterMoving() {
     // create an allocator worth 10 slabs.
     typename AllocatorT::Config config;
     config.configureChainedItems();
@@ -5159,15 +5160,13 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     struct TestSyncObj : public AllocatorT::SyncObj {
       TestSyncObj(std::mutex& m,
                   std::atomic<bool>& firstTime,
-                  folly::Baton<>& startedMoving,
-                  folly::Baton<>& changedParent)
+                  folly::Baton<>& startedMoving)
           : l(m) {
         if (!firstTime) {
           return;
         }
         firstTime = false;
         startedMoving.post();
-        changedParent.wait();
       }
 
       std::lock_guard<std::mutex> l;
@@ -5180,9 +5179,6 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     // baton to indicate that the move process has started so that we can
     // switch the parent
     folly::Baton<> startedMoving;
-    // baton to indicate that the parent has been switched so that the move
-    // process can proceed
-    folly::Baton<> changedParent;
 
     const size_t numMovingAttempts = 100;
     std::atomic<uint64_t> numMoves{0};
@@ -5194,11 +5190,10 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
                       oldItem.getSize());
           ++numMoves;
         },
-        [&m, &startedMoving, &changedParent,
-         &firstTimeMovingSync](typename Item::Key key) {
+        [&m, &startedMoving, &firstTimeMovingSync](typename Item::Key key) {
           XLOG(ERR) << "Moving" << key;
           return std::make_unique<TestSyncObj>(m, firstTimeMovingSync,
-                                               startedMoving, changedParent);
+                                               startedMoving);
         },
         numMovingAttempts);
 
@@ -5228,24 +5223,19 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     auto slabRelease = std::async(releaseFn);
 
     startedMoving.wait();
+    // wait for slab release to complete.
+    slabRelease.wait();
 
     // we know moving sync is held now.
     {
       auto newParent = alloc.allocate(pid, movingKey, 600);
-      auto parent = alloc.findToWrite(movingKey);
+      auto parent = alloc.findToWrite(movingKey); //parent is marked moving during moved, once finished we will get handle
       alloc.transferChainAndReplace(parent, newParent);
     }
 
-    // indicate that we changed the parent. This should abort the current
-    // moving attempt, re-allocate the item and eventually succeed in moving.
-    changedParent.post();
-
-    // wait for slab release to complete.
-    slabRelease.wait();
-
     EXPECT_EQ(numMoves, 1);
     auto slabReleaseStats = alloc.getSlabReleaseStats();
-    EXPECT_EQ(slabReleaseStats.numMoveAttempts, 2);
+    EXPECT_EQ(slabReleaseStats.numMoveAttempts, 1);
     EXPECT_EQ(slabReleaseStats.numMoveSuccesses, 1);
 
     auto handle = alloc.find(movingKey);
@@ -5959,7 +5949,6 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     EXPECT_EQ(nullptr,
               util::allocateAccessible(alloc, poolId, "large", largeSize));
 
-    std::this_thread::sleep_for(std::chrono::seconds{1});
     // trigger the slab rebalance
     EXPECT_EQ(nullptr,
               util::allocateAccessible(alloc, poolId, "large", largeSize));

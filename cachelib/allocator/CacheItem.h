@@ -312,9 +312,9 @@ class CACHELIB_PACKED_ATTR CacheItem {
   //
   // @return true on success, failure if item is marked as exclusive
   // @throw exception::RefcountOverflow on ref count overflow
-  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(bool failIfMoving) {
+  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef() {
     try {
-      return ref_.incRef(failIfMoving);
+      return ref_.incRef();
     } catch (exception::RefcountOverflow& e) {
       throw exception::RefcountOverflow(
           folly::sformat("{} item: {}", e.what(), toString()));
@@ -381,7 +381,7 @@ class CACHELIB_PACKED_ATTR CacheItem {
    * Unmarking moving will also return the refcount at the moment of
    * unmarking.
    */
-  bool markMoving(bool failIfRefNotZero);
+  bool markMoving();
   RefcountWithFlags::Value unmarkMoving() noexcept;
   bool isMoving() const noexcept;
   bool isOnlyMoving() const noexcept;
