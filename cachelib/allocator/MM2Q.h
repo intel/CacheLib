@@ -503,6 +503,9 @@ class MM2Q {
     template <typename F>
     void withEvictionIterator(F&& f);
     
+    template <typename F>
+    void withContainerLock(F&& f) { return; };
+
     // Execute provided function under container lock. Function gets
     // iterator passed as parameter.
     template <typename F>
