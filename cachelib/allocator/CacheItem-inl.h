@@ -238,8 +238,8 @@ bool CacheItem<CacheTrait>::markForEvictionWhenMoving() {
 }
 
 template <typename CacheTrait>
-bool CacheItem<CacheTrait>::markMoving(bool failIfRefNotZero) {
-  return ref_.markMoving(failIfRefNotZero);
+bool CacheItem<CacheTrait>::markMoving() {
+  return ref_.markMoving();
 }
 
 template <typename CacheTrait>

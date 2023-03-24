@@ -140,9 +140,9 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // @return true if refcount is bumped. false otherwise (if item is exclusive)
   // @throw  exception::RefcountOverflow if new count would be greater than
   // maxCount
-  FOLLY_ALWAYS_INLINE incResult incRef(bool failIfMoving) {
+  FOLLY_ALWAYS_INLINE incResult incRef() {
     incResult res = incOk;
-    auto predicate = [failIfMoving, &res](const Value curValue) {
+    auto predicate = [&res](const Value curValue) {
        Value bitMask = getAdminRef<kExclusive>();
 
        const bool exlusiveBitIsSet = curValue & bitMask;
@@ -151,7 +151,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
        } else if (exlusiveBitIsSet && (curValue & kAccessRefMask) == 0) {
          res = incFailedEviction;
          return false;
-       } else if (exlusiveBitIsSet && failIfMoving) {
+       } else if (exlusiveBitIsSet) {
          res = incFailedMoving;
          return false;
        }
@@ -320,12 +320,15 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
    *
    * Unmarking moving does not depend on `isInMMContainer`
    */
-  bool markMoving(bool failIfRefNotZero) {
-    auto predicate = [failIfRefNotZero](const Value curValue) {
+  bool markMoving() {
+    auto predicate = [](const Value curValue) {
       Value conditionBitMask = getAdminRef<kLinked>();
       const bool flagSet = curValue & conditionBitMask;
       const bool alreadyExclusive = curValue & getAdminRef<kExclusive>();
-      if (failIfRefNotZero && (curValue & kAccessRefMask) != 0) {
+      const bool isChained = curValue & getFlag<kIsChainedItem>();
+
+      // chained item can have ref count == 1, this just means it's linked in the chain
+      if ((curValue & kAccessRefMask) > isChained ? 1 : 0) {
         return false;
       }
       if (!flagSet || alreadyExclusive) {
