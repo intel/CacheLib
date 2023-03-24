@@ -166,7 +166,6 @@ void CacheItem<CacheTrait>::changeKey(Key key) {
   if (!isChainedItem()) {
     throw std::invalid_argument("Item is not chained type");
   }
-
   alloc_.changeKey(key);
   XDCHECK_EQ(key, getKey());
 }
@@ -238,8 +237,8 @@ bool CacheItem<CacheTrait>::markForEvictionWhenMoving() {
 }
 
 template <typename CacheTrait>
-bool CacheItem<CacheTrait>::markMoving(bool failIfRefNotZero) {
-  return ref_.markMoving(failIfRefNotZero);
+bool CacheItem<CacheTrait>::markMoving() {
+  return ref_.markMoving();
 }
 
 template <typename CacheTrait>

@@ -13,3 +13,4 @@ fi
 
 ../bin/cachebench --json_test_config ../test_configs/consistency/navy.json
 ../bin/cachebench --json_test_config ../test_configs/consistency/navy-multi-tier.json
+../opt/bin/cachebench --json_test_config /opt/test_configs/small_moving_bg.json

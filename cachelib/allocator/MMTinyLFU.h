@@ -498,6 +498,9 @@ class MMTinyLFU {
     void withEvictionIterator(F&& f);
     
     template <typename F>
+    void withContainerLock(F&& f) { return; };
+
+    template <typename F>
     void withPromotionIterator(F&& f);
 
     // for saving the state of the lru
