@@ -1979,7 +1979,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           throw std::runtime_error("Not supported for chained items");
         }
 
-        if (candidate->markMoving(true)) {
+        if (candidate->markMoving()) {
           mmContainer.remove(itr);
           candidates.push_back(candidate);
         } else {
@@ -2052,7 +2052,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
 
         // TODO: only allow it for read-only items?
         // or implement mvcc
-        if (candidate->markMoving(true)) {
+        if (candidate->markMoving()) {
           // promotions should rarely fail since we already marked moving
           mmContainer.remove(itr);
           candidates.push_back(candidate);

@@ -1303,19 +1303,6 @@ size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     Item& oldItem, WriteHandle& newItemHdl) {
-  //on function exit - the new item handle is no longer moving
-  //and other threads may access it - but in case where
-  //we failed to replace in access container we can give the
-  //new item back to the allocator
-  auto guard = folly::makeGuard([&]() {
-    auto ref = newItemHdl->unmarkMoving();
-    if (UNLIKELY(ref == 0)) {
-      const auto res =
-          releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
-      XDCHECK(res == ReleaseRes::kReleased);
-    }
-  });
-
   XDCHECK(oldItem.isMoving());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
@@ -1330,19 +1317,25 @@ bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     newItemHdl->markNvmClean();
   }
 
-  // mark new item as moving to block readers until the data is copied
-  // (moveCb is called). Mark item in MMContainer temporarily (TODO: should
-  // we remove markMoving requirement for the item to be linked?)
-  newItemHdl->markInMMContainer();
-  auto marked = newItemHdl->markMoving(false /* there is already a handle */);
-  newItemHdl->unmarkInMMContainer();
-  XDCHECK(marked);
-
   auto predicate = [&](const Item& item){
     // we rely on moving flag being set (it should block all readers)
     XDCHECK(item.getRefCount() == 0);
     return true;
   };
+
+  if (config_.moveCb) {
+    // Execute the move callback. We cannot make any guarantees about the
+    // consistency of the old item beyond this point, because the callback can
+    // do more than a simple memcpy() e.g. update external references. If there
+    // are any remaining handles to the old item, it is the caller's
+    // responsibility to invalidate them. The move can only fail after this
+    // statement if the old item has been removed or replaced, in which case it
+    // should be fine for it to be left in an inconsistent state.
+    config_.moveCb(oldItem, *newItemHdl, nullptr);
+  } else {
+    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
+                oldItem.getSize());
+  }
 
   auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl,
                                    predicate);
@@ -1363,26 +1356,13 @@ bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
   // 3. replaced handle is returned and eventually drops
   //    ref to 0 and the item is recycled back to allocator.
 
-  if (config_.moveCb) {
-    // Execute the move callback. We cannot make any guarantees about the
-    // consistency of the old item beyond this point, because the callback can
-    // do more than a simple memcpy() e.g. update external references. If there
-    // are any remaining handles to the old item, it is the caller's
-    // responsibility to invalidate them. The move can only fail after this
-    // statement if the old item has been removed or replaced, in which case it
-    // should be fine for it to be left in an inconsistent state.
-    config_.moveCb(oldItem, *newItemHdl, nullptr);
-  } else {
-    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
-                oldItem.getSize());
-  }
-
   // Adding the item to mmContainer has to succeed since no one can remove the item
   auto& newContainer = getMMContainer(*newItemHdl);
   auto mmContainerAdded = newContainer.add(*newItemHdl);
   XDCHECK(mmContainerAdded);
 
   // no one can add or remove chained items at this point
+  // TODO: is this race? new Item is already accessible but not yet marked with hasChainedItem()
   if (oldItem.hasChainedItem()) {
     // safe to acquire handle for a moving Item
     auto incRes = incRef(oldItem, false);
@@ -1612,7 +1592,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         if (lastTier && shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
           stats_.evictFailConcurrentFill.inc();
         } else if ( (lastTier && candidate_->markForEviction()) ||
-                    (!lastTier && candidate_->markMoving(true)) ) {
+                    (!lastTier && candidate_->markMoving()) ) {
           XDCHECK(candidate_->isMoving() || candidate_->isMarkedForEviction());
           // markForEviction to make sure no other thead is evicting the item
           // nor holding a handle to that item if this is last tier
@@ -3499,10 +3479,7 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);
-    // TODO: for chained items, moving bit is only used to avoid
-    // freeing the item prematurely
-    auto failIfRefNotZero = numTiers > 1 && !item->isChainedItem();
-    if (item->markMoving(failIfRefNotZero)) {
+    if (item->markMoving()) {
       markedMoving = true;
     }
   };
