@@ -12,6 +12,7 @@ sudo make install
 cd ../
 rm -rf idxd-config
 
+
 # Install DML Library
 git clone --recursive https://github.com/intel/DML.git
 cd DML
