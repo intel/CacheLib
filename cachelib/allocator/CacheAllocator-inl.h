@@ -1561,11 +1561,11 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     Item* toRecycle = nullptr;
     Item* toRecycleParent = nullptr;
     Item* candidate = nullptr;
-    WriteHandle headHandle{};
+    WriteHandle parentHandle{};
     typename NvmCacheT::PutToken token;
 
     mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate,
-                                      &toRecycle, &toRecycleParent, &headHandle,
+                                      &toRecycle, &toRecycleParent, &parentHandle,
                                       &searchTries, &mmContainer, &lastTier,
                                       &token](auto&& itr) {
       if (!itr) {
@@ -1585,10 +1585,8 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             toRecycle_->isChainedItem()
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_)
                 : nullptr;
-        WriteHandle headHandle_{};
         WriteHandle parentHandle_{};
         Item* candidate_;
-        bool isHead = false;
         if (!lastTier && toRecycle_->isChainedItem()) {
             const auto parentKey = toRecycleParent_->getKey();
             auto lock = chainedItemLocks_.tryLockExclusive(parentKey);
@@ -1599,22 +1597,9 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             }
             XDCHECK_EQ(&toRecycle_->asChainedItem().getParentItem(compressor_),
                        toRecycleParent_);
-            headHandle_ = findChainedItem(*toRecycleParent_);
-            if (headHandle_) {
-                if (headHandle_.get() == toRecycle_) {
-                    //we don't need to mark head handle as moving
-                    headHandle_.reset();
-                    isHead = true;
-                } else {
-                    bool marked = headHandle_->markMoving();
-                    if (!marked) {
-                        ++itr;
-                        continue;
-                    }
-                }
-            } else {
-                ++itr;
-                continue;
+            if (!toRecycleParent_->markMoving()) {
+              ++itr;
+              continue;
             }
             candidate_ = toRecycle_;
         } else if (lastTier && toRecycle_->isChainedItem()) {
@@ -1633,13 +1618,6 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         } else if ( (lastTier && candidate_->markForEviction()) ||
                     (!lastTier && candidate_->markMoving()) ) {
           XDCHECK(candidate_->isMoving() || candidate_->isMarkedForEviction());
-          if (isHead) {
-              XDCHECK(!headHandle);
-          }
-          if (headHandle_) {
-              XDCHECK(headHandle_->isMoving());
-              headHandle = std::move(headHandle_);
-          }
           toRecycleParent = toRecycleParent_;
           // markForEviction to make sure no other thead is evicting the item
           // nor holding a handle to that item if this is last tier
@@ -1656,10 +1634,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             mmContainer.remove(itr);
           }
           return;
-        } else if (headHandle_) {
-            XDCHECK(headHandle_->isMoving());
-            headHandle_->unmarkMoving();
-            wakeUpWaiters(*headHandle_,std::move(headHandle_));
+        } else if (!lastTier && toRecycle_->isChainedItem()) {
+          XDCHECK(toRecycleParent_->isMoving());
+          toRecycleParent_->unmarkMoving();
+          auto parentHandle_ = acquire(toRecycleParent_);
+          if (parentHandle_) {
+            wakeUpWaiters(*toRecycleParent_,std::move(parentHandle_));
+          }
         }
 
         if (candidate_->hasChainedItem()) {
@@ -1686,30 +1667,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       //failed to move a chained item - so evict the entire chain
       if (candidate->isChainedItem()) {
         //candidate should be parent now
-        if (headHandle) {
-            XDCHECK_EQ( &headHandle->asChainedItem().getParentItem(compressor_),
-                        toRecycleParent );
-            XDCHECK_EQ( &candidate->asChainedItem().getParentItem(compressor_),
-                        toRecycleParent );
-        }
-        bool marked = toRecycleParent->markMoving();
-        while (!marked) {
-            //we have a candidated marked moving and we failed to mark the parent
-            //we can't evict this item since we failed to allocate in next tier
-            //we might have to
-            marked = toRecycleParent->markMoving();
-        }
-        XDCHECK(marked);
+        XDCHECK_EQ( &candidate->asChainedItem().getParentItem(compressor_),
+                    toRecycleParent );
         candidate->unmarkMoving(); //old candidate was the child item
+        XDCHECK(toRecycleParent->isMoving());
         toRecycle = candidate; //we really want to recycle the child
         candidate = toRecycleParent; //but now we evict the chain and in
                                      //doing so recycle the child
-        if (headHandle) {
-          XDCHECK_EQ(headHandle->getRefCount(),2);
-          headHandle->unmarkMoving();
-          headHandle.reset();
-          XDCHECK(!headHandle);
-        }
       }
       //if insertOrReplace was called during move
       //then candidate will not be accessible (failed replace during tryEvict)
@@ -1756,9 +1720,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
       (*stats_.numWritebacks)[tid][pid][cid].inc();
       wakeUpWaiters(*candidate, std::move(evictedToNext));
-      if (headHandle) {
-          headHandle->unmarkMoving();
-          wakeUpWaiters(*headHandle,std::move(headHandle));
+      if (toRecycleParent) {
+          XDCHECK(toRecycleParent->isMoving());
+          toRecycleParent->unmarkMoving();
+          auto parentHandle = acquire(toRecycleParent);
+          if (parentHandle) {
+            wakeUpWaiters(*toRecycleParent,std::move(parentHandle));
+          }
       }
     }
 
