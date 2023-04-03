@@ -1559,10 +1559,13 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           config_.evictionSearchTries > searchTries)) {
 
     Item* toRecycle = nullptr;
+    Item* toRecycleParent = nullptr;
     Item* candidate = nullptr;
+    WriteHandle headHandle{};
     typename NvmCacheT::PutToken token;
 
-    mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate, &toRecycle,
+    mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate,
+                                      &toRecycle, &toRecycleParent, &headHandle,
                                       &searchTries, &mmContainer, &lastTier,
                                       &token](auto&& itr) {
       if (!itr) {
@@ -1577,12 +1580,48 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         ++searchTries;
         (*stats_.evictionAttempts)[tid][pid][cid].inc();
 
-        auto* toRecycle_ = itr.get();
-        auto* candidate_ =
+        Item* toRecycle_ = itr.get();
+        Item* toRecycleParent_ =
             toRecycle_->isChainedItem()
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_)
-                : toRecycle_;
-
+                : nullptr;
+        WriteHandle headHandle_{};
+        WriteHandle parentHandle_{};
+        Item* candidate_;
+        bool isHead = false;
+        if (!lastTier && toRecycle_->isChainedItem()) {
+            const auto parentKey = toRecycleParent_->getKey();
+            auto lock = chainedItemLocks_.tryLockExclusive(parentKey);
+            if (!lock || &toRecycle_->asChainedItem().getParentItem(compressor_) !=
+                       toRecycleParent_) {
+                ++itr;
+                continue;
+            }
+            XDCHECK_EQ(&toRecycle_->asChainedItem().getParentItem(compressor_),
+                       toRecycleParent_);
+            headHandle_ = findChainedItem(*toRecycleParent_);
+            if (headHandle_) {
+                if (headHandle_.get() == toRecycle_) {
+                    //we don't need to mark head handle as moving
+                    headHandle_.reset();
+                    isHead = true;
+                } else {
+                    bool marked = headHandle_->markMoving();
+                    if (!marked) {
+                        ++itr;
+                        continue;
+                    }
+                }
+            } else {
+                ++itr;
+                continue;
+            }
+            candidate_ = toRecycle_;
+        } else if (lastTier && toRecycle_->isChainedItem()) {
+            candidate_ = toRecycleParent_;
+        } else {
+            candidate_ = toRecycle_;
+        }
         if (lastTier) {
           // if it's last tier, the item will be evicted
           // need to create put token before marking it exclusive
@@ -1594,21 +1633,33 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         } else if ( (lastTier && candidate_->markForEviction()) ||
                     (!lastTier && candidate_->markMoving()) ) {
           XDCHECK(candidate_->isMoving() || candidate_->isMarkedForEviction());
+          if (isHead) {
+              XDCHECK(!headHandle);
+          }
+          if (headHandle_) {
+              XDCHECK(headHandle_->isMoving());
+              headHandle = std::move(headHandle_);
+          }
+          toRecycleParent = toRecycleParent_;
           // markForEviction to make sure no other thead is evicting the item
           // nor holding a handle to that item if this is last tier
           // since we won't be moving the item to the next tier
           toRecycle = toRecycle_;
           candidate = candidate_;
-
           // Check if parent changed for chained items - if yes, we cannot
           // remove the child from the mmContainer as we will not be evicting
           // it. We could abort right here, but we need to cleanup in case
           // unmarkForEviction() returns 0 - so just go through normal path.
           if (!toRecycle_->isChainedItem() ||
               &toRecycle->asChainedItem().getParentItem(compressor_) ==
-                  candidate)
+                  toRecycleParent_) {
             mmContainer.remove(itr);
+          }
           return;
+        } else if (headHandle_) {
+            XDCHECK(headHandle_->isMoving());
+            headHandle_->unmarkMoving();
+            wakeUpWaiters(*headHandle_,std::move(headHandle_));
         }
 
         if (candidate_->hasChainedItem()) {
@@ -1632,6 +1683,34 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     auto evictedToNext = lastTier ? nullptr
         : tryEvictToNextMemoryTier(*candidate, false);
     if (!evictedToNext) {
+      //failed to move a chained item - so evict the entire chain
+      if (candidate->isChainedItem()) {
+        //candidate should be parent now
+        if (headHandle) {
+            XDCHECK_EQ( &headHandle->asChainedItem().getParentItem(compressor_),
+                        toRecycleParent );
+            XDCHECK_EQ( &candidate->asChainedItem().getParentItem(compressor_),
+                        toRecycleParent );
+        }
+        bool marked = toRecycleParent->markMoving();
+        while (!marked) {
+            //we have a candidated marked moving and we failed to mark the parent
+            //we can't evict this item since we failed to allocate in next tier
+            //we might have to
+            marked = toRecycleParent->markMoving();
+        }
+        XDCHECK(marked);
+        candidate->unmarkMoving(); //old candidate was the child item
+        toRecycle = candidate; //we really want to recycle the child
+        candidate = toRecycleParent; //but now we evict the chain and in
+                                     //doing so recycle the child
+        if (headHandle) {
+          XDCHECK_EQ(headHandle->getRefCount(),2);
+          headHandle->unmarkMoving();
+          headHandle.reset();
+          XDCHECK(!headHandle);
+        }
+      }
       //if insertOrReplace was called during move
       //then candidate will not be accessible (failed replace during tryEvict)
       // - therefore this was why we failed to
@@ -1677,6 +1756,10 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
       (*stats_.numWritebacks)[tid][pid][cid].inc();
       wakeUpWaiters(*candidate, std::move(evictedToNext));
+      if (headHandle) {
+          headHandle->unmarkMoving();
+          wakeUpWaiters(*headHandle,std::move(headHandle));
+      }
     }
 
     XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
@@ -1761,7 +1844,9 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item, bool fromBgThread) {
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
-  if(item.hasChainedItem()) return WriteHandle{}; // TODO: We do not support ChainedItem yet
+  if(item.isChainedItem() || item.hasChainedItem()) {
+    return WriteHandle{};
+  }
   if(item.isExpired()) {
     accessContainer_->remove(item);
     item.unmarkMoving();

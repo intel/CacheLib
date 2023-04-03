@@ -330,8 +330,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
       // chained item can have ref count == 1, this just means it's linked in the chain
       if (isChained && (curValue & kAccessRefMask) > 1) {
         return false;
-      }
-      if ((curValue & kAccessRefMask) != 0) {
+      } else if ((curValue & kAccessRefMask) != 0) {
         return false;
       }
       if (!flagSet || alreadyExclusive) {
