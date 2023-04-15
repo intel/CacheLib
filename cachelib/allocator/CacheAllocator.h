@@ -1542,7 +1542,7 @@ class CacheAllocator : public CacheBase {
   // @throw     std::invalid_argument if the size requested is invalid or
   //            if the item is invalid
   WriteHandle allocateChainedItemInternal(const ReadHandle& parent,
-                                          uint32_t size);
+                                          uint32_t size, TierId tid, bool fromBgThread);
 
   // Given an item and its parentKey, validate that the parentKey
   // corresponds to an item that's the parent of the supplied item.
@@ -1563,7 +1563,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return  handle to the newly allocated item
   //
-  WriteHandle allocateNewItemForOldItem(const Item& item);
+  WriteHandle allocateNewItemForOldItem(const Item& item, TierId tid, bool fromBgThread);
 
   // internal helper that grabs a refcounted handle to the item. This does
   // not record the access to reflect in the mmContainer.
