@@ -333,10 +333,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
       } else if (!isChained && (curValue & kAccessRefMask) != 0) {
         return false;
       }
-      // when we mark a chained item as moving it - it may not
-      // be in the mmContainer
-      if ( (!isChained && (!flagSet || alreadyExclusive)) ||
-           ( isChained && alreadyExclusive) ) {
+      if (!flagSet || alreadyExclusive) {
         return false;
       }
       if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {
