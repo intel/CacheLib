@@ -579,7 +579,7 @@ void CacheAllocator<CacheTrait>::addChainedItem(WriteHandle& parent,
   // Increment refcount since this chained item is now owned by the parent
   // Parent will decrement the refcount upon release. Since this is an
   // internal refcount, we dont include it in active handle tracking.
-  auto ret = child->incRef(true);
+  auto ret = child->incRef();
   XDCHECK(ret == RefcountWithFlags::incResult::incOk);
   XDCHECK_EQ(2u, child->getRefCount());
 
@@ -648,22 +648,20 @@ CacheAllocator<CacheTrait>::getParentKey(const Item& chainedItem) {
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::transferChainLocked(WriteHandle& parent,
+void CacheAllocator<CacheTrait>::transferChainLocked(Item& parent,
                                                      WriteHandle& newParent) {
   // parent must be in a state to not have concurrent readers. Eviction code
-  // paths rely on holding the last item handle. Since we hold on to an item
-  // handle here, the chain will not be touched by any eviction code path.
-  XDCHECK(parent);
+  // paths rely on holding the last item handle.
   XDCHECK(newParent);
-  XDCHECK_EQ(parent->getKey(), newParent->getKey());
-  XDCHECK(parent->hasChainedItem());
+  XDCHECK_EQ(parent.getKey(), newParent->getKey());
+  XDCHECK(parent.hasChainedItem());
 
   if (newParent->hasChainedItem()) {
     throw std::invalid_argument(folly::sformat(
         "New Parent {} has invalid state", newParent->toString()));
   }
 
-  auto headHandle = findChainedItem(*parent);
+  auto headHandle = findChainedItem(parent);
   XDCHECK(headHandle);
 
   // remove from the access container since we are changing the key
@@ -686,7 +684,7 @@ void CacheAllocator<CacheTrait>::transferChainLocked(WriteHandle& parent,
         folly::sformat("Did not expect to find an existing chain for {}",
                        newParent->toString(), oldHead->toString()));
   }
-  parent->unmarkHasChainedItem();
+  parent.unmarkHasChainedItem();
 }
 
 template <typename CacheTrait>
@@ -697,7 +695,7 @@ void CacheAllocator<CacheTrait>::transferChainAndReplace(
   }
   { // scope for chained item lock
     auto l = chainedItemLocks_.lockExclusive(parent->getKey());
-    transferChainLocked(parent, newParent);
+    transferChainLocked(*parent, newParent);
   }
 
   if (replaceIfAccessible(*parent, *newParent)) {
@@ -828,7 +826,7 @@ CacheAllocator<CacheTrait>::replaceChainedItemLocked(Item& oldItem,
   // Since this is an internal refcount, we dont include it in active handle
   // tracking.
 
-  auto ret = newItemHdl->incRef(true);
+  auto ret = newItemHdl->incRef();
   XDCHECK(ret == RefcountWithFlags::incResult::incOk);
   return oldItemHdl;
 }
@@ -995,8 +993,8 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
 }
 
 template <typename CacheTrait>
-RefcountWithFlags::incResult CacheAllocator<CacheTrait>::incRef(Item& it, bool failIfMoving) {
-   auto ret = it.incRef(failIfMoving);
+RefcountWithFlags::incResult CacheAllocator<CacheTrait>::incRef(Item& it) {
+   auto ret = it.incRef();
    if (ret == RefcountWithFlags::incResult::incOk) {
      ++handleCount_.tlStats();
    }
@@ -1020,11 +1018,8 @@ CacheAllocator<CacheTrait>::acquire(Item* it) {
 
   SCOPE_FAIL { stats_.numRefcountOverflow.inc(); };
 
-  // TODO: do not block incRef for child items to avoid deadlock
-  const auto failIfMoving = getNumTiers() > 1 && !it->isChainedItem();
-
   while (true) {
-    auto incRes = incRef(*it, failIfMoving);
+    auto incRes = incRef(*it);
     if (LIKELY(incRes == RefcountWithFlags::incResult::incOk)) {
       return WriteHandle{it, *this};
     } else if (incRes == RefcountWithFlags::incResult::incFailedEviction){
@@ -1363,16 +1358,12 @@ bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 
   // no one can add or remove chained items at this point
   // TODO: is this race? new Item is already accessible but not yet marked with hasChainedItem()
+  // Should we move chainedItemLocks_.lockExclusive before replaceIf?
   if (oldItem.hasChainedItem()) {
-    // safe to acquire handle for a moving Item
-    auto incRes = incRef(oldItem, false);
-    XDCHECK(incRes == RefcountWithFlags::incResult::incOk);
-    auto oldHandle = WriteHandle{&oldItem,*this};
-    XDCHECK_EQ(1u, oldHandle->getRefCount()) << oldHandle->toString();
     XDCHECK(!newItemHdl->hasChainedItem()) << newItemHdl->toString();
     try {
       auto l = chainedItemLocks_.lockExclusive(oldItem.getKey());
-      transferChainLocked(oldHandle, newItemHdl);
+      transferChainLocked(oldItem, newItemHdl);
     } catch (const std::exception& e) {
       // this should never happen because we drained all the handles.
       XLOGF(DFATAL, "{}", e.what());
@@ -1387,82 +1378,24 @@ bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
 }
 
 template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
-                                                 WriteHandle& newItemHdl) {
-  XDCHECK(config_.moveCb);
-  util::LatencyTracker tracker{stats_.moveRegularLatency_};
+typename CacheAllocator<CacheTrait>::NvmCacheT::PutToken
+CacheAllocator<CacheTrait>::createPutToken(Item& item) {
+  const bool evictToNvmCache = shouldWriteToNvmCache(item);
+  return evictToNvmCache ? nvmCache_->createPutToken(item.getKey())
+                         : typename NvmCacheT::PutToken{};
+}
 
-  if (!oldItem.isAccessible() || oldItem.isExpired()) {
-    return false;
-  }
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::unlinkItemForEviction(Item& it) {
+  XDCHECK(it.isMarkedForEviction());
+  XDCHECK(it.getRefCount() == 0);
+  accessContainer_->remove(it);
+  removeFromMMContainer(it);
 
-  XDCHECK_EQ(newItemHdl->getSize(), oldItem.getSize());
-  XDCHECK_EQ(reinterpret_cast<uintptr_t>(&getMMContainer(oldItem)),
-             reinterpret_cast<uintptr_t>(&getMMContainer(*newItemHdl)));
-
-  // take care of the flags before we expose the item to be accessed. this
-  // will ensure that when another thread removes the item from RAM, we issue
-  // a delete accordingly. See D7859775 for an example
-  if (oldItem.isNvmClean()) {
-    newItemHdl->markNvmClean();
-  }
-
-  // Execute the move callback. We cannot make any guarantees about the
-  // consistency of the old item beyond this point, because the callback can
-  // do more than a simple memcpy() e.g. update external references. If there
-  // are any remaining handles to the old item, it is the caller's
-  // responsibility to invalidate them. The move can only fail after this
-  // statement if the old item has been removed or replaced, in which case it
-  // should be fine for it to be left in an inconsistent state.
-  config_.moveCb(oldItem, *newItemHdl, nullptr);
-
-  // Inside the access container's lock, this checks if the old item is
-  // accessible and its refcount is one. If the item is not accessible,
-  // there is no point to replace it since it had already been removed
-  // or in the process of being removed. If the item is in cache but the
-  // refcount is non-one, it means user could be attempting to remove
-  // this item through an API such as remove(itemHandle). In this case,
-  // it is unsafe to replace the old item with a new one, so we should
-  // also abort.
-  if (!accessContainer_->replaceIf(oldItem, *newItemHdl,
-                                   itemSlabMovePredicate)) {
-    return false;
-  }
-
-  // Inside the MM container's lock, this checks if the old item exists to
-  // make sure that no other thread removed it, and only then replaces it.
-  if (!replaceInMMContainer(oldItem, *newItemHdl)) {
-    accessContainer_->remove(*newItemHdl);
-    return false;
-  }
-
-  // Replacing into the MM container was successful, but someone could have
-  // called insertOrReplace() or remove() before or after the
-  // replaceInMMContainer() operation, which would invalidate newItemHdl.
-  if (!newItemHdl->isAccessible()) {
-    removeFromMMContainer(*newItemHdl);
-    return false;
-  }
-
-  // no one can add or remove chained items at this point
-  if (oldItem.hasChainedItem()) {
-    auto oldItemHdl = acquire(&oldItem);
-    XDCHECK_EQ(1u, oldItemHdl->getRefCount()) << oldItemHdl->toString();
-    XDCHECK(!newItemHdl->hasChainedItem()) << newItemHdl->toString();
-    try {
-      auto l = chainedItemLocks_.lockExclusive(oldItem.getKey());
-      transferChainLocked(oldItemHdl, newItemHdl);
-    } catch (const std::exception& e) {
-      // this should never happen because we drained all the handles.
-      XLOGF(DFATAL, "{}", e.what());
-      throw;
-    }
-
-    XDCHECK(!oldItem.hasChainedItem());
-    XDCHECK(newItemHdl->hasChainedItem());
-  }
-  newItemHdl.unmarkNascent();
-  return true;
+  // Since we managed to mark the item for eviction we must be the only
+  // owner of the item.
+  const auto ref = it.unmarkForEviction();
+  XDCHECK(ref == 0u);
 }
 
 template <typename CacheTrait>
@@ -1477,14 +1410,14 @@ bool CacheAllocator<CacheTrait>::moveChainedItem(ChainedItem& oldItem,
     return false;
   }
 
-  auto& expectedParent = oldItem.getParentItem(compressor_);
-  const auto parentKey = expectedParent.getKey();
+  const auto parentKey = oldItem.getParentItem(compressor_).getKey();
+
+  // Grab lock to prevent anyone else from modifying the chain
   auto l = chainedItemLocks_.lockExclusive(parentKey);
 
-  // verify old item under the lock
   auto parentHandle =
       validateAndGetParentHandleForChainedMoveLocked(oldItem, parentKey);
-  if (!parentHandle || &expectedParent != parentHandle.get()) {
+  if (!parentHandle) {
     return false;
   }
 
@@ -1524,27 +1457,6 @@ bool CacheAllocator<CacheTrait>::moveChainedItem(ChainedItem& oldItem,
   XDCHECK(!oldItemHandle->isInMMContainer());
 
   return true;
-}
-
-template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::NvmCacheT::PutToken
-CacheAllocator<CacheTrait>::createPutToken(Item& item) {
-  const bool evictToNvmCache = shouldWriteToNvmCache(item);
-  return evictToNvmCache ? nvmCache_->createPutToken(item.getKey())
-                         : typename NvmCacheT::PutToken{};
-}
-
-template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::unlinkItemForEviction(Item& it) {
-  XDCHECK(it.isMarkedForEviction());
-  XDCHECK(it.getRefCount() == 0);
-  accessContainer_->remove(it);
-  removeFromMMContainer(it);
-
-  // Since we managed to mark the item for eviction we must be the only
-  // owner of the item.
-  const auto ref = it.unmarkForEviction();
-  XDCHECK(ref == 0u);
 }
 
 template <typename CacheTrait>
@@ -3011,6 +2923,8 @@ void CacheAllocator<CacheTrait>::releaseSlabImpl(TierId tid,
   //  4. Move on to the next item if current item is freed
   for (auto alloc : releaseContext.getActiveAllocations()) {
     auto startTimeSec = util::getCurrentTimeSec();
+    Item& item = *static_cast<Item*>(alloc);
+
     // Need to mark an item for release before proceeding
     // If we can't mark as moving, it means the item is already freed
     const bool isAlreadyFreed =
@@ -3018,8 +2932,6 @@ void CacheAllocator<CacheTrait>::releaseSlabImpl(TierId tid,
     if (isAlreadyFreed) {
       continue;
     }
-
-    Item& item = *static_cast<Item*>(alloc);
 
     // Try to move this item and make sure we can free the memory
     const bool isMoved = moveForSlabRelease(releaseContext, item, throttler);
@@ -3053,6 +2965,7 @@ typename RefcountWithFlags::Value CacheAllocator<CacheTrait>::unmarkMovingAndWak
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveForSlabRelease(
     const SlabReleaseContext& ctx, Item& oldItem, util::Throttler& throttler) {
+  XDCHECK(oldItem.isMoving());
   if (!config_.moveCb) {
     return false;
   }
@@ -3064,6 +2977,7 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(
   for (unsigned int itemMovingAttempts = 0;
        itemMovingAttempts < config_.movingTries;
        ++itemMovingAttempts) {
+    XDCHECK(oldItem.isMoving());
     stats_.numMoveAttempts.inc();
 
     // Nothing to move and the key is likely also bogus for chained items.
@@ -3209,14 +3123,14 @@ CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
     Item& oldItem, WriteHandle& newItemHdl) {
+
   // By holding onto a user-level synchronization object, we ensure moving
   // a regular item or chained item is synchronized with any potential
   // user-side mutation.
   std::unique_ptr<SyncObj> syncObj;
-  if (config_.movingSync && getNumTiers() == 1) {
-    // TODO: use moving-bit synchronization for single tier as well
+  if (config_.movingSync) {
     if (!oldItem.isChainedItem()) {
-      syncObj = config_.movingSync(oldItem.getKey());
+      // Do nothing - modifications are synchronized through Wait Context
     } else {
       // Copy the key so we have a valid key to work with if the chained
       // item is still valid.
@@ -3239,45 +3153,25 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
     }
   }
 
-  // TODO: we can unify move*Item and move*ItemWithSync by always
-  // using the moving bit to block readers.
-  if (getNumTiers() == 1) {
-    return oldItem.isChainedItem()
-              ? moveChainedItem(oldItem.asChainedItem(), newItemHdl)
-              : moveRegularItem(oldItem, newItemHdl);
+  if (oldItem.isChainedItem()) {
+    return moveChainedItem(oldItem.asChainedItem(), newItemHdl);
   } else {
-    if (oldItem.isChainedItem() || oldItem.hasChainedItem()) {
-      // TODO: add support for chained items
-      return false;
-    } else {
-      //move can fail if another thread calls insertOrReplace
-      //in this case oldItem is no longer valid (not accessible, 
-      //it gets removed from MMContainer and evictForSlabRelease
-      //will send it back to the allocator
+      // move can fail if another thread calls insertOrReplace
+      // in this case oldItem is no longer valid (not accessible, 
+      // it gets removed from MMContainer and evictForSlabRelease
+      // will send it back to the allocator
       bool ret = moveRegularItemWithSync(oldItem, newItemHdl);
-      if (!ret) {
-          //we failed to move - newItemHdl was released back to allocator
-          //by the moveRegularItemWithSync but oldItem is not accessible
-          //and no longer valid - we need to clean it up here
-          XDCHECK(!oldItem.isAccessible());
-          oldItem.markForEvictionWhenMoving();
-          unlinkItemForEviction(oldItem);
-          wakeUpWaiters(oldItem, {});
-      } else {
+      if (ret) {
         removeFromMMContainer(oldItem);
       }
       return ret;
-    }
   }
 }
 
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::wakeUpWaiters(Item& item, WriteHandle handle)
 {
-  // readers do not block on 'moving' items in case there is only one tier
-  if (getNumTiers() > 1) {
-    wakeUpWaitersLocked(item.getKey(), std::move(handle));
-  }
+  wakeUpWaitersLocked(item.getKey(), std::move(handle));
 }
 
 template <typename CacheTrait>
@@ -3327,46 +3221,42 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     if (item.isChainedItem()) {
       auto& expectedParent = item.asChainedItem().getParentItem(compressor_);
 
-      if (getNumTiers() == 1) {
-        // TODO: unify this with multi-tier implementation
-        // right now, taking a chained item lock here would lead to deadlock
-        const std::string parentKey = expectedParent.getKey().str();
-        auto l = chainedItemLocks_.lockExclusive(parentKey);
+      const std::string parentKey = expectedParent.getKey().str();
+      auto l = chainedItemLocks_.lockExclusive(parentKey);
 
-        // check if the child is still in mmContainer and the expected parent is
-        // valid under the chained item lock.
-        if (expectedParent.getKey() != parentKey || !item.isInMMContainer() ||
-            item.isOnlyMoving() ||
-            &expectedParent != &item.asChainedItem().getParentItem(compressor_) ||
-            !expectedParent.isAccessible() || !expectedParent.hasChainedItem()) {
+      // check if the child is still in mmContainer and the expected parent is
+      // valid under the chained item lock.
+      if (expectedParent.getKey() != parentKey || !item.isInMMContainer() ||
+          item.isOnlyMoving() ||
+          &expectedParent != &item.asChainedItem().getParentItem(compressor_) ||
+          !expectedParent.isAccessible() || !expectedParent.hasChainedItem()) {
+        continue;
+      }
+
+      // search if the child is present in the chain
+      {
+        auto parentHandle = findInternal(parentKey);
+        if (!parentHandle || parentHandle != &expectedParent) {
           continue;
         }
 
-        // search if the child is present in the chain
-        {
-          auto parentHandle = findInternal(parentKey);
-          if (!parentHandle || parentHandle != &expectedParent) {
-            continue;
-          }
+        ChainedItem* head = nullptr;
+        { // scope for the handle
+          auto headHandle = findChainedItem(expectedParent);
+          head = headHandle ? &headHandle->asChainedItem() : nullptr;
+        }
 
-          ChainedItem* head = nullptr;
-          { // scope for the handle
-            auto headHandle = findChainedItem(expectedParent);
-            head = headHandle ? &headHandle->asChainedItem() : nullptr;
+        bool found = false;
+        while (head) {
+          if (head == &item) {
+            found = true;
+            break;
           }
+          head = head->getNext(compressor_);
+        }
 
-          bool found = false;
-          while (head) {
-            if (head == &item) {
-              found = true;
-              break;
-            }
-            head = head->getNext(compressor_);
-          }
-
-          if (!found) {
-            continue;
-          }
+        if (!found) {
+          continue;
         }
       }
 
@@ -3376,14 +3266,12 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
         // unmark the child so it will be freed
         item.unmarkMoving();
         unlinkItemForEviction(*evicted);
-        // wake up any readers that wait for the move to complete
-        // it's safe to do now, as we have the item marked exclusive and
-        // no other reader can be added to the waiters list
-        wakeUpWaiters(*evicted, {});
       } else {
         // TODO: potential deadlock with markUseful for parent item
         // for now, we do not block any reader on child items but this
         // should probably be fixed
+
+        // TODO: the comment above is no longer relevant???
         continue;
       }
     } else {
@@ -3417,14 +3305,10 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
     const auto res =
         releaseBackToAllocator(*evicted, RemoveContext::kEviction, false);
 
-    if (getNumTiers() == 1) {
-      XDCHECK(res == ReleaseRes::kReleased);
-    } else {
-      const bool isAlreadyFreed =
-          !markMovingForSlabRelease(ctx, &item, throttler);
-      if (!isAlreadyFreed) {
-        continue;
-      }
+    const bool isAlreadyFreed =
+        !markMovingForSlabRelease(ctx, &item, throttler);
+    if (!isAlreadyFreed) {
+      continue;
     }
   
     return;
@@ -3474,8 +3358,7 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
   bool itemFreed = true;
   bool markedMoving = false;
   TierId tid = getTierId(alloc);
-  auto numTiers = getNumTiers();
-  const auto fn = [&markedMoving, &itemFreed, numTiers](void* memory) {
+  const auto fn = [&markedMoving, &itemFreed](void* memory) {
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);

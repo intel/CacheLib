@@ -140,18 +140,21 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // @return true if refcount is bumped. false otherwise (if item is exclusive)
   // @throw  exception::RefcountOverflow if new count would be greater than
   // maxCount
-  FOLLY_ALWAYS_INLINE incResult incRef(bool failIfMoving) {
+  FOLLY_ALWAYS_INLINE incResult incRef() {
     incResult res = incOk;
-    auto predicate = [failIfMoving, &res](const Value curValue) {
+    auto predicate = [&res](const Value curValue) {
        Value bitMask = getAdminRef<kExclusive>();
 
        const bool exlusiveBitIsSet = curValue & bitMask;
+       const bool isChained = curValue & getFlag<kIsChainedItem>();
        if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {
          throw exception::RefcountOverflow("Refcount maxed out.");
        } else if (exlusiveBitIsSet && (curValue & kAccessRefMask) == 0) {
+        // chained item cannot be marked for eviction
+        XDCHECK(!isChained);
          res = incFailedEviction;
          return false;
-       } else if (exlusiveBitIsSet && failIfMoving) {
+       } else if (!isChained && exlusiveBitIsSet) {
          res = incFailedMoving;
          return false;
        }
@@ -331,7 +334,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
       if (isChained && (curValue & kAccessRefMask) > 1) {
         return false;
       }
-      if ((curValue & kAccessRefMask) != 0) {
+      if (!isChained && (curValue & kAccessRefMask) != 0) {
         return false;
       }
       if (!flagSet || alreadyExclusive) {
