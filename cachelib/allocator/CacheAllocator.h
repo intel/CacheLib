@@ -1386,7 +1386,7 @@ class CacheAllocator : public CacheBase {
 
  private:
   // wrapper around Item's refcount and active handle tracking
-  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(Item& it, bool failIfMoving);
+  FOLLY_ALWAYS_INLINE RefcountWithFlags::incResult incRef(Item& it);
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef(Item& it);
 
   // drops the refcount and if needed, frees the allocation back to the memory
@@ -1621,18 +1621,6 @@ class CacheAllocator : public CacheBase {
   //               successfully.
   bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
 
-  // Moves a regular item to a different slab. This should only be used during
-  // slab release after the item's exclusive bit has been set. The user supplied
-  // callback is responsible for copying the contents and fixing the semantics
-  // of chained item.
-  //
-  // @param oldItem     item being moved
-  // @param newItemHdl  Reference to the handle of the new item being moved into
-  //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
-  bool moveRegularItem(Item& oldItem, WriteHandle& newItemHdl);
-
   // template class for viewAsChainedAllocs that takes either ReadHandle or
   // WriteHandle
   template <typename Handle, typename Iter>
@@ -1644,29 +1632,12 @@ class CacheAllocator : public CacheBase {
   template <typename Handle>
   folly::IOBuf convertToIOBufT(Handle& handle);
 
-  // Moves a chained item to a different slab. This should only be used during
-  // slab release after the item's exclusive bit has been set. The user supplied
-  // callback is responsible for copying the contents and fixing the semantics
-  // of chained item.
-  //
-  // Note: If we have successfully moved the old item into the new, the
-  //       newItemHdl is reset and no longer usable by the caller.
-  //
-  // @param oldItem       Reference to the item being moved
-  // @param newItemHdl    Reference to the handle of the new item being
-  //                      moved into
-  //
-  // @return true  If the move was completed, and the containers were updated
-  //               successfully.
-  bool moveChainedItem(ChainedItem& oldItem, WriteHandle& newItemHdl);
-
   // Transfers the chain ownership from parent to newParent. Parent
   // will be unmarked as having chained allocations. Parent will not be null
   // after calling this API.
   //
-  // Parent and NewParent must be valid handles to items with same key and
-  // parent must have chained items and parent handle must be the only
-  // outstanding handle for parent. New parent must be without any chained item
+  // NewParent must be valid handles to item with same key as Parent and
+  // Parent must have chained items. New parent must be without any chained item
   // handles.
   //
   // Chained item lock for the parent's key needs to be held in exclusive mode.
@@ -1675,7 +1646,7 @@ class CacheAllocator : public CacheBase {
   // @param newParent the new parent for the chain
   //
   // @throw if any of the conditions for parent or newParent are not met.
-  void transferChainLocked(WriteHandle& parent, WriteHandle& newParent);
+  void transferChainLocked(Item& parent, WriteHandle& newParent);
 
   // replace a chained item in the existing chain. This needs to be called
   // with the chained item lock held exclusive

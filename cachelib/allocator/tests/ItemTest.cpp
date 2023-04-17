@@ -85,7 +85,7 @@ TEST(ItemTest, ExpiryTime) {
   // So that exclusive bit will be set
   item->markAccessible();
   // Test that writes fail while the item is moving
-  result = item->markMoving(true);
+  result = item->markMoving();
   EXPECT_TRUE(result);
   result = item->updateExpiryTime(0);
   EXPECT_FALSE(result);
