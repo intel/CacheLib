@@ -140,9 +140,9 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // @return true if refcount is bumped. false otherwise (if item is exclusive)
   // @throw  exception::RefcountOverflow if new count would be greater than
   // maxCount
-  FOLLY_ALWAYS_INLINE incResult incRef(bool failIfMoving) {
+  FOLLY_ALWAYS_INLINE incResult incRef() {
     incResult res = incOk;
-    auto predicate = [failIfMoving, &res](const Value curValue) {
+    auto predicate = [&res](const Value curValue) {
        Value bitMask = getAdminRef<kExclusive>();
 
        const bool exlusiveBitIsSet = curValue & bitMask;
@@ -151,7 +151,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
        } else if (exlusiveBitIsSet && (curValue & kAccessRefMask) == 0) {
          res = incFailedEviction;
          return false;
-       } else if (exlusiveBitIsSet && failIfMoving) {
+       } else if (exlusiveBitIsSet) {
          res = incFailedMoving;
          return false;
        }
