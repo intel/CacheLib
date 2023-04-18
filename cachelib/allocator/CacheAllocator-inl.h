@@ -1707,6 +1707,11 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
         Item* syncItem_;
         //sync on the parent item for chained items to move to next tier
         if (!lastTier && chainedItem_) {
+            if (&toRecycle_->asChainedItem().getParentItem(compressor_) !=
+                  toRecycleParent_) {
+                ++itr;
+                continue;
+            }
             syncItem_ = toRecycleParent_;
             candidate_ = toRecycle_;
             XDCHECK(l_);
@@ -1740,7 +1745,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           // it. We could abort right here, but we need to cleanup in case
           // unmarkForEviction() returns 0 - so just go through normal path.
           if (!chainedItem ||
-              &toRecycle->asChainedItem().getParentItem(compressor_) ==
+              &toRecycle_->asChainedItem().getParentItem(compressor_) ==
                   toRecycleParent_) {
             mmContainer.remove(itr);
           }
