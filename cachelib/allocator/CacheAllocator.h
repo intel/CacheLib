@@ -1655,6 +1655,8 @@ class CacheAllocator : public CacheBase {
   // @param newItemHdl  Reference to the handle of the new item being moved into
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
+  void afterRegularItemMoveAsync(Item& oldItem, WriteHandle& newItemHdl, 
+          dml::handler<dml::mem_copy_operation, std::allocator<dml::byte_t>>& dmlHandle);
   void afterRegularItemMoveAsync(Item& oldItem, WriteHandle& newItemHdl);
 
   // Moves a regular item to a different slab. This should only be used during
@@ -2039,9 +2041,9 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     for (Item* candidate : candidates) {
       auto evictedToNext = tryEvictToNextMemoryTier(*candidate);
       if (!evictedToNext) {
-	      auto token = createPutToken(*candidate);
-	      auto ret = candidate->markForEvictionWhenMoving();
-	      XDCHECK(ret);
+	auto token = createPutToken(*candidate);
+	auto ret = candidate->markForEvictionWhenMoving();
+	XDCHECK(ret);
 
         unlinkItemForEviction(*candidate);
       	// wake up any readers that wait for the move to complete
@@ -2118,11 +2120,14 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     std::vector<WriteHandle> newItemHandles;
     newItemHandles.reserve(batch);
     unsigned int validHandleCnt = 0;
-    for (Item* candidate : candidates) {
+    for (auto itr = candidates.begin(); itr != candidates.end();) {
+      Item* candidate = *itr;
       auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true);
-      newItemHandles.emplace_back(std::move(evictedToNext));
-      if (newItemHandles.back()) {
+      if (evictedToNext) {
+        auto touch = evictedToNext->getMemory();
+        newItemHandles.emplace_back(std::move(evictedToNext));
         validHandleCnt++;
+        ++itr;
         continue;
       }
       auto token = createPutToken(*candidate);
@@ -2137,67 +2142,199 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
         nvmCache_->put(*candidate, std::move(token));
       }
+      candidates.erase(itr);
     }
 
     if (!validHandleCnt) {
       return evictions;
     }
+    XDCHECK_EQ(newItemHandles.size(),candidates.size());
 
-    size_t triesLeft =
-              (validHandleCnt >= MIN_DML_BATCH_SIZE) ? MAX_DML_TRIES : 0;
-    /* Note: This limit (4) will later be replaced with
-       dml::DML_MIN_BATCH_SIZE when DML 1.0.0 is released */
-
-    if (triesLeft) {
-      /* Set up batch copy of items using DML */
-      auto sequence =
-          dml::sequence(validHandleCnt, std::allocator<dml::byte_t>());
-      for (auto index = 0U; index < candidates.size(); index++) {
-        if (!newItemHandles[index]) {
-          continue;
-        }
-        XDCHECK_EQ(newItemHandles[index]->getKey(), candidates[index]->getKey());
-        XDCHECK_EQ(newItemHandles[index]->getSize(), candidates[index]->getSize());
-        XDCHECK_EQ(newItemHandles[index]->getRefCount(), 1);
-        XDCHECK_EQ(candidates[index]->getRefCount(), 0);
-        dml::const_data_view srcView = dml::make_view(
-            reinterpret_cast<uint8_t*>(candidates[index]->getMemory()),
-            candidates[index]->getSize());
-        dml::data_view dstView = dml::make_view(
-            reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
-            newItemHandles[index]->getSize());
-        if (sequence.add(dml::mem_copy, srcView, dstView) !=
-            dml::status_code::ok) {
-          throw std::runtime_error(
-              "failed to add dml::mem_copy operation to the sequence.");
-        }
-      }
-
-      for (; triesLeft > 0; --triesLeft) {
-        /* Copy the item batch using dml::hardware (DSA) */
-        auto result = dml::execute<dml::hardware>(dml::batch, sequence, 0);
-        if (result.status == dml::status_code::ok) {
-          break;
-        }
-      }
-    }
-
-    if (!triesLeft) {
-      /* Use memcpy if batch count < 4  or dml fails */
-      for (auto index = 0U; index < candidates.size(); index++) {
-        if (!newItemHandles[index]) {
-          continue;
-        }
-        std::memcpy(newItemHandles[index]->getMemory(),
-                    candidates[index]->getMemory(),
-                    candidates[index]->getSize());
-      }
-    }
+    /* for DML async op */
+    auto dmlHandles = std::vector<dml::handler<dml::mem_copy_operation, 
+         std::allocator<dml::byte_t>>>();
+    dmlHandles.reserve(validHandleCnt);
 
     for (auto index = 0U; index < candidates.size(); index++) {
-      if (newItemHandles[index]) {
-        afterRegularItemMoveAsync(*candidates[index], newItemHandles[index]);
-        evictions++;
+      XDCHECK(newItemHandles[index]);
+      XDCHECK_EQ(newItemHandles[index]->getKey(), candidates[index]->getKey());
+      XDCHECK_EQ(newItemHandles[index]->getSize(), candidates[index]->getSize());
+      XDCHECK_EQ(newItemHandles[index]->getRefCount(), 1);
+      XDCHECK_EQ(candidates[index]->getRefCount(), 0);
+
+      dml::const_data_view srcView = dml::make_view(
+          reinterpret_cast<uint8_t*>(candidates[index]->getMemory()),
+          candidates[index]->getSize());
+      dml::data_view dstView = dml::make_view(
+          reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
+          newItemHandles[index]->getSize());
+      if (0) {
+        auto dmlHandle = 
+            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);
+        auto result = dmlHandle.get();
+        if (result.status != dml::status_code::ok) {
+              std::string error;
+              switch (result.status) {
+                  case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
+                      error = "false pred";
+                      break;
+                  case dml::status_code::partial_completion:    /**< Operation was partially completed */
+                      error = "partial complte";
+                      break;
+                  case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
+                      error = "nullptr";
+                      break;
+                  case dml::status_code::bad_size:              /**< Invalid byte size was specified */
+                      error = "bad size";
+                      break;
+                  case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
+                      error = "bad len";
+                      break;
+                  case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
+                      error = "inconsis size";
+                      break;
+                  case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
+                      error = "dualcast bad padding";
+                      break;
+                  case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
+                      error = "bad align";
+                      break;
+                  case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
+                      error = "buf overlap";
+                      break;
+                  case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
+                      error = "delta bad size";
+                      break;
+                  case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
+                      error = "delta emptry";
+                      break;
+                  case dml::status_code::batch_overflow:        /**< Batch is full */
+                      error = "batch overflow";
+                      break;
+                  case dml::status_code::execution_failed:      /**< Unknown execution error */
+                      error = "unknw exec";
+                      break;
+                  case dml::status_code::unsupported_operation: /**< Unknown execution error */
+                      error = "unsupported op";
+                      break;
+                  case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
+                      error = "busy";
+                      break;
+                  case dml::status_code::error:                  /**< Internal library error occurred */
+                      error = "internal";
+                      break;
+            }
+            throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
+        }
+        XDCHECK_EQ(result.status,dml::status_code::ok);
+      } else {
+        dmlHandles.emplace_back(
+            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
+      }
+    }
+
+    XDCHECK_EQ(newItemHandles.size(),dmlHandles.size());
+
+    for (auto index = 0U; index < candidates.size(); index++) {
+      XDCHECK(newItemHandles[index]);
+      // Adding the item to mmContainer has to succeed since no one
+      // can remove the item
+      auto& newContainer = getMMContainer(*newItemHandles[index]);
+      auto mmContainerAdded = newContainer.add(*newItemHandles[index]);
+      XDCHECK(mmContainerAdded);
+   
+   
+      // no one can add or remove chained items at this point
+      if (candidates[index]->hasChainedItem()) {
+        // safe to acquire handle for a moving Item
+        auto incRes = incRef(*candidates[index], false);
+        XDCHECK(incRes == RefcountWithFlags::incResult::incOk);
+        auto oldHandle = WriteHandle{candidates[index], *this};
+        XDCHECK_EQ(1u, oldHandle->getRefCount()) << oldHandle->toString();
+        XDCHECK(!newItemHandles[index]->hasChainedItem()) << newItemHandles[index]->toString();
+        try {
+          auto l = chainedItemLocks_.lockExclusive(candidates[index]->getKey());
+          transferChainLocked(oldHandle, newItemHandles[index]);
+        } catch (const std::exception& e) {
+          // this should never happen because we drained all the handles.
+          XLOGF(DFATAL, "{}", e.what());
+          throw;
+        }
+
+        XDCHECK(!candidates[index]->hasChainedItem());
+        XDCHECK(newItemHandles[index]->hasChainedItem());
+      }
+      auto predicate = [&](const Item& item) {
+        // we rely on moving flag being set (it should block all readers)
+        XDCHECK(item.getRefCount() == 0);
+        return true;
+      };
+
+      auto result = dmlHandles[index].get();
+      if (result.status != dml::status_code::ok) {
+            std::string error;
+            switch (result.status) {
+                case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
+                    error = "false pred";
+                    break;
+                case dml::status_code::partial_completion:    /**< Operation was partially completed */
+                    error = "partial complte";
+                    break;
+                case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
+                    error = "nullptr";
+                    break;
+                case dml::status_code::bad_size:              /**< Invalid byte size was specified */
+                    error = "bad size";
+                    break;
+                case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
+                    error = "bad len";
+                    break;
+                case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
+                    error = "inconsis size";
+                    break;
+                case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
+                    error = "dualcast bad padding";
+                    break;
+                case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
+                    error = "bad align";
+                    break;
+                case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
+                    error = "buf overlap";
+                    break;
+                case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
+                    error = "delta bad size";
+                    break;
+                case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
+                    error = "delta emptry";
+                    break;
+                case dml::status_code::batch_overflow:        /**< Batch is full */
+                    error = "batch overflow";
+                    break;
+                case dml::status_code::execution_failed:      /**< Unknown execution error */
+                    error = "unknw exec";
+                    break;
+                case dml::status_code::unsupported_operation: /**< Unknown execution error */
+                    error = "unsupported op";
+                    break;
+                case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
+                    error = "busy";
+                    break;
+                case dml::status_code::error:                  /**< Internal library error occurred */
+                    error = "internal";
+                    break;
+             }
+          throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
+      }
+      XDCHECK_EQ(result.status,dml::status_code::ok);
+      // another thread may have called insertOrReplace() which
+      // could have marked this item as unaccessible causing the
+      // replaceIf() in the access container to fail - in this
+      // case we want to abort the move since the item is no
+      // longer valid
+      bool replaced = accessContainer_->replaceIf(
+              *candidates[index], *newItemHandles[index], predicate);
+      if (replaced) {
+        candidates[index]->unmarkMoving();
         XDCHECK(!newItemHandles[index]->isMarkedForEviction() &&
                 !newItemHandles[index]->isMoving());
         XDCHECK(!candidates[index]->isMarkedForEviction() &&
@@ -2206,10 +2343,24 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         XDCHECK(candidates[index]->getKey() == newItemHandles[index]->getKey());
 
         wakeUpWaiters(*candidates[index], std::move(newItemHandles[index]));
-      }
-      XDCHECK(!candidates[index]->isMarkedForEviction() &&
-              !candidates[index]->isMoving());
+      } else {
+	auto token = createPutToken(*candidates[index]);
+	auto ret = candidates[index]->markForEvictionWhenMoving();
+	XDCHECK(ret);
 
+        unlinkItemForEviction(*candidates[index]);
+      	// wake up any readers that wait for the move to complete
+      	// it's safe to do now, as we have the item marked exclusive and
+      	// no other reader can be added to the waiters list
+      	wakeUpWaiters(*candidates[index], WriteHandle{});
+
+      	if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidates[index])) {
+      	  nvmCache_->put(*candidates[index], std::move(token));
+        }
+      }
+
+
+      evictions++;
       if (candidates[index]->hasChainedItem()) {
         (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
       } else {

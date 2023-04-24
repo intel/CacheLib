@@ -1,8 +1,13 @@
 // @nolint instantiates a small cache and runs a quick run of basic operations.
 {
     "cache_config" : {
-      "cacheSizeMB" : 1024,
+      "cacheSizeMB" : 2000,
       "cacheDir" : "/tmp/mem-tiers",
+     "dsaEnabled" : true,
+     "backgroundEvictorIntervalMilSec": 1,
+    "highEvictionAcWatermark": 80,
+    "lowEvictionAcWatermark": 50,
+    "evictorThreads": 10,
       "memoryTiers" : [
         {
           "ratio": 1,
@@ -14,27 +19,21 @@
         }
 
       ],
-      "poolRebalanceIntervalSec" : 1,
-      "moveOnSlabRelease" : false,
-
-      "numPools" : 2,
-      "poolSizes" : [0.3, 0.7]
+    "poolRebalanceIntervalSec" : 0,
+    "moveOnSlabRelease" : false
     },
     "test_config" : {
-        "numOps" : 100000,
-        "numThreads" : 32,
-        "numKeys" : 2000000,
-
-        "keySizeRange" : [1, 8, 64],
-        "keySizeRangeProbability" : [0.3, 0.7],
-
-        "valSizeRange" : [1, 32, 10240, 409200],
-        "valSizeRangeProbability" : [0.1, 0.2, 0.7],
-
-        "getRatio" : 0.15,
-        "setRatio" : 0.8,
-        "delRatio" : 0.05,
-        "keyPoolDistribution": [0.4, 0.6],
-        "opPoolDistribution" : [0.5, 0.5]
+      "numOps" : 4000000,
+      "numThreads" : 10,
+      "numKeys" : 100000,
+      "generator": "online",
+      "keySizeRange" : [8,9],
+      "keySizeRangeProbability" : [1.0],
+      "enableLookaside": true,
+      "valSizeRange" : [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 10000],
+      "valSizeRangeProbability" : [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+      "getRatio" : 1.0,
+      "setRatio" : 0.0,
+      "delRatio" : 0.0
     }
   }

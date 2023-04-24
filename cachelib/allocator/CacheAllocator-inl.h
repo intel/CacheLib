@@ -1497,6 +1497,106 @@ void CacheAllocator<CacheTrait>::afterRegularItemMoveAsync(
     XDCHECK(newItemHdl->hasChainedItem());
   }
   newItemHdl.unmarkNascent();
+  //auto result = dmlHandle.get();
+  //XDCHECK_EQ(result.status,dml::status_code::ok);
+  //auto ref = newItemHdl->unmarkMoving();
+  //// remove because there is a chance the another thread called
+  //// insertOrReplace() on this new item
+  //if (UNLIKELY(ref == 0)) {
+  //  const auto res =
+  //      releaseBackToAllocator(*newItemHdl, RemoveContext::kNormal, false);
+  //  XDCHECK(res == ReleaseRes::kReleased);
+  //}
+  oldItem.unmarkMoving();
+}
+
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::afterRegularItemMoveAsync(
+    Item& oldItem, WriteHandle& newItemHdl,
+    dml::handler<dml::mem_copy_operation, std::allocator<dml::byte_t>>& dmlHandle) {
+  // Adding the item to mmContainer has to succeed since no one
+  // can remove the item
+  auto& newContainer = getMMContainer(*newItemHdl);
+  auto mmContainerAdded = newContainer.add(*newItemHdl);
+  XDCHECK(mmContainerAdded);
+
+  auto result = dmlHandle.get();
+  if (result.status != dml::status_code::ok) {
+        std::string error;
+        switch (result.status) {
+            case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
+                error = "false pred";
+                break;
+            case dml::status_code::partial_completion:    /**< Operation was partially completed */
+                error = "partial complte";
+                break;
+            case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
+                error = "nullptr";
+                break;
+            case dml::status_code::bad_size:              /**< Invalid byte size was specified */
+                error = "bad size";
+                break;
+            case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
+                error = "bad len";
+                break;
+            case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
+                error = "inconsis size";
+                break;
+            case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
+                error = "dualcast bad padding";
+                break;
+            case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
+                error = "bad align";
+                break;
+            case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
+                error = "buf overlap";
+                break;
+            case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
+                error = "delta bad size";
+                break;
+            case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
+                error = "delta emptry";
+                break;
+            case dml::status_code::batch_overflow:        /**< Batch is full */
+                error = "batch overflow";
+                break;
+            case dml::status_code::execution_failed:      /**< Unknown execution error */
+                error = "unknw exec";
+                break;
+            case dml::status_code::unsupported_operation: /**< Unknown execution error */
+                error = "unsupported op";
+                break;
+            case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
+                error = "busy";
+                break;
+            case dml::status_code::error:                  /**< Internal library error occurred */
+                error = "internal";
+                break;
+         }
+      throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, oldItem.toString()));
+  }
+  XDCHECK_EQ(result.status,dml::status_code::ok);
+  // no one can add or remove chained items at this point
+  if (oldItem.hasChainedItem()) {
+    // safe to acquire handle for a moving Item
+    auto incRes = incRef(oldItem, false);
+    XDCHECK(incRes == RefcountWithFlags::incResult::incOk);
+    auto oldHandle = WriteHandle{&oldItem, *this};
+    XDCHECK_EQ(1u, oldHandle->getRefCount()) << oldHandle->toString();
+    XDCHECK(!newItemHdl->hasChainedItem()) << newItemHdl->toString();
+    try {
+      auto l = chainedItemLocks_.lockExclusive(oldItem.getKey());
+      transferChainLocked(oldHandle, newItemHdl);
+    } catch (const std::exception& e) {
+      // this should never happen because we drained all the handles.
+      XLOGF(DFATAL, "{}", e.what());
+      throw;
+    }
+
+    XDCHECK(!oldItem.hasChainedItem());
+    XDCHECK(newItemHdl->hasChainedItem());
+  }
+  newItemHdl.unmarkNascent();
   auto ref = newItemHdl->unmarkMoving();
   // remove because there is a chance the another thread called
   // insertOrReplace() on this new item
@@ -1909,11 +2009,12 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
         }
         XDCHECK_EQ(newItemHdl->getKey(),item.getKey());
         item.unmarkMoving();
-      } else {
-        if (!beforeRegularItemMoveAsync(item, newItemHdl)) {
-          return WriteHandle{};
-        }
-      }
+      } 
+      //else {
+      //  if (!beforeRegularItemMoveAsync(item, newItemHdl)) {
+      //    return WriteHandle{};
+      //  }
+      //}
       return newItemHdl;
     } else {
       return WriteHandle{};
