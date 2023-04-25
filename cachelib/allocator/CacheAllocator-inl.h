@@ -1603,13 +1603,15 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_)
                 : toRecycle_;
 
-        if (lastTier) {
-          // if it's last tier, the item will be evicted
-          // need to create put token before marking it exclusive
-          token = createPutToken(*candidate_);
-        }
+        // if it's last tier, the item will be evicted
+        // need to create put token before marking it exclusive
+        const bool evictToNvmCache = lastTier && shouldWriteToNvmCache(*candidate_);
 
-        if (lastTier && shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
+        auto token_ = evictToNvmCache
+                          ? nvmCache_->createPutToken(candidate_->getKey())
+                          : typename NvmCacheT::PutToken{};
+
+        if (evictToNvmCache && !token_.isValid()) {
           stats_.evictFailConcurrentFill.inc();
         } else if ( (lastTier && candidate_->markForEviction()) ||
                     (!lastTier && candidate_->markMoving(true)) ) {
@@ -1619,6 +1621,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           // since we won't be moving the item to the next tier
           toRecycle = toRecycle_;
           candidate = candidate_;
+          token = std::move(token_);
 
           // Check if parent changed for chained items - if yes, we cannot
           // remove the child from the mmContainer as we will not be evicting
@@ -1626,8 +1629,9 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           // unmarkForEviction() returns 0 - so just go through normal path.
           if (!toRecycle_->isChainedItem() ||
               &toRecycle->asChainedItem().getParentItem(compressor_) ==
-                  candidate)
+                  candidate) {
             mmContainer.remove(itr);
+          }
           return;
         }
 
@@ -1643,8 +1647,9 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       }
     });
 
-    if (!toRecycle)
+    if (!toRecycle) {
       continue;
+    }
 
     XDCHECK(toRecycle);
     XDCHECK(candidate);
