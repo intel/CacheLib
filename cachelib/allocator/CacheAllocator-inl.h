@@ -1472,10 +1472,11 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
     Item* toRecycle = nullptr;
     Item* candidate = nullptr;
+    bool evict = lastTier;
     typename NvmCacheT::PutToken token;
 
     mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate, &toRecycle,
-                                      &searchTries, &mmContainer, &lastTier,
+                                      &searchTries, &mmContainer, &lastTier, &evict,
                                       &token](auto&& itr) {
       if (!itr) {
         ++searchTries;
@@ -1495,22 +1496,25 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_)
                 : toRecycle_;
 
-        if (lastTier) {
-          // if it's last tier, the item will be evicted
+        auto evict_ = lastTier || toRecycle_->isChainedItem();
+        // if it's last tier, the item will be evicted
+        // also, we alays evict the entire chain in case candidate is a chainde
+        if (evict_) {
           // need to create put token before marking it exclusive
           token = createPutToken(*candidate_);
         }
 
-        if (lastTier && shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
+        if (evict_ && shouldWriteToNvmCache(*candidate_) && !token.isValid()) {
           stats_.evictFailConcurrentFill.inc();
-        } else if ( (lastTier && candidate_->markForEviction()) ||
-                    (!lastTier && candidate_->markMoving()) ) {
+        } else if ( (evict_ && candidate_->markForEviction()) ||
+                    (!evict_ && candidate_->markMoving()) ) {
           XDCHECK(candidate_->isMoving() || candidate_->isMarkedForEviction());
           // markForEviction to make sure no other thead is evicting the item
           // nor holding a handle to that item if this is last tier
           // since we won't be moving the item to the next tier
           toRecycle = toRecycle_;
           candidate = candidate_;
+          evict = evict_;
 
           // Check if parent changed for chained items - if yes, we cannot
           // remove the child from the mmContainer as we will not be evicting
@@ -1541,7 +1545,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     XDCHECK(toRecycle);
     XDCHECK(candidate);
 
-    auto evictedToNext = lastTier ? nullptr
+    auto evictedToNext = evict ? nullptr
         : tryEvictToNextMemoryTier(*candidate, false);
     if (!evictedToNext) {
       //if insertOrReplace was called during move
@@ -1567,7 +1571,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       // as exclusive since we will not be moving the item to the next tier
       // but rather just evicting all together, no need to
       // markForEvictionWhenMoving
-      auto ret = lastTier ? true : candidate->markForEvictionWhenMoving();
+      auto ret = evict ? true : candidate->markForEvictionWhenMoving();
       XDCHECK(ret);
 
       unlinkItemForEviction(*candidate);
