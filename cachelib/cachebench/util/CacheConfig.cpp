@@ -34,6 +34,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, backgroundPromoterIntervalMilSec);
   JSONSetVal(configJson, backgroundEvictorStrategy);
   JSONSetVal(configJson, dsaEnabled);
+  JSONSetVal(configJson, dsaAsync);
   JSONSetVal(configJson, moveOnSlabRelease);
   JSONSetVal(configJson, rebalanceStrategy);
   JSONSetVal(configJson, rebalanceMinSlabs);

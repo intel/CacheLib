@@ -269,6 +269,7 @@ class CacheAllocatorConfig {
 
   // Enable DSA
   CacheAllocatorConfig& enableDSA(bool useDsa);
+  CacheAllocatorConfig& asyncDSA(bool useDsaAsync);
 
   // Enable the background evictor - scans a tier to look for objects
   // to evict to the next tier
@@ -497,6 +498,7 @@ class CacheAllocatorConfig {
 
   // DSA enabled or disabled
   bool dsaEnabled{false};
+  bool dsaAsync{false};
 
   // step size for compact cache size optimization: how many percents of the
   // victim to move
@@ -990,6 +992,12 @@ CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enablePoolRebalancing(
 template <typename T>
 CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enableDSA(bool useDsa) {
   dsaEnabled = useDsa;
+  return *this;
+}
+
+template <typename T>
+CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::asyncDSA(bool useDsaAsync) {
+  dsaAsync = useDsaAsync;
   return *this;
 }
 

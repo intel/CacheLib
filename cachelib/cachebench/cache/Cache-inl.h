@@ -47,6 +47,7 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       std::chrono::seconds(config_.poolRebalanceIntervalSec));
 
   allocatorConfig_.enableDSA(config_.dsaEnabled);
+  allocatorConfig_.asyncDSA(config_.dsaAsync);
 
   allocatorConfig_.enableBackgroundEvictor(
       config_.getBackgroundEvictorStrategy(),

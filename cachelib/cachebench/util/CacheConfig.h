@@ -75,6 +75,7 @@ struct CacheConfig : public JSONConfig {
   uint64_t backgroundEvictorIntervalMilSec{0};
   uint64_t backgroundPromoterIntervalMilSec{0};
   bool dsaEnabled{false};
+  bool dsaAsync{false};
   std::string rebalanceStrategy;
   std::string backgroundEvictorStrategy;
   uint64_t rebalanceMinSlabs{1};

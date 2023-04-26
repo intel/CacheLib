@@ -2081,6 +2081,66 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     return evictions;
   }
 
+  static std::string dsa_error_string(dml::mem_copy_result& result) {
+    std::string error;
+    switch (result.status) {
+        case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
+            error = "false pred";
+            break;
+        case dml::status_code::partial_completion:    /**< Operation was partially completed */
+            error = "partial complte";
+            break;
+        case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
+            error = "nullptr";
+            break;
+        case dml::status_code::bad_size:              /**< Invalid byte size was specified */
+            error = "bad size";
+            break;
+        case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
+            error = "bad len";
+            break;
+        case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
+            error = "inconsis size";
+            break;
+        case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
+            error = "dualcast bad padding";
+            break;
+        case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
+            error = "bad align";
+            break;
+        case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
+            error = "buf overlap";
+            break;
+        case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
+            error = "delta bad size";
+            break;
+        case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
+            error = "delta emptry";
+            break;
+        case dml::status_code::batch_overflow:        /**< Batch is full */
+            error = "batch overflow";
+            break;
+        case dml::status_code::execution_failed:      /**< Unknown execution error */
+            error = "unknw exec";
+            break;
+        case dml::status_code::unsupported_operation: /**< Unknown execution error */
+            error = "unsupported op";
+            break;
+        case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
+            error = "busy";
+            break;
+        case dml::status_code::error:                  /**< Internal library error occurred */
+            error = "internal";
+            break;
+        case dml::status_code::ok:                  /**< should not be here */
+            error = "ok";
+            break;
+        default:
+            error = "none of the above - okay!!";
+            break;
+    }
+    return error;
+  }
   // exposed for the background evictor to iterate through the memory and evict
   // in batch. This should improve insertion path for tiered memory config
   size_t traverseAndEvictItemsUsingDsa(unsigned int tid,
@@ -2168,68 +2228,18 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       dml::data_view dstView = dml::make_view(
           reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
           newItemHandles[index]->getSize());
-      if (0) {
+      if (config_.dsaAsync) {
+        dmlHandles.emplace_back(
+            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
+      } else {
         auto dmlHandle = 
             dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);
         auto result = dmlHandle.get();
         if (result.status != dml::status_code::ok) {
-              std::string error;
-              switch (result.status) {
-                  case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
-                      error = "false pred";
-                      break;
-                  case dml::status_code::partial_completion:    /**< Operation was partially completed */
-                      error = "partial complte";
-                      break;
-                  case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
-                      error = "nullptr";
-                      break;
-                  case dml::status_code::bad_size:              /**< Invalid byte size was specified */
-                      error = "bad size";
-                      break;
-                  case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
-                      error = "bad len";
-                      break;
-                  case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
-                      error = "inconsis size";
-                      break;
-                  case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
-                      error = "dualcast bad padding";
-                      break;
-                  case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
-                      error = "bad align";
-                      break;
-                  case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
-                      error = "buf overlap";
-                      break;
-                  case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
-                      error = "delta bad size";
-                      break;
-                  case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
-                      error = "delta emptry";
-                      break;
-                  case dml::status_code::batch_overflow:        /**< Batch is full */
-                      error = "batch overflow";
-                      break;
-                  case dml::status_code::execution_failed:      /**< Unknown execution error */
-                      error = "unknw exec";
-                      break;
-                  case dml::status_code::unsupported_operation: /**< Unknown execution error */
-                      error = "unsupported op";
-                      break;
-                  case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
-                      error = "busy";
-                      break;
-                  case dml::status_code::error:                  /**< Internal library error occurred */
-                      error = "internal";
-                      break;
-            }
+            std::string error = dsa_error_string(result); 
             throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
         }
         XDCHECK_EQ(result.status,dml::status_code::ok);
-      } else {
-        dmlHandles.emplace_back(
-            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
       }
     }
 
@@ -2270,62 +2280,14 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         return true;
       };
 
-      auto result = dmlHandles[index].get();
-      if (result.status != dml::status_code::ok) {
-            std::string error;
-            switch (result.status) {
-                case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
-                    error = "false pred";
-                    break;
-                case dml::status_code::partial_completion:    /**< Operation was partially completed */
-                    error = "partial complte";
-                    break;
-                case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
-                    error = "nullptr";
-                    break;
-                case dml::status_code::bad_size:              /**< Invalid byte size was specified */
-                    error = "bad size";
-                    break;
-                case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
-                    error = "bad len";
-                    break;
-                case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
-                    error = "inconsis size";
-                    break;
-                case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
-                    error = "dualcast bad padding";
-                    break;
-                case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
-                    error = "bad align";
-                    break;
-                case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
-                    error = "buf overlap";
-                    break;
-                case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
-                    error = "delta bad size";
-                    break;
-                case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
-                    error = "delta emptry";
-                    break;
-                case dml::status_code::batch_overflow:        /**< Batch is full */
-                    error = "batch overflow";
-                    break;
-                case dml::status_code::execution_failed:      /**< Unknown execution error */
-                    error = "unknw exec";
-                    break;
-                case dml::status_code::unsupported_operation: /**< Unknown execution error */
-                    error = "unsupported op";
-                    break;
-                case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
-                    error = "busy";
-                    break;
-                case dml::status_code::error:                  /**< Internal library error occurred */
-                    error = "internal";
-                    break;
-             }
-          throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
+      if (config_.dsaAsync) {
+        auto result = dmlHandles[index].get();
+        if (result.status != dml::status_code::ok) {
+            std::string error = dsa_error_string(result);
+            throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
+        }
+        XDCHECK_EQ(result.status,dml::status_code::ok);
       }
-      XDCHECK_EQ(result.status,dml::status_code::ok);
       // another thread may have called insertOrReplace() which
       // could have marked this item as unaccessible causing the
       // replaceIf() in the access container to fail - in this
