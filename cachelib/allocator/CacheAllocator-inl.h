@@ -1633,12 +1633,12 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             mmContainer.remove(itr);
           }
           return;
-        }
-
-        if (candidate_->hasChainedItem()) {
-          stats_.evictFailParentAC.inc();
         } else {
-          stats_.evictFailAC.inc();
+          if (candidate_->hasChainedItem()) {
+            stats_.evictFailParentAC.inc();
+          } else {
+            stats_.evictFailAC.inc();
+          }
         }
 
         ++itr;
