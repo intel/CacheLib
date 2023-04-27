@@ -1533,25 +1533,12 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             chainedItem_
                 ? &toRecycle_->asChainedItem().getParentItem(compressor_)
                 : nullptr;
-        auto l_ = chainedItem_ 
-                ? chainedItemLocks_.tryLockExclusive(toRecycleParent_->getKey())
-                : chainedItemLocks_.tryLockExclusive(toRecycle_->getKey());
-        if (chainedItem_ && !l_) {
-          ++itr;
-          continue;
-        }
         Item* candidate_;
         Item* syncItem_;
         //sync on the parent item for chained items to move to next tier
         if (!lastTier && chainedItem_) {
-            if (&toRecycle_->asChainedItem().getParentItem(compressor_) !=
-                  toRecycleParent_) {
-                ++itr;
-                continue;
-            }
             syncItem_ = toRecycleParent_;
             candidate_ = toRecycle_;
-            XDCHECK(l_);
         } else if (lastTier && chainedItem_) {
             candidate_ = toRecycleParent_;
             syncItem_ = toRecycleParent_;
@@ -1582,9 +1569,25 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           // it. We could abort right here, but we need to cleanup in case
           // unmarkForEviction() returns 0 - so just go through normal path.
           if (!chainedItem ||
-              &toRecycle_->asChainedItem().getParentItem(compressor_) ==
-                  toRecycleParent_) {
+             &toRecycle_->asChainedItem().getParentItem(compressor_) ==
+                 toRecycleParent_) {
             mmContainer.remove(itr);
+          } else if (chainedItem &&
+             &toRecycle->asChainedItem().getParentItem(compressor_) !=
+                 toRecycleParent_) {
+             auto ref = syncItem_->unmarkMoving();
+             if (UNLIKELY(ref == 0)) {
+               wakeUpWaiters(*syncItem_,{});
+               const auto res =
+                   releaseBackToAllocator(*syncItem_, RemoveContext::kNormal, false);
+               XDCHECK(res == ReleaseRes::kReleased);
+             }
+             auto parentHandle = acquire(syncItem_);
+             if (parentHandle) {
+               wakeUpWaiters(*syncItem_,std::move(parentHandle));
+             } //in case where parent handle is null that means some other thread
+             ++itr;
+             continue;
           }
           return;
         }
@@ -3052,16 +3055,12 @@ void CacheAllocator<CacheTrait>::releaseSlabImpl(TierId tid,
     auto startTimeSec = util::getCurrentTimeSec();
     Item& item = *static_cast<Item*>(alloc);
 
-    if (!item.isChainedItem() && !item.hasChainedItem()) {
-      // TODO: no support for chained items
-
-      // Need to mark an item for release before proceeding
-      // If we can't mark as moving, it means the item is already freed
-      const bool isAlreadyFreed =
-          !markMovingForSlabRelease(releaseContext, alloc, throttler);
-      if (isAlreadyFreed) {
-        continue;
-      }
+    // Need to mark an item for release before proceeding
+    // If we can't mark as moving, it means the item is already freed
+    const bool isAlreadyFreed =
+        !markMovingForSlabRelease(releaseContext, alloc, throttler);
+    if (isAlreadyFreed) {
+      continue;
     }
 
     // Try to move this item and make sure we can free the memory
@@ -3326,36 +3325,33 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
       auto& expectedParent = item.asChainedItem().getParentItem(compressor_);
 
       const std::string parentKey = expectedParent.getKey().str();
+      //TODO: this might not be needed since we have already marked parent
+      //      as moving
       auto l = chainedItemLocks_.tryLockExclusive(parentKey);
 
       if (!l) {
         continue;
-      } else if (expectedParent.getKey() != parentKey) {
-        continue;
-      } else if (&expectedParent != &item.asChainedItem().getParentItem(compressor_)) {
-        continue;
-      } else if (!expectedParent.isAccessible()) {
-        continue;
-      } else if (!expectedParent.hasChainedItem()) {
-        continue;
       }
+      XDCHECK_EQ(expectedParent.getKey(),parentKey);
+      XDCHECK_EQ(&expectedParent,&item.asChainedItem().getParentItem(compressor_));
+      XDCHECK(expectedParent.isAccessible());
+      XDCHECK(expectedParent.hasChainedItem());
 
       evicted = &expectedParent;
+      XDCHECK(evicted->isMoving());
       token = createPutToken(*evicted);
-      if (evicted->markForEviction()) {
-        XDCHECK_EQ(&expectedParent,&item.asChainedItem().getParentItem(compressor_));
-        // unmark the child so it will be freed
-        // TODO entire chain just gets evicted since moveForSlabRelease
-        // returns false
-        XDCHECK(!item.isMoving());
-        unlinkItemForEviction(*evicted);
-        // wake up any readers that wait for the move to complete
-        // it's safe to do now, as we have the item marked exclusive and
-        // no other reader can be added to the waiters list
-        wakeUpWaiters(*evicted, {});
-      } else {
-        continue;
-      }
+      auto ret = evicted->markForEvictionWhenMoving();
+      XDCHECK(ret);
+      XDCHECK_EQ(&expectedParent,&item.asChainedItem().getParentItem(compressor_));
+      // unmark the child so it will be freed
+      // TODO entire chain just gets evicted since moveForSlabRelease
+      // returns false
+      XDCHECK(!item.isMoving());
+      unlinkItemForEviction(*evicted);
+      // wake up any readers that wait for the move to complete
+      // it's safe to do now, as we have the item marked exclusive and
+      // no other reader can be added to the waiters list
+      wakeUpWaiters(*evicted, {});
     } else {
       evicted = &item;
 
@@ -3448,13 +3444,32 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
   bool itemFreed = true;
   bool markedMoving = false;
   TierId tid = getTierId(alloc);
-  const auto fn = [&markedMoving, &itemFreed](void* memory) {
+  const auto fn = [this, &markedMoving, &itemFreed](void* memory) {
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);
-    XDCHECK(!item->isChainedItem()); // TODO: chained items not supported
-    if (item->markMoving()) {
-      markedMoving = true;
+    bool chainedItem_ = item->isChainedItem();
+    Item* syncItem_ = chainedItem_
+                ? &item->asChainedItem().getParentItem(compressor_)
+                : item;
+    if (syncItem_->markMoving()) {
+      if (chainedItem_ &&
+              syncItem_ != &item->asChainedItem().getParentItem(compressor_)) {
+          //case where parent changed
+          auto ref = syncItem_->unmarkMoving();
+          if (UNLIKELY(ref == 0)) {
+            wakeUpWaiters(*syncItem_,{});
+            const auto res =
+                releaseBackToAllocator(*syncItem_, RemoveContext::kNormal, false);
+            XDCHECK(res == ReleaseRes::kReleased);
+          }
+          auto parentHandle = acquire(syncItem_);
+          if (parentHandle) {
+            wakeUpWaiters(*syncItem_,std::move(parentHandle));
+          } //in case where parent handle is null that means some other thread
+      } else {
+        markedMoving = true;
+      }
     }
   };
 
