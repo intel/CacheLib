@@ -1637,7 +1637,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl);
+  bool moveRegularItemWithSync(Item& oldItem, WriteHandle& newItemHdl, bool frombg = false);
 
   // Procedure before regular item async move to a different memory tier using
   // DSA.
@@ -1830,7 +1830,8 @@ class CacheAllocator : public CacheBase {
   WriteHandle tryEvictToNextMemoryTier(TierId tid,
                                        PoolId pid,
                                        Item& item,
-                                       bool useDsa = false);
+                                       bool useDsa = false,
+                                       bool frombg = false);
 
   WriteHandle tryPromoteToNextMemoryTier(TierId tid,
                                          PoolId pid,
@@ -1859,7 +1860,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(Item& item, bool useDsa = false);
+  WriteHandle tryEvictToNextMemoryTier(Item& item, bool useDsa = false, bool frombg = false);
 
   // Deserializer CacheAllocatorMetadata and verify the version
   //
@@ -2039,7 +2040,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     });
 
     for (Item* candidate : candidates) {
-      auto evictedToNext = tryEvictToNextMemoryTier(*candidate);
+      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, false, true);
       if (!evictedToNext) {
 	auto token = createPutToken(*candidate);
 	auto ret = candidate->markForEvictionWhenMoving();
@@ -2182,7 +2183,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     unsigned int validHandleCnt = 0;
     for (auto itr = candidates.begin(); itr != candidates.end();) {
       Item* candidate = *itr;
-      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true);
+      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true, false);
       if (evictedToNext) {
         auto touch = evictedToNext->getMemory();
         newItemHandles.emplace_back(std::move(evictedToNext));
@@ -2230,7 +2231,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           newItemHandles[index]->getSize());
       if (config_.dsaAsync) {
         dmlHandles.emplace_back(
-            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
+            dml::submit<dml::automatic>(dml::mem_copy, srcView, dstView));
       } else {
         auto dmlHandle = 
             dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);

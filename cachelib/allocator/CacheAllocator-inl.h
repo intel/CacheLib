@@ -1310,7 +1310,7 @@ size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
 
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
-    Item& oldItem, WriteHandle& newItemHdl) {
+    Item& oldItem, WriteHandle& newItemHdl, bool frombg) {
   //on function exit - the new item handle is no longer moving
   //and other threads may access it - but in case where
   //we failed to replace in access container we can give the
@@ -1380,6 +1380,9 @@ bool CacheAllocator<CacheTrait>::moveRegularItemWithSync(
     // statement if the old item has been removed or replaced, in which case it
     // should be fine for it to be left in an inconsistent state.
     config_.moveCb(oldItem, *newItemHdl, nullptr);
+  } else if (frombg) {
+    std::memmove(newItemHdl->getMemory(), oldItem.getMemory(),
+                oldItem.getSize());
   } else {
     std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
                 oldItem.getSize());
@@ -1711,7 +1714,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     XDCHECK(candidate);
 
     auto evictedToNext = lastTier ? nullptr
-        : tryEvictToNextMemoryTier(*candidate, false);
+        : tryEvictToNextMemoryTier(*candidate, false, false);
     if (!evictedToNext) {
       //if insertOrReplace was called during move
       //then candidate will not be accessible (failed replace during tryEvict)
@@ -1841,7 +1844,8 @@ typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
                                                      PoolId pid,
                                                      Item& item,
-                                                     bool useDsa) {
+                                                     bool useDsa,
+                                                     bool frombg) {
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
   if (item.hasChainedItem())
@@ -1863,17 +1867,12 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
       if (!useDsa) {
-        if (!moveRegularItemWithSync(item, newItemHdl)) {
+        if (!moveRegularItemWithSync(item, newItemHdl, frombg)) {
           return WriteHandle{};
         }
         XDCHECK_EQ(newItemHdl->getKey(),item.getKey());
         item.unmarkMoving();
       } 
-      //else {
-      //  if (!beforeRegularItemMoveAsync(item, newItemHdl)) {
-      //    return WriteHandle{};
-      //  }
-      //}
       return newItemHdl;
     } else {
       return WriteHandle{};
@@ -1885,10 +1884,10 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(TierId tid,
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item, bool useDsa) {
+CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(Item& item, bool useDsa, bool frombg) {
   auto tid = getTierId(item);
   auto pid = allocator_[tid]->getAllocInfo(item.getMemory()).poolId;
-  return tryEvictToNextMemoryTier(tid, pid, item, useDsa);
+  return tryEvictToNextMemoryTier(tid, pid, item, useDsa, frombg);
 }
 
 template <typename CacheTrait>
