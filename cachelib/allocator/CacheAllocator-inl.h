@@ -1421,14 +1421,15 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
               ? &toRecycle_->asChainedItem().getParentItem(compressor_)
               : toRecycle_;
 
-      typename NvmCacheT::PutToken putToken;
-      if (lastTier) {
-        // if it's last tier, the item will be evicted
-        // need to create put token before marking it exclusive
-        putToken = createPutToken(*candidate_);
-      }
+      // if it's last tier, the item will be evicted
+      // need to create put token before marking it exclusive
+      const bool evictToNvmCache = lastTier && shouldWriteToNvmCache(*candidate_);
 
-      if (lastTier && shouldWriteToNvmCache(*candidate_) && !putToken.isValid()) {
+      auto token_ = evictToNvmCache
+                        ? nvmCache_->createPutToken(candidate_->getKey())
+                        : typename NvmCacheT::PutToken{};
+
+      if (evictToNvmCache && !token_.isValid()) {
         stats_.evictFailConcurrentFill.inc();
         ++itr;
         continue;
@@ -1451,7 +1452,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
       // since we won't be moving the item to the next tier
       toRecycle = toRecycle_;
       candidate = candidate_;
-      token = std::move(putToken);
+      token = std::move(token_);
 
       // Check if parent changed for chained items - if yes, we cannot
       // remove the child from the mmContainer as we will not be evicting
