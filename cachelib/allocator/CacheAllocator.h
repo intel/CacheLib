@@ -2231,7 +2231,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           newItemHandles[index]->getSize());
       if (config_.dsaAsync) {
         dmlHandles.emplace_back(
-            dml::submit<dml::automatic>(dml::mem_copy, srcView, dstView));
+            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
       } else {
         auto dmlHandle = 
             dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);
