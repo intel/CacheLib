@@ -182,6 +182,15 @@ void* mmapAlignedZeroedMemory(size_t alignment,
   throw std::system_error(errno, std::system_category(), "Cannot mmap");
 }
 
+static void forcePageAllocation(void* addr, size_t size, size_t pageSize) {
+  char* startAddr = reinterpret_cast<char*>(addr);
+  char* endAddr = startAddr + size;
+  for (volatile char* curAddr = startAddr; curAddr < endAddr;
+       curAddr += pageSize) {
+    *curAddr = *curAddr;
+  }
+}
+
 void munmapMemory(void* addr, size_t size) { munmap(addr, size); }
 
 void mbindMemory(void* addr,
@@ -200,6 +209,13 @@ void mbindMemory(void* addr,
   if (ret != 0) {
     util::throwSystemError(
         errno, folly::sformat("mloclockfailed: {}", std::strerror(errno)));
+  }
+  forcePageAllocation(addr, len, kPageSizeBytes);
+  //ret = madvise(addr,len,MADV_POPULATE_READ|MADV_POPULATE_WRITE|MADV_HUGEPAGE);
+  //ret = madvise(addr,len,MADV_POPULATE_READ|MADV_HUGEPAGE);
+  if (ret != 0) {
+    util::throwSystemError(
+        errno, folly::sformat("madvise: {}", std::strerror(errno)));
   }
 }
 
