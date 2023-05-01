@@ -196,6 +196,11 @@ void mbindMemory(void* addr,
     util::throwSystemError(
         errno, folly::sformat("mbind() failed: {}", std::strerror(errno)));
   }
+  ret = mlock(addr,len); 
+  if (ret != 0) {
+    util::throwSystemError(
+        errno, folly::sformat("mloclockfailed: {}", std::strerror(errno)));
+  }
 }
 
 void setMaxLockMemory(uint64_t bytes) {
