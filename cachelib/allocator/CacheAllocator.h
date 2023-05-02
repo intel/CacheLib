@@ -2180,14 +2180,15 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         });
 
     std::vector<WriteHandle> newItemHandles;
-    newItemHandles.reserve(batch);
+    std::vector<Item*> newItemPtr;
+    //newItemHandles.reserve(batch);
     unsigned int validHandleCnt = 0;
     for (auto itr = candidates.begin(); itr != candidates.end();) {
       Item* candidate = *itr;
       auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true, false);
       if (evictedToNext) {
-        auto touch = evictedToNext->getMemory();
-        newItemHandles.emplace_back(std::move(evictedToNext));
+        newItemPtr.push_back(evictedToNext.get());
+        newItemHandles.push_back(std::move(evictedToNext));
         validHandleCnt++;
         ++itr;
         continue;
@@ -2210,15 +2211,15 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     if (!validHandleCnt) {
       return evictions;
     }
-    XDCHECK_EQ(newItemHandles.size(),candidates.size());
+    XDCHECK_EQ(newItemHandles.size(),validHandleCnt);
 
     /* for DML async op */
     auto dmlHandles = std::vector<dml::handler<dml::mem_copy_operation, 
          std::allocator<dml::byte_t>>>();
-    dmlHandles.reserve(validHandleCnt);
+    //dmlHandles.reserve(validHandleCnt);
 
     for (auto index = 0U; index < candidates.size(); index++) {
-      XDCHECK(newItemHandles[index]);
+      XDCHECK_EQ(newItemHandles[index].get(),newItemPtr[index]);
       XDCHECK_EQ(newItemHandles[index]->getKey(), candidates[index]->getKey());
       XDCHECK_EQ(newItemHandles[index]->getSize(), candidates[index]->getSize());
       XDCHECK_EQ(newItemHandles[index]->getRefCount(), 1);
@@ -2244,8 +2245,12 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         XDCHECK_EQ(result.status,dml::status_code::ok);
       }
     }
+    if (config_.dsaAsync) {
+        XDCHECK_EQ(newItemHandles.size(),dmlHandles.size());
+    } else {
+        XDCHECK_EQ(0,dmlHandles.size());
+    }
 
-    XDCHECK_EQ(newItemHandles.size(),dmlHandles.size());
 
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK(newItemHandles[index]);
