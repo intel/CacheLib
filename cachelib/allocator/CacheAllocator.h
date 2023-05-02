@@ -2220,7 +2220,14 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
 
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK_EQ(newItemHandles[index].get(),newItemPtr[index]);
+      if (newItemHandles[index].get() != newItemPtr[index]) {
+          throw std::runtime_error(folly::sformat("dml error - newItemHdls {:}, newItemPtr {:}",newItemHandles[index].get(),newItemPtr[index]));
+      }
       XDCHECK_EQ(newItemHandles[index]->getKey(), candidates[index]->getKey());
+      if (newItemHandles[index]->getKey() != candidates[index]->getKey()) {
+          throw std::runtime_error(folly::sformat("dml error - newItemHdl key {}, ptr {:}, old key {}, ptr {:}",newItemHandles[index]->getKey(), newItemHandles[index].get(),
+                      candidates[index]->getKey(),candidates[index]));
+      }
       XDCHECK_EQ(newItemHandles[index]->getSize(), candidates[index]->getSize());
       XDCHECK_EQ(newItemHandles[index]->getRefCount(), 1);
       XDCHECK_EQ(candidates[index]->getRefCount(), 0);
@@ -2246,6 +2253,9 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       }
     }
     if (config_.dsaAsync) {
+        if (newItemHandles.size() != dmlHandles.size()) {
+            throw std::runtime_error(folly::sformat("dml error - newItemHdls {:}, dmlHandles {:}",newItemHandles.size(),dmlHandles.size()));
+        }
         XDCHECK_EQ(newItemHandles.size(),dmlHandles.size());
     } else {
         XDCHECK_EQ(0,dmlHandles.size());
