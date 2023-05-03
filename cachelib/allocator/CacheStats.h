@@ -122,6 +122,9 @@ struct CacheStat {
   // number of evictions from this class id that was of a chained item
   uint64_t chainedItemEvictions{0};
 
+  // number of items submitted via DSA for eviction
+  uint64_t dsaEvictionSubmits{0};
+
   // number of regular items that were evicted from this classId
   uint64_t regularItemEvictions{0};
 
@@ -461,6 +464,9 @@ struct GlobalCacheStats {
 
   // number of failures to allocate an item due to internal error
   std::vector<uint64_t> allocFailures;
+
+  // number of dsa evictions submits across all the pools in the cache.
+  std::vector<uint64_t> dsaEvictionSubmits;
 
   // number of evictions across all the pools in the cache.
   std::vector<uint64_t> numEvictions;

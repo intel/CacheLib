@@ -2238,6 +2238,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       dml::data_view dstView = dml::make_view(
           reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
           newItemHandles[index]->getSize());
+      (*stats_.dsaEvictionSubmits)[tid][pid][cid].inc();
       if (config_.dsaAsync) {
         dmlHandles.emplace_back(
             dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));

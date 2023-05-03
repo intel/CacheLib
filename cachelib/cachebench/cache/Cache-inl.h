@@ -677,6 +677,7 @@ Stats Cache<Allocator>::getStats() const {
             cacheStats.promotionStats.runCount;
 
   ret.evictAttempts = cacheStats.evictionAttempts;
+  ret.dsaEvictionSubmits = cacheStats.dsaEvictionSubmits;
   ret.allocAttempts = cacheStats.allocAttempts;
   ret.allocFailures = cacheStats.allocFailures;
 

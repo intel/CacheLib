@@ -29,6 +29,7 @@ void Stats::init() {
   fragmentationSize = std::make_unique<PerTierPerPoolClassAtomicCounters>();
   allocFailures = std::make_unique<PerTierPerPoolClassAtomicCounters>();
   chainedItemEvictions = std::make_unique<PerTierPerPoolClassAtomicCounters>();
+  dsaEvictionSubmits = std::make_unique<PerTierPerPoolClassAtomicCounters>();
   regularItemEvictions = std::make_unique<PerTierPerPoolClassAtomicCounters>();
   numWritebacks = std::make_unique<PerTierPerPoolClassAtomicCounters>();
   auto initToZero = [](auto& a) {
@@ -46,6 +47,7 @@ void Stats::init() {
   initToZero(*allocFailures);
   initToZero(*fragmentationSize);
   initToZero(*chainedItemEvictions);
+  initToZero(*dsaEvictionSubmits);
   initToZero(*regularItemEvictions);
   initToZero(*numWritebacks);
 
@@ -57,7 +59,7 @@ struct SizeVerify {};
 
 void Stats::populateGlobalCacheStats(GlobalCacheStats& ret) const {
 #ifndef SKIP_SIZE_VERIFY
-  SizeVerify<sizeof(Stats)> a = SizeVerify<16192>{};
+  SizeVerify<sizeof(Stats)> a = SizeVerify<16208>{};
   std::ignore = a;
 #endif
   ret.numCacheGets = numCacheGets.get();
@@ -151,6 +153,7 @@ void Stats::populateGlobalCacheStats(GlobalCacheStats& ret) const {
   ret.evictionAttempts = accum(*evictionAttempts);
   ret.allocFailures = accum(*allocFailures);
   auto chainedEvictions = accum(*chainedItemEvictions);
+  ret.dsaEvictionSubmits = accum(*dsaEvictionSubmits);
   auto regularEvictions = accum(*regularItemEvictions);
   for (TierId tid = 0; tid < chainedEvictions.size(); tid++) {
     ret.numEvictions.push_back(chainedEvictions[tid] + regularEvictions[tid]);
@@ -223,6 +226,7 @@ PoolStats& PoolStats::operator+=(const PoolStats& other) {
       d.numHits += s.numHits;
       d.numWritebacks += s.numWritebacks;
       d.chainedItemEvictions += s.chainedItemEvictions;
+      d.dsaEvictionSubmits += s.dsaEvictionSubmits;
       d.regularItemEvictions += s.regularItemEvictions;
     }
 

@@ -54,6 +54,7 @@ struct Stats {
   BackgroundPromotionStats backgndPromoStats;
   ReaperStats reaperStats;
 
+  std::vector<uint64_t> dsaEvictionSubmits;
   std::vector<uint64_t> numEvictions;
   std::vector<uint64_t> numWritebacks;
   std::vector<uint64_t> numCacheHits;
@@ -167,8 +168,8 @@ struct Stats {
             << std::endl;
     }
     for (TierId tid = 0; tid < nTiers; tid++) {
-        out << folly::sformat("Tier {} Evictions : {:,} Writebacks: {:,} Success: {:.2f}%",
-                tid, numEvictions[tid], numWritebacks[tid],
+        out << folly::sformat("Tier {} Evictions : {:,} DSA submits: {:,} Writebacks: {:,} Success: {:.2f}%",
+                tid, numEvictions[tid], dsaEvictionSubmits[tid], numWritebacks[tid],
                 invertPctFn(numEvictions[tid] - numWritebacks[tid], numEvictions[tid])) << std::endl;
     }
     auto foreachAC = [&](auto &map, auto cb) {

@@ -230,6 +230,7 @@ struct Stats {
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> allocFailures{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> fragmentationSize{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> chainedItemEvictions{};
+  std::unique_ptr<PerTierPerPoolClassAtomicCounters> dsaEvictionSubmits{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> regularItemEvictions{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> numWritebacks{};
 

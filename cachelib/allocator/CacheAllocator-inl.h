@@ -2904,7 +2904,7 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
     for (const ClassId cid : classIds) {
       uint64_t allocAttempts, evictionAttempts, allocFailures,
                fragmentationSize, classHits, chainedItemEvictions,
-               regularItemEvictions, numWritebacks = 0;
+               dsaEvictionSubmits, regularItemEvictions, numWritebacks = 0;
       MMContainerStat mmContainerStats;
       for (TierId tid = 0; tid < getNumTiers(); tid++) {
         allocAttempts += (*stats_.allocAttempts)[tid][poolId][cid].get();
@@ -2913,6 +2913,7 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
         fragmentationSize += (*stats_.fragmentationSize)[tid][poolId][cid].get();
         classHits += (*stats_.cacheHits)[tid][poolId][cid].get();
         chainedItemEvictions += (*stats_.chainedItemEvictions)[tid][poolId][cid].get();
+        dsaEvictionSubmits += (*stats_.dsaEvictionSubmits)[tid][poolId][cid].get();
         regularItemEvictions += (*stats_.regularItemEvictions)[tid][poolId][cid].get();
         numWritebacks += (*stats_.numWritebacks)[tid][poolId][cid].get();
         mmContainerStats += getMMContainerStat(tid, poolId, cid);
@@ -2928,6 +2929,7 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
             fragmentationSize,
             classHits,
             chainedItemEvictions,
+            dsaEvictionSubmits,
             regularItemEvictions,
             numWritebacks,
             mmContainerStats}});
@@ -2982,6 +2984,7 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(TierId tid, PoolId poolId) co
             (*stats_.fragmentationSize)[tid][poolId][cid].get(),
             classHits,
             (*stats_.chainedItemEvictions)[tid][poolId][cid].get(),
+            (*stats_.dsaEvictionSubmits)[tid][poolId][cid].get(),
             (*stats_.regularItemEvictions)[tid][poolId][cid].get(),
             (*stats_.numWritebacks)[tid][poolId][cid].get(),
             getMMContainerStat(tid, poolId, cid)}});
