@@ -1356,7 +1356,7 @@ size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
 
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveRegularItem(
-    Item& oldItem, WriteHandle& newItemHdl) {
+    Item& oldItem, WriteHandle& newItemHdl, bool fromBgThread) {
   XDCHECK(oldItem.isMoving());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
@@ -1370,7 +1370,6 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
   if (oldItem.isNvmClean()) {
     newItemHdl->markNvmClean();
   }
-
 
   if (config_.moveCb) {
     // Execute the move callback. We cannot make any guarantees about the
@@ -1386,18 +1385,12 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
                 oldItem.getSize());
   }
 
-  // Adding the item to mmContainer has to succeed since no one can remove the item
-  auto& newContainer = getMMContainer(*newItemHdl);
-  auto mmContainerAdded = newContainer.add(*newItemHdl);
-  XDCHECK(mmContainerAdded);
-
-
-  auto predicate = [&](const Item& item){
-    // we rely on moving flag being set (it should block all readers)
-    XDCHECK_EQ(item.getRefCount(),0);
-    XDCHECK(item.isMoving());
-    return item.isMoving();
-  };
+  if (!fromBgThread) {
+    // Adding the item to mmContainer has to succeed since no one can remove the item
+    auto& newContainer = getMMContainer(*newItemHdl);
+    auto mmContainerAdded = newContainer.add(*newItemHdl);
+    XDCHECK(mmContainerAdded);
+  }
 
   if (oldItem.hasChainedItem()) {
     XDCHECK(!newItemHdl->hasChainedItem()) << newItemHdl->toString();
@@ -1406,6 +1399,7 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
       if (l) {
         transferChainLocked(oldItem, newItemHdl);
       } else {
+        auto& newContainer = getMMContainer(*newItemHdl);
         newContainer.remove(*newItemHdl);
         return false;
       }
@@ -1418,12 +1412,25 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
     XDCHECK(!oldItem.hasChainedItem());
     XDCHECK(newItemHdl->hasChainedItem());
   }
+  
+  auto predicate = [&](const Item& item){
+    // we rely on moving flag being set (it should block all readers)
+    XDCHECK_EQ(item.getRefCount(),0);
+    XDCHECK(item.isMoving());
+    return item.isMoving();
+  };
 
-  if (!accessContainer_->replaceIf(oldItem, *newItemHdl, predicate)) {
+  auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl,
+                                   predicate);
+  // another thread may have called insertOrReplace which could have
+  // marked this item as unaccessible causing the replaceIf
+  // in the access container to fail - in this case we want
+  // to abort the move since the item is no longer valid
+  if (!replaced) {
+    auto& newContainer = getMMContainer(*newItemHdl);
     newContainer.remove(*newItemHdl);
     return false;
   }
-
   newItemHdl.unmarkNascent();
   return true;
 }
@@ -1828,12 +1835,16 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     }
 
     if (newItemHdl) {
+      if (fromBgThread) {
+        return newItemHdl;
+      }
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
       bool moveSuccess = chainedItem
           ? moveChainedItem(item.asChainedItem(),
-                                    newItemHdl, *parentItem)
-          : moveRegularItem(item, newItemHdl);
+                            newItemHdl, *parentItem)
+          : moveRegularItem(item, newItemHdl, fromBgThread);
       if (!moveSuccess) {
+        XDCHECK(!newItemHdl->isInMMContainer());
         return WriteHandle{};
       }
       if (!chainedItem) {
@@ -1880,9 +1891,13 @@ CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(
                      true);
 
     if (newItemHdl) {
+      XDCHECK(!item.isChainedItem());
+      if (fromBgThread) {
+        return newItemHdl;
+      }
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      if (!moveRegularItem(item, newItemHdl)) {
-          return WriteHandle{};
+      if (!moveRegularItem(item, newItemHdl, fromBgThread)) {
+        return WriteHandle{};
       }
       item.unmarkMoving();
       return newItemHdl;
@@ -2940,6 +2955,9 @@ ACStats CacheAllocator<CacheTrait>::getACStats(TierId tid,
 
   auto stats = ac.getStats();
   stats.allocLatencyNs = (*stats_.classAllocLatency)[tid][poolId][classId];
+  stats.evictionAttempts = (*stats_.evictionAttempts)[tid][poolId][classId].get();
+  stats.evictions = (*stats_.regularItemEvictions)[tid][poolId][classId].get() + 
+                    (*stats_.chainedItemEvictions)[tid][poolId][classId].get();
   return stats;
 }
 
@@ -3320,8 +3338,8 @@ bool CacheAllocator<CacheTrait>::tryMovingForSlabRelease(
    //will send it back to the allocator
    bool ret = oldItem.isChainedItem()
               ? moveChainedItem(oldItem.asChainedItem(), newItemHdl,
-                                        oldItem.asChainedItem().getParentItem(compressor_))
-              : moveRegularItem(oldItem, newItemHdl);
+                                oldItem.asChainedItem().getParentItem(compressor_))
+              : moveRegularItem(oldItem, newItemHdl, false);
    removeFromMMContainer(oldItem);
    return ret;
 }

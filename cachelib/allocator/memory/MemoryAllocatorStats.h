@@ -51,6 +51,9 @@ struct ACStats {
   // Rolling allocation latency (in ns)
   util::RollingStats allocLatencyNs;
 
+  uint64_t evictionAttempts;
+  uint64_t evictions;
+
   constexpr unsigned long long totalSlabs() const noexcept {
     return freeSlabs + usedSlabs;
   }

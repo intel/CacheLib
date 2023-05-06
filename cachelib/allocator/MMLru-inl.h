@@ -212,6 +212,30 @@ bool MMLru::Container<T, HookPtr>::add(T& node) noexcept {
 }
 
 template <typename T, MMLru::Hook<T> T::*HookPtr>
+uint32_t MMLru::Container<T, HookPtr>::addBatch(std::vector<T*>& nodes) noexcept {
+  const auto currTime = static_cast<Time>(util::getCurrentTimeSec());
+  return lruMutex_->lock_combine([this, &nodes, currTime]() {
+    uint32_t i = 0;
+    for (auto node : nodes) {
+      if (node->isInMMContainer()) {
+        return i;
+      }
+      if (config_.lruInsertionPointSpec == 0 || insertionPoint_ == nullptr) {
+        lru_.linkAtHead(*node);
+      } else {
+        lru_.insertBefore(*insertionPoint_, *node);
+      }
+      node->markInMMContainer();
+      setUpdateTime(*node, currTime);
+      unmarkAccessed(*node);
+      updateLruInsertionPoint();
+      i++;
+    }
+    return i;
+  });
+}
+
+template <typename T, MMLru::Hook<T> T::*HookPtr>
 typename MMLru::Container<T, HookPtr>::LockedIterator
 MMLru::Container<T, HookPtr>::getEvictionIterator() const noexcept {
   LockHolder l(*lruMutex_);
@@ -237,8 +261,7 @@ void MMLru::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
 
 template <typename T, MMLru::Hook<T> T::*HookPtr>
 template <typename F>
-void
-MMLru::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
+void MMLru::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
   if (config_.useCombinedLockForIterators) {
     lruMutex_->lock_combine([this, &fun]() { fun(Iterator{lru_.begin()}); });
   } else {

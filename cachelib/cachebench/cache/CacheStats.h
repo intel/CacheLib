@@ -209,15 +209,18 @@ struct Stats {
                                    ? poolUsageFraction.at(tid)[pid]
                                    : stats.usageFraction();
 
-        out << folly::sformat(
+          out << folly::sformat(
                    "tid{:2} pid{:2} cid{:4} {:8.2f}{} usageFraction: {:4.2f} "
                    "memorySize: {:8.2f}{} "
+                   "evictions: {} attempts: {}, success: {:4.2f} "
                    "rollingAvgAllocLatency: {:8.2f}ns",
                    tid, pid, cid, allocSize, allocSizeSuffix, acUsageFraction,
-                   memorySize, memorySizeSuffix,
+                   memorySize, memorySizeSuffix, stats.evictions, stats.evictionAttempts,
+                   (double)(stats.evictions/(double)stats.evictionAttempts),
                    stats.allocLatencyNs.estimate())
-            << std::endl;
+          << std::endl;
       });
+
     }
 
     int bgId = 1;

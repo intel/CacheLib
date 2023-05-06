@@ -462,6 +462,7 @@ class MM2Q {
     //          if the node was already in the contianer. On error state of node
     //          is unchanged.
     bool add(T& node) noexcept;
+    bool addBatch(std::vector<T*>& nodes) noexcept;
 
     // removes the node from the lru and sets it previous and next to nullptr.
     //

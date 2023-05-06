@@ -109,7 +109,6 @@ void BackgroundMover<CacheT>::checkAndRun() {
         break;
     }
   }
-
 }
 
 template <typename CacheT>
