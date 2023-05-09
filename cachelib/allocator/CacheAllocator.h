@@ -1723,6 +1723,15 @@ class CacheAllocator : public CacheBase {
   bool replaceInMMContainer(Item* oldItem, Item& newItem);
   bool replaceInMMContainer(EvictionIterator& oldItemIt, Item& newItem);
 
+  TierId getTargetTierForItem(PoolId pid,
+                                             typename Item::Key key,
+                                             uint32_t size,
+                                             uint32_t creationTime,
+                                             uint32_t expiryTime);
+
+  bool shouldEvictToNextMemoryTier(
+    TierId sourceTierId, TierId targetTierId, PoolId pid, Item& item);
+
   // Replaces an item in the MMContainer with another item, at the same
   // position. Or, if the two chained items belong to two different MM
   // containers, remove the old one from its MM container and add the new

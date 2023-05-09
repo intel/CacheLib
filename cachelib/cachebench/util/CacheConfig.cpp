@@ -88,6 +88,16 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, navyEncryption);
   JSONSetVal(configJson, deviceMaxWriteSize);
 
+  JSONSetVal(configJson, disableEvictionToMemory);
+  JSONSetVal(configJson, acTopTierEvictionWatermark);
+  JSONSetVal(configJson, sizeThresholdPolicy);
+  JSONSetVal(configJson, defaultTierChancePercentage);
+  JSONSetVal(configJson, numDuplicateElements);
+  JSONSetVal(configJson, syncPromotion);
+  JSONSetVal(configJson, evictorThreads);
+  JSONSetVal(configJson, promoterThreads);
+  JSONSetVal(configJson, forceAllocationTier);
+
   JSONSetVal(configJson, memoryOnlyTTL);
 
   JSONSetVal(configJson, usePosixShm);
@@ -126,7 +136,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 888>();
+  checkCorrectSize<CacheConfig, 928>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
@@ -159,8 +169,10 @@ std::shared_ptr<RebalanceStrategy> CacheConfig::getRebalanceStrategy() const {
 MemoryTierConfig::MemoryTierConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, ratio);
   JSONSetVal(configJson, memBindNodes);
+  JSONSetVal(configJson, markUsefulChance);
+  JSONSetVal(configJson, lruInsertionPointSpec);
 
-  checkCorrectSize<MemoryTierConfig, 40>();
+  checkCorrectSize<MemoryTierConfig, 56>();
 }
 
 std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundEvictorStrategy() const {

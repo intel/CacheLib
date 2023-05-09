@@ -355,6 +355,14 @@ class MM2Q {
 
     // Whether to use combined locking for withEvictionIterator.
     bool useCombinedLockForIterators{false};
+
+    // % chance that accessRecord will update the queue
+    double markUsefulChance{100.0};
+
+    // 0 - insert to hot queue
+    // 1 - insert to warm queue
+    // 2 - insert to cold queue
+    uint8_t lruInsertionPointSpec {0};
   };
 
   // The container object which can be used to keep track of objects of type
