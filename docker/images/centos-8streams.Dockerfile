@@ -17,6 +17,10 @@ json-c-devel \
 perf \
 numactl
 
+RUN dnf -y install gcc-toolset-12
+RUN echo "source /opt/rh/gcc-toolset-12/enable" >> /etc/bashrc
+SHELL ["/bin/bash", "--login", "-c"]
+
 COPY ./install-cachelib-deps.sh ./install-cachelib-deps.sh
 RUN ./install-cachelib-deps.sh
 

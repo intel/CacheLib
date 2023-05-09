@@ -11,6 +11,9 @@ function sudo_password() {
 cd ..
 mkdir build
 cd build
+
+source /opt/rh/gcc-toolset-12/enable
+
 cmake ../cachelib -DBUILD_TESTS=ON -DCMAKE_INSTALL_PREFIX=/opt -DCMAKE_BUILD_TYPE=Debug
 sudo_password make install -j$(nproc)
 
