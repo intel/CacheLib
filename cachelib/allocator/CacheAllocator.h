@@ -34,6 +34,7 @@
 #include <optional>
 #include <stdexcept>
 #include <utility>
+#include <random>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
@@ -2218,6 +2219,9 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
          std::allocator<dml::byte_t>>>();
     //dmlHandles.reserve(validHandleCnt);
 
+    std::default_random_engine generator;
+    std::bernoulli_distribution distribution(0.5);
+
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK_EQ(newItemHandles[index].get(),newItemPtr[index]);
       if (newItemHandles[index].get() != newItemPtr[index]) {
@@ -2232,25 +2236,31 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       XDCHECK_EQ(newItemHandles[index]->getRefCount(), 1);
       XDCHECK_EQ(candidates[index]->getRefCount(), 0);
 
-      dml::const_data_view srcView = dml::make_view(
+      if (distribution(generator)) {
+        dml::const_data_view srcView = dml::make_view(
           reinterpret_cast<uint8_t*>(candidates[index]->getMemory()),
           candidates[index]->getSize());
-      dml::data_view dstView = dml::make_view(
+        dml::data_view dstView = dml::make_view(
           reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
           newItemHandles[index]->getSize());
-      (*stats_.dsaEvictionSubmits)[tid][pid][cid].inc();
-      if (config_.dsaAsync) {
-        dmlHandles.emplace_back(
+        (*stats_.dsaEvictionSubmits)[tid][pid][cid].inc();
+        if (config_.dsaAsync) {
+          dmlHandles.emplace_back(
             dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
-      } else {
-        auto dmlHandle = 
-            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);
-        auto result = dmlHandle.get();
-        if (result.status != dml::status_code::ok) {
-            std::string error = dsa_error_string(result); 
-            throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
+        } else {
+          auto dmlHandle = dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);
+          auto result = dmlHandle.get();
+          if (result.status != dml::status_code::ok) {
+            std::string error = dsa_error_string(result);
+            throw std::runtime_error(folly::sformat("dml error: {} for item: {} count {}",
+              error, candidates[index]->toString(), (*stats_.dsaEvictionSubmits)[tid][pid][cid].get()));
+          }
+          XDCHECK_EQ(result.status,dml::status_code::ok);
         }
-        XDCHECK_EQ(result.status,dml::status_code::ok);
+      } else {
+        std::memcpy(newItemHandles[index]->getMemory(),
+                    candidates[index]->getMemory(),
+                    candidates[index]->getSize());
       }
     }
     if (config_.dsaAsync) {
