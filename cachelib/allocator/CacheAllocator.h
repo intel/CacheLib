@@ -2155,15 +2155,23 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t evictionCandidates = 0;
     std::vector<Item*> candidates;
     candidates.reserve(batch);
+    const auto& pool = allocator_[currentTier()]->getPool(pid);
+    auto mpStats = pool.getStats();
+    const auto& classIds = mpStats.classIds;
+    uint64_t dsaCallsPre = 0;
+    for (ClassId cid : classIds) {
+        dsaCallsPre += (*stats_.dsaEvictionSubmits)[tid][pid][cid].get();
+    }
 
     size_t tries = 0;
     mmContainer.withEvictionIterator(
-        [&tries, &candidates, &batch, &mmContainer, this](auto&& itr) {
+        [&tries, &candidates, &batch, &mmContainer, this, tid, pid, cid](auto&& itr) {
           while (candidates.size() < batch &&
                  (config_.maxEvictionPromotionHotness == 0 ||
                   tries < config_.maxEvictionPromotionHotness) &&
                  itr) {
             tries++;
+            (*stats_.evictionAttempts)[tid][pid][cid].inc();
             Item* candidate = itr.get();
             XDCHECK(candidate);
 
@@ -2219,8 +2227,8 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
          std::allocator<dml::byte_t>>>();
     //dmlHandles.reserve(validHandleCnt);
 
-    std::default_random_engine generator;
-    std::bernoulli_distribution distribution(0.5);
+    //std::default_random_engine generator;
+    //std::bernoulli_distribution distribution(1.0);
 
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK_EQ(newItemHandles[index].get(),newItemPtr[index]);
@@ -2236,7 +2244,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       XDCHECK_EQ(newItemHandles[index]->getRefCount(), 1);
       XDCHECK_EQ(candidates[index]->getRefCount(), 0);
 
-      if (distribution(generator)) {
+      //if (distribution(generator)) {
         dml::const_data_view srcView = dml::make_view(
           reinterpret_cast<uint8_t*>(candidates[index]->getMemory()),
           candidates[index]->getSize());
@@ -2257,29 +2265,30 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           }
           XDCHECK_EQ(result.status,dml::status_code::ok);
         }
-      } else {
-        std::memcpy(newItemHandles[index]->getMemory(),
-                    candidates[index]->getMemory(),
-                    candidates[index]->getSize());
-      }
+      //} else {
+     //   std::memcpy(newItemHandles[index]->getMemory(),
+     //               candidates[index]->getMemory(),
+     //               candidates[index]->getSize());
+     // }
     }
     if (config_.dsaAsync) {
         if (newItemHandles.size() != dmlHandles.size()) {
             throw std::runtime_error(folly::sformat("dml error - newItemHdls {:}, dmlHandles {:}",newItemHandles.size(),dmlHandles.size()));
         }
         XDCHECK_EQ(newItemHandles.size(),dmlHandles.size());
+        XDCHECK_EQ(newItemHandles.size(),candidates.size());
     } else {
         XDCHECK_EQ(0,dmlHandles.size());
     }
 
+    // Adding the item to mmContainer has to succeed since no one
+    // can remove the item
+    auto& newContainer = getMMContainer(*newItemHandles[0]);
+    auto mmContainerAdded = newContainer.addBatch(newItemPtr);
+    XDCHECK(mmContainerAdded);
 
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK(newItemHandles[index]);
-      // Adding the item to mmContainer has to succeed since no one
-      // can remove the item
-      auto& newContainer = getMMContainer(*newItemHandles[index]);
-      auto mmContainerAdded = newContainer.add(*newItemHandles[index]);
-      XDCHECK(mmContainerAdded);
    
    
       // no one can add or remove chained items at this point
@@ -2311,10 +2320,18 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       if (config_.dsaAsync) {
         auto result = dmlHandles[index].get();
         if (result.status != dml::status_code::ok) {
+            uint64_t dsaCallsPost = 0;
+            for (ClassId cid : classIds) {
+                dsaCallsPost += (*stats_.dsaEvictionSubmits)[tid][pid][cid].get();
+            }
+	    uint64_t dsaCalls = dsaCallsPost - dsaCallsPre;
             std::string error = dsa_error_string(result);
-            throw std::runtime_error(folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString()));
+	    auto errorStr = folly::sformat("dml error: {} for item: {}, submitsi {:}", error, candidates[index]->toString(),dsaCalls);
+            XDCHECK_EQ(result.status,dml::status_code::ok) << errorStr;
+            throw std::runtime_error(errorStr);
         }
         XDCHECK_EQ(result.status,dml::status_code::ok);
+        //verify that queue has decreased in size
       }
       // another thread may have called insertOrReplace() which
       // could have marked this item as unaccessible causing the
@@ -2332,6 +2349,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
         XDCHECK(!candidates[index]->isAccessible());
         XDCHECK(candidates[index]->getKey() == newItemHandles[index]->getKey());
 
+        (*stats_.numWritebacks)[tid][pid][cid].inc();
         wakeUpWaiters(*candidates[index], std::move(newItemHandles[index]));
       } else {
 	auto token = createPutToken(*candidates[index]);

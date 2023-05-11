@@ -54,6 +54,10 @@ if (WITH_DTO)
     target_link_libraries(cachebench accel-config dto)
 endif ()
 
+if (WITH_DML_WRAPPER)
+    target_link_libraries(cachebench accel-config dml_cstring)
+endif ()
+
 install(
   TARGETS
      cachebench

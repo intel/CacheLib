@@ -44,6 +44,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(BUILD_TESTS "If enabled, compile the tests." ON)
 option(WITH_DTO "If enabled, build with DSA transparent offloading." OFF)
+option(WITH_DML_WRAPPER "If enabled, build with DML wrapper" OFF)
 
 set(BIN_INSTALL_DIR bin CACHE STRING
     "The subdirectory where binaries should be installed")
