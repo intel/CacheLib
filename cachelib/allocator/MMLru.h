@@ -339,10 +339,11 @@ class MMLru {
     //          if the node was already in the contianer. On error state of node
     //          is unchanged.
     bool add(T& node) noexcept;
-
-    // removes the node from the lru and sets it previous and next to nullptr.
-    //
-    // @param node  The node to be removed from the container.
+    int addBatch(std::vector<T*>& nodes) noexcept;
+                                 
+    // removes the node from th  e lru and sets it previous and next to nullptr.
+    //                           
+    // @param node  The node to   be removed from the container.
     // @return  True if the node was successfully removed from the container.
     //          False if the node was not part of the container. On error, the
     //          state of node is unchanged.

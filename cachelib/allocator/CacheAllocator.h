@@ -2285,7 +2285,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     // can remove the item
     auto& newContainer = getMMContainer(*newItemHandles[0]);
     auto mmContainerAdded = newContainer.addBatch(newItemPtr);
-    XDCHECK(mmContainerAdded);
+    XDCHECK_EQ(mmContainerAdded,-1);
 
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK(newItemHandles[index]);

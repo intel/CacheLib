@@ -73,12 +73,12 @@ void BackgroundMover<CacheT>::checkAndRun() {
   std::set<ClassId> classes{};
   auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
 
+  //const auto& mpStats = cache_.getPoolByTid(0, 0).getStats();
   for (size_t i = 0; i < batches.size(); i++) {
     const auto [tid, pid, cid] = assignedMemory[i];
     const auto batch = batches[i];
 
     classes.insert(cid);
-    const auto& mpStats = cache_.getPoolByTid(pid, tid).getStats();
 
     if (!batch) {
       continue;
@@ -88,7 +88,7 @@ void BackgroundMover<CacheT>::checkAndRun() {
     auto moved = moverFunc(cache_, tid, pid, cid, batch);
     moves += moved;
     moves_per_class_[tid][pid][cid] += moved;
-    totalBytesMoved.add(moved * mpStats.acStats.at(cid).allocSize);
+    //totalBytesMoved.add(moved * mpStats.acStats.at(cid).allocSize);
   }
 
   numTraversals.inc();
