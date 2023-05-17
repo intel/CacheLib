@@ -59,6 +59,9 @@ CacheAllocator<CacheTrait>::CacheAllocator(
       tempShm_(type == InitMemType::kNone && isOnShm_
                    ? std::make_unique<TempShmMapping>(config_.getCacheSize())
                    : nullptr),
+      privMemManager_(type == InitMemType::kNone && !isOnShm_
+                          ? std::make_unique<PrivateMemoryManager>()
+                          : nullptr),
       shmManager_(type != InitMemType::kNone
                       ? std::make_unique<ShmManager>(config_.cacheDir,
                                                      config_.isUsingPosixShm())
@@ -122,6 +125,16 @@ ShmSegmentOpts CacheAllocator<CacheTrait>::createShmCacheOpts(TierId tid) {
 }
 
 template <typename CacheTrait>
+PrivateSegmentOpts CacheAllocator<CacheTrait>::createPrivateSegmentOpts(TierId tid) {
+  PrivateSegmentOpts opts;
+  opts.alignment = sizeof(Slab);
+  auto memoryTierConfigs = config_.getMemoryTierConfigs();
+  opts.memBindNumaNodes = memoryTierConfigs[tid].getMemBind();
+
+  return opts;
+}
+
+template <typename CacheTrait>
 size_t CacheAllocator<CacheTrait>::memoryTierSize(TierId tid) const {
   auto& memoryTierConfigs = config_.memoryTierConfigs;
   auto partitions = std::accumulate(memoryTierConfigs.begin(), memoryTierConfigs.end(), 0UL,
@@ -133,21 +146,18 @@ size_t CacheAllocator<CacheTrait>::memoryTierSize(TierId tid) const {
 }
 
 template <typename CacheTrait>
-std::vector<std::unique_ptr<MemoryAllocator>>
-CacheAllocator<CacheTrait>::createPrivateAllocator() {
-  std::vector<std::unique_ptr<MemoryAllocator>> allocators;
-
+std::unique_ptr<MemoryAllocator>
+CacheAllocator<CacheTrait>::createPrivateAllocator(TierId tid) {
   if (isOnShm_)
-    allocators.emplace_back(std::make_unique<MemoryAllocator>(
+    return std::make_unique<MemoryAllocator>(
                             getAllocatorConfig(config_),
                             tempShm_->getAddr(),
-                            config_.getCacheSize()));
+                            memoryTierSize(tid));
   else
-    allocators.emplace_back(std::make_unique<MemoryAllocator>(
+    return std::make_unique<MemoryAllocator>(
                             getAllocatorConfig(config_),
-                            config_.getCacheSize()));
-
-  return allocators;
+                            privMemManager_->createMapping(config_.size, createPrivateSegmentOpts(tid)),
+                            memoryTierSize(tid));
 }
 
 template <typename CacheTrait>
@@ -174,6 +184,16 @@ CacheAllocator<CacheTrait>::restoreMemoryAllocator(TierId tid) {
             config_.slabMemoryBaseAddr, createShmCacheOpts(tid)).addr,
       memoryTierSize(tid),
       config_.disableFullCoredump);
+}
+
+template <typename CacheTrait>
+std::vector<std::unique_ptr<MemoryAllocator>>
+CacheAllocator<CacheTrait>::createPrivateAllocators() {
+  std::vector<std::unique_ptr<MemoryAllocator>> allocators;
+  for (int tid = 0; tid < getNumTiers(); tid++) {
+    allocators.emplace_back(createPrivateAllocator(tid));
+  }
+  return allocators;
 }
 
 template <typename CacheTrait>
@@ -309,7 +329,7 @@ std::vector<std::unique_ptr<MemoryAllocator>>
 CacheAllocator<CacheTrait>::initAllocator(
     InitMemType type) {
   if (type == InitMemType::kNone) {
-    return createPrivateAllocator();
+    return createPrivateAllocators();
   } else if (type == InitMemType::kMemNew) {
     return createAllocators();
   } else if (type == InitMemType::kMemAttach) {
