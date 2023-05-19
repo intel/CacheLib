@@ -311,18 +311,34 @@ struct BackgroundMoverStats {
   uint64_t numMovedItems{0};
   // number of times we went executed the thread //TODO: is this def correct?
   uint64_t runCount{0};
+  
+  double avgItemsMoved{0.0};
+
+  uint64_t numTraversals{0};
   // total number of classes
   uint64_t totalClasses{0};
   // eviction size
   uint64_t totalBytesMoved{0};
+  
+  // indicates the time in ms for the last iteration across the entire cache
+  uint64_t lastTraversalTimeMs{0};
 
-  BackgroundMoverStats& operator+=(const BackgroundMoverStats& rhs) {
-    numMovedItems += rhs.numMovedItems;
-    runCount += rhs.runCount;
-    totalClasses += rhs.totalClasses;
-    totalBytesMoved += rhs.totalBytesMoved;
-    return *this;
-  }
+  // indicates the maximum of all traversals
+  uint64_t minTraversalTimeMs{0};
+
+  // indicates the minimum of all traversals
+  uint64_t maxTraversalTimeMs{0};
+
+  // indicates the average of all traversals
+  uint64_t avgTraversalTimeMs{0};
+
+  //BackgroundMoverStats& operator+=(const BackgroundMoverStats& rhs) {
+  //  numMovedItems += rhs.numMovedItems;
+  //  runCount += rhs.runCount;
+  //  totalClasses += rhs.totalClasses;
+  //  totalBytesMoved += rhs.totalBytesMoved;
+  //  return *this;
+  //}
 };
 
 
@@ -347,9 +363,9 @@ struct Stats;
 // the ones that are aggregated over all pools
 struct GlobalCacheStats {
   // background eviction stats
-  BackgroundMoverStats evictionStats;
+  std::vector<BackgroundMoverStats> evictionStats;
   
-  BackgroundMoverStats promotionStats;
+  std::vector<BackgroundMoverStats> promotionStats;
 
   // number of calls to CacheAllocator::find
   uint64_t numCacheGets{0};

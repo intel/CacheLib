@@ -646,13 +646,15 @@ Stats Cache<Allocator>::getStats() const {
     ret.numItems.push_back(aggregate.numItems());
   }
 
-  std::map<TierId, std::map<PoolId, std::map<ClassId, ACStats>>> allocationClassStats{};
+  std::map<MemoryDescriptorType, ACStats> allocationClassStats{};
 
   for (size_t pid = 0; pid < pools_.size(); pid++) {
     auto cids = cache_->getPoolStats(static_cast<PoolId>(pid)).getClassIds();
     for (TierId tid = 0; tid < cache_->getNumTiers(); tid++) {
-      for (auto cid : cids)
-        allocationClassStats[tid][pid][cid] = cache_->getACStats(tid, pid, cid);
+      for (auto cid : cids) {
+        MemoryDescriptorType md(tid,pid,cid);
+        allocationClassStats[md] = cache_->getACStats(tid, pid, cid);
+      }
     }
   }
 
@@ -662,19 +664,8 @@ Stats Cache<Allocator>::getStats() const {
 
   ret.allocationClassStats = allocationClassStats;
 
-  ret.backgndEvicStats.nEvictedItems =
-            cacheStats.evictionStats.numMovedItems;
-  ret.backgndEvicStats.nTraversals =
-            cacheStats.evictionStats.runCount;
-  ret.backgndEvicStats.nClasses =
-            cacheStats.evictionStats.totalClasses;
-  ret.backgndEvicStats.evictionSize =
-            cacheStats.evictionStats.totalBytesMoved;
-  
-  ret.backgndPromoStats.nPromotedItems =
-            cacheStats.promotionStats.numMovedItems;
-  ret.backgndPromoStats.nTraversals =
-            cacheStats.promotionStats.runCount;
+  ret.backgroundEvictorStats = cacheStats.evictionStats;
+  ret.backgroundPromoStats = cacheStats.promotionStats;
 
   ret.evictAttempts = cacheStats.evictionAttempts;
   ret.dsaEvictionSubmits = cacheStats.dsaEvictionSubmits;

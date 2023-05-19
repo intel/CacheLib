@@ -1188,42 +1188,37 @@ class CacheAllocator : public CacheBase {
     return stats;
   }
 
-  // returns the background mover stats
-  BackgroundMoverStats getBackgroundMoverStats(MoverDir direction) const {
-    auto stats = BackgroundMoverStats{};
+  // returns the background mover stats per thread
+  std::vector<BackgroundMoverStats> getBackgroundMoverStats(MoverDir direction) const {
+    auto stats = std::vector<BackgroundMoverStats>();
     if (direction == MoverDir::Evict) {
       for (auto& bg : backgroundEvictor_)
-        stats += bg->getStats();
+        stats.push_back(bg->getStats());
     } else if (direction == MoverDir::Promote) {
       for (auto& bg : backgroundPromoter_)
-        stats += bg->getStats();
+        stats.push_back(bg->getStats());
     }
     return stats;
   }
 
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+  std::map<MemoryDescriptorType,uint64_t>
   getBackgroundMoverClassStats(MoverDir direction) const {
-    std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> stats;
+    std::map<MemoryDescriptorType,uint64_t> stats;
+    auto record = [&](auto &bg) {
+      //gives a unique descriptor
+      auto classStats = bg->getClassStats();
+      for (const auto& [key,value] : classStats) {
+          stats[key] = value;
+      }
+    };
 
     if (direction == MoverDir::Evict) {
       for (auto& bg : backgroundEvictor_) {
-        for (auto& tid : bg->getClassStats()) {
-          for (auto& pid : tid.second) {
-            for (auto& cid : pid.second) {
-              stats[tid.first][pid.first][cid.first] += cid.second;
-            }
-          }
-        }
+          record(bg);
       }
     } else if (direction == MoverDir::Promote) {
       for (auto& bg : backgroundPromoter_) {
-        for (auto& tid : bg->getClassStats()) {
-          for (auto& pid : tid.second) {
-            for (auto& cid : pid.second) {
-              stats[tid.first][pid.first][cid.first] += cid.second;
-            }
-          }
-        }
+          record(bg);
       }
     }
 
@@ -2253,8 +2248,13 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           newItemHandles[index]->getSize());
         (*stats_.dsaEvictionSubmits)[tid][pid][cid].inc();
         if (config_.dsaAsync) {
-          dmlHandles.emplace_back(
-            dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
+          if (cid < 11) {
+            dmlHandles.emplace_back(
+              dml::submit<dml::software>(dml::mem_copy, srcView, dstView));
+          } else {
+            dmlHandles.emplace_back(
+              dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
+          }
         } else {
           auto dmlHandle = dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView);
           auto result = dmlHandle.get();
@@ -2804,7 +2804,9 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
   // free memory monitor
   std::unique_ptr<MemoryMonitor> memMonitor_;
 
-  // background evictor
+  // background data movement
+
+
   std::vector<std::unique_ptr<BackgroundMover<CacheT>>> backgroundEvictor_;
   std::vector<std::unique_ptr<BackgroundMover<CacheT>>> backgroundPromoter_;
 

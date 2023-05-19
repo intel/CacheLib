@@ -73,6 +73,38 @@ enum class DestructorContext {
   kRemovedFromNVM
 };
 
+struct MemoryDescriptorType {
+    MemoryDescriptorType(TierId tid, PoolId pid, ClassId cid) : 
+        tid_(tid), pid_(pid), cid_(cid) {}
+    TierId tid_;
+    PoolId pid_;
+    ClassId cid_;
+
+    bool operator<(const MemoryDescriptorType& rhs) {
+        if (this->tid_ <= rhs.tid_) {
+            if (this->pid_ <= rhs.pid_) {
+                if (this->cid_ < rhs.cid_) return true;
+                else return false;
+            }
+            return false;
+        }
+        return false;
+    }
+    
+    friend bool operator<(const MemoryDescriptorType& lhs, const MemoryDescriptorType& rhs);
+};
+
+inline bool operator<(const MemoryDescriptorType& lhs, const MemoryDescriptorType& rhs) {
+  if (lhs.tid_ <= rhs.tid_) {
+      if (lhs.pid_ <= rhs.pid_) {
+          if (lhs.cid_ < rhs.cid_) return true;
+          else return false;
+      }
+      return false;
+  }
+  return false;
+}
+
 // A base class of cache exposing members and status agnostic of template type.
 class CacheBase {
  public:
