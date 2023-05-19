@@ -170,7 +170,13 @@ std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundEvictorStrate
   if (backgroundEvictorIntervalMilSec == 0) {
     return nullptr;
   }
-  return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+  if (backgroundEvictorStrategy == "threshold") {
+    return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+  } else if (backgroundEvictorStrategy == "fixed") {
+    return std::make_shared<DefaultBackgroundMoverStrategy>(maxEvictionBatch);
+  } else {
+    return std::make_shared<FreeThresholdStrategy>(lowEvictionAcWatermark, highEvictionAcWatermark, maxEvictionBatch, minEvictionBatch);
+  }
 }
 
 std::shared_ptr<BackgroundMoverStrategy> CacheConfig::getBackgroundPromoterStrategy() const {

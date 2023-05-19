@@ -22,13 +22,6 @@
 namespace facebook {
 namespace cachelib {
 
-struct MemoryDescriptorType {
-    MemoryDescriptorType(TierId tid, PoolId pid, ClassId cid) : 
-        tid_(tid), pid_(pid), cid_(cid) {}
-    TierId tid_;
-    PoolId pid_;
-    ClassId cid_;
-};
 
 // Base class for background eviction strategy.
 class BackgroundMoverStrategy {
@@ -36,6 +29,28 @@ class BackgroundMoverStrategy {
   virtual std::vector<size_t> calculateBatchSizes(
       const CacheBase& cache,
       std::vector<MemoryDescriptorType> acVec) = 0;
+};
+
+class DefaultBackgroundMoverStrategy : public BackgroundMoverStrategy {
+  public:
+    DefaultBackgroundMoverStrategy(uint64_t batchSize)
+      : batchSize_(batchSize) {}
+    ~DefaultBackgroundMoverStrategy() {}
+
+  std::vector<size_t> calculateBatchSizes(
+      const CacheBase& cache,
+      std::vector<MemoryDescriptorType> acVec) {
+    std::vector<size_t> batches{};
+    for (auto [tid, pid, cid] : acVec) {
+        auto stats = cache.getACStats(tid, pid, cid);
+        if (stats.usageFraction() > 0.90) {
+          batches.push_back(batchSize_);
+        }
+    }
+    return batches;
+  }
+  private:
+    uint64_t batchSize_{100};
 };
 
 } // namespace cachelib

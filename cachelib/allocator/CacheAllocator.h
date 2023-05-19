@@ -1169,47 +1169,39 @@ class CacheAllocator : public CacheBase {
     auto stats = reaper_ ? reaper_->getStats() : ReaperStats{};
     return stats;
   }
-  
-  // returns the background mover stats
-  BackgroundMoverStats getBackgroundMoverStats(MoverDir direction) const {
-    
-    auto stats = BackgroundMoverStats{};
+
+  // returns the background mover stats per thread
+  std::vector<BackgroundMoverStats> getBackgroundMoverStats(MoverDir direction) const {
+    auto stats = std::vector<BackgroundMoverStats>();
     if (direction == MoverDir::Evict) {
-        for (auto &bg : backgroundEvictor_)
-          stats += bg->getStats();
+      for (auto& bg : backgroundEvictor_)
+        stats.push_back(bg->getStats());
     } else if (direction == MoverDir::Promote) {
-        for (auto &bg : backgroundPromoter_)
-          stats += bg->getStats();
+      for (auto& bg : backgroundPromoter_)
+        stats.push_back(bg->getStats());
     }
     return stats;
-
   }
-  
-  
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+
+  std::map<MemoryDescriptorType,uint64_t>
   getBackgroundMoverClassStats(MoverDir direction) const {
-    std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> stats;
+    std::map<MemoryDescriptorType,uint64_t> stats;
+    auto record = [&](auto &bg) {
+      //gives a unique descriptor
+      auto classStats = bg->getClassStats();
+      for (const auto& [key,value] : classStats) {
+          stats[key] = value;
+      }
+    };
 
     if (direction == MoverDir::Evict) {
-        for (auto &bg : backgroundEvictor_) {
-          for (auto &tid : bg->getClassStats()) {
-            for (auto &pid : tid.second) {
-              for (auto &cid : pid.second) {
-                stats[tid.first][pid.first][cid.first] += cid.second;
-              }
-            }
-          }
-        }
+      for (auto& bg : backgroundEvictor_) {
+          record(bg);
+      }
     } else if (direction == MoverDir::Promote) {
-        for (auto &bg : backgroundPromoter_) {
-          for (auto &tid : bg->getClassStats()) {
-            for (auto &pid : tid.second) {
-              for (auto &cid : pid.second) {
-                stats[tid.first][pid.first][cid.first] += cid.second;
-              }
-            }
-          }
-        }
+      for (auto& bg : backgroundPromoter_) {
+          record(bg);
+      }
     }
 
     return stats;
@@ -1992,14 +1984,12 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     std::vector<Item*> candidates;
     candidates.reserve(batch);
 
-    size_t tries = 0;
-    mmContainer.withEvictionIterator([&tries, &candidates, &batch, &mmContainer, this](auto &&itr) {
-      while (candidates.size() < batch && 
-        (config_.maxEvictionPromotionHotness == 0 || tries < config_.maxEvictionPromotionHotness) && 
-         itr) {
-        tries++;
+    mmContainer.withEvictionIterator([this, tid, pid, cid,
+                                      &candidates, &batch, &mmContainer](auto &&itr) {
+      while (candidates.size() < batch && itr) {
         Item* candidate = itr.get();
         XDCHECK(candidate);
+        (*stats_.evictionAttempts)[tid][pid][cid].inc();
 
         if (candidate->isChainedItem()) {
           throw std::runtime_error("Not supported for chained items");
@@ -2038,6 +2028,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       	  XDCHECK(!candidate->isAccessible());
       	  XDCHECK(candidate->getKey() == evictedToNext->getKey());
 
+          (*stats_.numWritebacks)[tid][pid][cid].inc();
       	  wakeUpWaiters(*candidate, std::move(evictedToNext));
       }
       XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
@@ -2067,7 +2058,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t tries = 0;
 
     mmContainer.withPromotionIterator([&tries, &candidates, &batch, &mmContainer, this](auto &&itr){
-      while (candidates.size() < batch && (config_.maxEvictionPromotionHotness == 0 || tries < config_.maxEvictionPromotionHotness) && itr) {
+      while (candidates.size() < batch && itr) {
         tries++;
         Item* candidate = itr.get();
         XDCHECK(candidate);
@@ -2469,8 +2460,8 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
 
   // free memory monitor
   std::unique_ptr<MemoryMonitor> memMonitor_;
-  
-  // background evictor
+
+  // background data movement
   std::vector<std::unique_ptr<BackgroundMover<CacheT>>> backgroundEvictor_;
   std::vector<std::unique_ptr<BackgroundMover<CacheT>>> backgroundPromoter_;
 

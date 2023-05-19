@@ -65,15 +65,35 @@ class BackgroundMover : public PeriodicWorker {
   ~BackgroundMover() override;
 
   BackgroundMoverStats getStats() const noexcept;
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
-  getClassStats() const noexcept;
+  std::map<MemoryDescriptorType,uint64_t> getClassStats() const noexcept;
 
   void setAssignedMemory(
       std::vector<MemoryDescriptorType>&& assignedMemory);
 
  private:
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
-      moves_per_class_;
+  std::map<MemoryDescriptorType,uint64_t> moves_per_class_;
+  
+  struct TraversalStats {
+    // record a traversal and its time taken
+    void recordTraversalTime(uint64_t nsTaken);
+
+    uint64_t getAvgTraversalTimeNs(uint64_t numTraversals) const;
+    uint64_t getMinTraversalTimeNs() const { return minTraversalTimeNs_; }
+    uint64_t getMaxTraversalTimeNs() const { return maxTraversalTimeNs_; }
+    uint64_t getLastTraversalTimeNs() const { return lastTraversalTimeNs_; }
+    uint64_t getNumTraversals() const { return numTraversals_; }
+
+   private:
+    // time it took us the last time to traverse the cache.
+    std::atomic<uint64_t> lastTraversalTimeNs_{0};
+    std::atomic<uint64_t> minTraversalTimeNs_{
+        std::numeric_limits<uint64_t>::max()};
+    std::atomic<uint64_t> maxTraversalTimeNs_{0};
+    std::atomic<uint64_t> totalTraversalTimeNs_{0};
+    std::atomic<uint64_t> numTraversals_{0};
+  };
+  
+  TraversalStats traversalStats_;
   // cache allocator's interface for evicting
   using Item = typename Cache::Item;
 
