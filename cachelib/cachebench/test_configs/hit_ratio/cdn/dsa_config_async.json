@@ -1,6 +1,7 @@
 {
   "cache_config": {
     "cacheSizeMB": 32768,
+    "poolRebalanceIntervalSec": 0,
     "htBucketPower": 27,
     "htBucketLock": 27,
     "backgroundEvictorIntervalMilSec": 1,
@@ -15,7 +16,7 @@
       },
       {
         "ratio": 1,
-        "memBindNodes": 0
+        "memBindNodes": 1
       }
     ]
   },

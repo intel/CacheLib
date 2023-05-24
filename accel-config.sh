@@ -27,9 +27,11 @@ do
 done
 
 sudo accel-config config-wq ${SWQ} --group-id=0
-sudo accel-config config-wq ${SWQ} --priority=5
+sudo accel-config config-wq ${SWQ} --priority=1
 sudo accel-config config-wq ${SWQ} --wq-size=128
 sudo accel-config config-wq ${SWQ} --max-batch-size=1024
+sudo accel-config config-wq ${SWQ} --max-transfer-size=4194304
+sudo accel-config config-wq ${SWQ} --block-on-fault=0
 sudo accel-config config-wq ${SWQ} --type=user
 sudo accel-config config-wq ${SWQ} --name="dsa-test"
 sudo accel-config config-wq ${SWQ} --mode=shared
