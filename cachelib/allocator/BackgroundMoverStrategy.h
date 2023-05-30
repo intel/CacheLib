@@ -42,9 +42,13 @@ class DefaultBackgroundMoverStrategy : public BackgroundMoverStrategy {
       std::vector<MemoryDescriptorType> acVec) {
     std::vector<size_t> batches{};
     for (auto [tid, pid, cid] : acVec) {
-        auto stats = cache.getACStats(tid, pid, cid);
-        if (stats.usageFraction() > 0.90) {
-          batches.push_back(batchSize_);
+        double usage = cache.getPoolByTid(pid, tid).getApproxUsage(cid);
+        uint32_t perSlab = cache.getPoolByTid(pid, tid).getPerSlab(cid);
+        if (usage > 0.90) {
+          uint32_t batch = batchSize_ > perSlab ? perSlab : batchSize_;
+          batches.push_back(batch);
+        } else {
+          batches.push_back(0);
         }
     }
     return batches;
