@@ -2,12 +2,7 @@
 {
     "cache_config" : {
       "cacheSizeMB" : 2000,
-      "cacheDir" : "/tmp/mem-tiers",
      "dsaEnabled" : true,
-     "backgroundEvictorIntervalMilSec": 1,
-    "highEvictionAcWatermark": 80,
-    "lowEvictionAcWatermark": 50,
-    "evictorThreads": 10,
       "memoryTiers" : [
         {
           "ratio": 1,

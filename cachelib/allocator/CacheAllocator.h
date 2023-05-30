@@ -1542,6 +1542,11 @@ class CacheAllocator : public CacheBase {
                                    uint32_t expiryTime,
                                    bool fromBgThread);
 
+  std::vector<WriteHandle> allocateInternalTierBatch(TierId tid,
+                                                 PoolId pid,
+                                                 ClassId cid,
+                                                 std::vector<Item*> oldItems);
+
   // Allocate a chained item
   //
   // The resulting chained item does not have a parent item and
@@ -1814,6 +1819,7 @@ class CacheAllocator : public CacheBase {
   // @param  cid  the id of the class to look for evictions inside
   // @return An evicted item or nullptr  if there is no suitable candidate.
   Item* findEviction(TierId tid, PoolId pid, ClassId cid);
+  void findEviction(TierId tid, PoolId pid, ClassId cid, std::vector<void*>& allocs, uint64_t batch);
 
   // Try to move the item down to the next memory tier
   //
@@ -2078,8 +2084,69 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     }
     return evictions;
   }
-
+  
   static std::string dsa_error_string(dml::batch_result& result) {
+    std::string error;
+    switch (result.status) {
+        case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
+            error = "false pred";
+            break;
+        case dml::status_code::partial_completion:    /**< Operation was partially completed */
+            error = "partial complte";
+            break;
+        case dml::status_code::nullptr_error:         /**< One of data pointers is NULL */
+            error = "nullptr";
+            break;
+        case dml::status_code::bad_size:              /**< Invalid byte size was specified */
+            error = "bad size";
+            break;
+        case dml::status_code::bad_length:            /**< Invalid number of elements was specified */
+            error = "bad len";
+            break;
+        case dml::status_code::inconsistent_size:     /**< Input data sizes are different */
+            error = "inconsis size";
+            break;
+        case dml::status_code::dualcast_bad_padding:  /**< Bits 11:0 of the two destination addresses are not the same. */
+            error = "dualcast bad padding";
+            break;
+        case dml::status_code::bad_alignment:         /**< One of data pointers has invalid alignment */
+            error = "bad align";
+            break;
+        case dml::status_code::buffers_overlapping:   /**< Buffers overlap with each other */
+            error = "buf overlap";
+            break;
+        case dml::status_code::delta_bad_size:        /**< Invalid delta record size was specified */
+            error = "delta bad size";
+            break;
+        case dml::status_code::delta_delta_empty:     /**< Delta record is empty */
+            error = "delta emptry";
+            break;
+        case dml::status_code::batch_overflow:        /**< Batch is full */
+            error = "batch overflow";
+            break;
+        case dml::status_code::execution_failed:      /**< Unknown execution error */
+            error = "unknw exec";
+            break;
+        case dml::status_code::unsupported_operation: /**< Unknown execution error */
+            error = "unsupported op";
+            break;
+        case dml::status_code::queue_busy:            /**< Enqueue failed to one or several queues */
+            error = "busy";
+            break;
+        case dml::status_code::error:                  /**< Internal library error occurred */
+            error = "internal";
+            break;
+        case dml::status_code::ok:                  /**< should not be here */
+            error = "ok";
+            break;
+        default:
+            error = "none of the above - okay!!";
+            break;
+    }
+    return error;
+  }
+
+  static std::string dsa_error_string(dml::mem_copy_result& result) {
     std::string error;
     switch (result.status) {
         case dml::status_code::false_predicate:       /**< Operation completed successfully: but result is unexpected */
@@ -2150,25 +2217,19 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
                                        unsigned int cid,
                                        size_t batch) {
     auto& mmContainer = getMMContainer(tid, pid, cid);
+    auto& nextMMContainer = getMMContainer(tid+1, pid, cid);
     size_t evictions = 0;
     size_t evictionCandidates = 0;
+    if (nextMMContainer.size() < batch) {
+        return evictions;
+    }
     std::vector<Item*> candidates;
     candidates.reserve(batch);
-    const auto& pool = allocator_[currentTier()]->getPool(pid);
-    auto mpStats = pool.getStats();
-    const auto& classIds = mpStats.classIds;
-    uint64_t dsaCallsPre = 0;
-    for (ClassId cid : classIds) {
-        dsaCallsPre += (*stats_.dsaEvictionSubmits)[tid][pid][cid].get();
-    }
 
     size_t tries = 0;
     mmContainer.withEvictionIterator(
         [&tries, &candidates, &batch, &mmContainer, this, tid, pid, cid](auto&& itr) {
-          while (candidates.size() < batch &&
-                 (config_.maxEvictionPromotionHotness == 0 ||
-                  tries < config_.maxEvictionPromotionHotness) &&
-                 itr) {
+          while (candidates.size() < batch && itr) {
             tries++;
             (*stats_.evictionAttempts)[tid][pid][cid].inc();
             Item* candidate = itr.get();
@@ -2187,40 +2248,28 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
           }
         });
 
-    std::vector<WriteHandle> newItemHandles;
+    if (candidates.size() == 0) {
+        return evictions;
+    }
+    std::vector<WriteHandle> newItemHandles = 
+        allocateInternalTierBatch(tid+1,pid,cid, candidates);
     std::vector<Item*> newItemPtr;
-    //newItemHandles.reserve(batch);
     unsigned int validHandleCnt = 0;
-    for (auto itr = candidates.begin(); itr != candidates.end();) {
-      Item* candidate = *itr;
-      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true, false);
-      if (evictedToNext) {
-        newItemPtr.push_back(evictedToNext.get());
-        newItemHandles.push_back(std::move(evictedToNext));
+    for (auto itr = newItemHandles.begin(); itr != newItemHandles.end();) {
+        newItemPtr.push_back((*itr).get());
         validHandleCnt++;
         ++itr;
-        continue;
-      }
-      auto token = createPutToken(*candidate);
-      auto ret = candidate->markForEvictionWhenMoving();
-      XDCHECK(ret);
-      unlinkItemForEviction(*candidate);
-      // wake up any readers that wait for the move to complete
-      // it's safe to do now, as we have the item marked exclusive and
-      // no other reader can be added to the waiters list
-      wakeUpWaiters(*candidate, WriteHandle{});
-
-      if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
-        nvmCache_->put(*candidate, std::move(token));
-      }
-      candidates.erase(itr);
     }
 
     if (!validHandleCnt) {
       return evictions;
     }
     XDCHECK_EQ(newItemHandles.size(),validHandleCnt);
+    XDCHECK_EQ(candidates.size(),validHandleCnt);
 
+    bool useBatch = candidates.size() > 4;
+    auto dmlHandles = std::vector<dml::handler<dml::mem_copy_operation, 
+               std::allocator<dml::byte_t>>>();
     auto sequence = dml::sequence<allocator_t>(validHandleCnt);
     for (auto index = 0U; index < candidates.size(); index++) {
       XDCHECK_EQ(newItemHandles[index].get(),newItemPtr[index]);
@@ -2246,27 +2295,37 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       dml::data_view dstView = dml::make_view(
           reinterpret_cast<uint8_t*>(newItemHandles[index]->getMemory()),
           newItemHandles[index]->getSize());
-      if (sequence.add(dml::mem_copy, srcView, dstView) != dml::status_code::ok) {
-        throw std::runtime_error("failed to add dml::mem_copy operation to the sequence.");
+
+      if (useBatch) {
+        if (sequence.add(dml::mem_copy, srcView, dstView) != dml::status_code::ok) {
+          throw std::runtime_error("failed to add dml::mem_copy operation to the sequence.");
+        }
+      } else {
+        if (cid < 11) {
+          dmlHandles.emplace_back(
+             dml::submit<dml::software>(dml::mem_copy, srcView, dstView));
+        } else {
+          dmlHandles.emplace_back(
+               dml::submit<dml::hardware>(dml::mem_copy, srcView, dstView));
+          (*stats_.dsaEvictionSubmits)[tid][pid][cid].inc();
+        }
       }
     }
 
     batch_handler_t handler{};
     /* Use software path (memcpy) if class size is small (identified by class id < 11) */
-    if (cid < 11) {
+    if (useBatch && cid < 11) {
       handler = dml::submit<dml::software>(dml::batch, sequence);
-      XDCHECK(handler.valid());
-      if (!handler.valid()) {
-        throw std::runtime_error("Failed dml::software sequence submission");
-      }
-    } else { // larger items
+    } else if (useBatch && cid >= 11) { // larger items
       handler = dml::submit<dml::hardware>(dml::batch, sequence,
-                        dml::default_execution_interface<dml::hardware>{}, 0);
-      XDCHECK(handler.valid());
-      if (!handler.valid()) {
-        throw std::runtime_error("Failed dml::hardware sequence submission");
-      }
+                      dml::default_execution_interface<dml::hardware>{}, 0);
+      
       (*stats_.dsaEvictionSubmits)[tid][pid][cid].inc();
+    }
+    if (useBatch && !handler.valid()) {
+      auto status = handler.get();
+      XDCHECK(handler.valid()) << dsa_error_string(status);
+      throw std::runtime_error(folly::sformat("Failed dml sequence submission: {}",dsa_error_string(status)));
     }
 
     // Adding the item to mmContainer has to succeed since no one
@@ -2304,18 +2363,15 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       return true;
     };
 
-    auto result = handler.get();
-    if (result.status != dml::status_code::ok) {
-      uint64_t dsaCallsPost = 0;
-      for (ClassId cid : classIds) {
-        dsaCallsPost += (*stats_.dsaEvictionSubmits)[tid][pid][cid].get();
+    
+    if (useBatch) {
+      auto result = handler.get();
+      if (result.status != dml::status_code::ok) {
+        std::string error = dsa_error_string(result);
+        throw std::runtime_error(error);
       }
-      uint64_t dsaCalls = dsaCallsPost - dsaCallsPre;
-      std::string error = dsa_error_string(result);
-      auto errorStr = folly::sformat("dml error: submits {:}", error, dsaCalls);
-      throw std::runtime_error(errorStr);
+      XDCHECK_EQ(result.status, dml::status_code::ok);
     }
-    XDCHECK_EQ(result.status, dml::status_code::ok);
 
     for (auto index = 0U; index < candidates.size(); index++) {
       // another thread may have called insertOrReplace() which
@@ -2323,8 +2379,20 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
       // replaceIf() in the access container to fail - in this
       // case we want to abort the move since the item is no
       // longer valid
+      if (!useBatch) {
+        auto result = dmlHandles[index].get();
+        if (result.status != dml::status_code::ok) {
+         std::string error = dsa_error_string(result);
+         auto errorStr = folly::sformat("dml error: {} for item: {}", error, candidates[index]->toString());
+             XDCHECK_EQ(result.status,dml::status_code::ok) << errorStr;
+             throw std::runtime_error(errorStr);
+         }
+         XDCHECK_EQ(result.status,dml::status_code::ok);
+      }
+      
       bool replaced = accessContainer_->replaceIf(
               *candidates[index], *newItemHandles[index], predicate);
+
       if (replaced) {
         candidates[index]->unmarkMoving();
         XDCHECK(!newItemHandles[index]->isMarkedForEviction() &&

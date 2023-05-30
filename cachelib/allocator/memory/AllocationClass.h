@@ -113,6 +113,7 @@ class AllocationClass {
   //          don't have any free memory. The caller will have to add a slab
   //          to this slab class to make further allocations out of it.
   void* allocate();
+  std::vector<void*> allocate(uint64_t n);
 
   // @param ctx     release context for the slab owning this alloc
   // @param memory  memory to check
@@ -224,6 +225,7 @@ class AllocationClass {
   // @param slab    a new slab to be added. This can NOT be nullptr.
   // @return  new allocation. This cannot fail.
   void* addSlabAndAllocate(Slab* slab);
+  std::vector<void*> addSlabAndAllocate(Slab* slab, uint64_t n);
 
   // Releasing a slab is a two step process.
   // 1. Mark a slab for release, by calling `startSlabRelease`.
@@ -328,6 +330,7 @@ class AllocationClass {
   // returns a new allocation from the current slab. Caller needs to ensure
   // that precondition canAllocateFromCurrentSlabLocked is satisfied
   void* allocateFromCurrentSlabLocked() noexcept;
+  void allocateFromCurrentSlabLocked(std::vector<void*>& allocs_, int64_t n) noexcept;
 
   // get a suitable slab for being released from either the set of free slabs
   // or the allocated slabs.
@@ -410,6 +413,7 @@ class AllocationClass {
   //          don't have any free memory. The caller will have to add a slab
   //          to this slab class to make further allocations out of it.
   void* allocateLocked();
+  std::vector<void*> allocateLocked(uint64_t n);
 
   // lock for serializing access to currSlab_, currOffset, allocatedSlabs_,
   // freeSlabs_, freedAllocations_.

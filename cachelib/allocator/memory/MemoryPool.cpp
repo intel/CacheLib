@@ -262,6 +262,52 @@ Slab* MemoryPool::getSlabLocked() noexcept {
   return slab;
 }
 
+std::vector<void*> MemoryPool::allocateBatchByClass(ClassId cid, uint64_t batch) {
+  auto& ac = *ac_[cid];
+
+  auto allocs = ac.allocate(batch);
+  const auto allocSize = ac.getAllocSize();
+
+  if (allocs.size() > 0) {
+    currAllocSize_ += allocSize * allocs.size();
+    return allocs;
+  }
+
+  // atomically see if we can acquire a slab by checking if we have
+  // reached the limit by size. If not, then they can be acquired from
+  // either the slab allocator or our free list. It is important to check
+  // this before we grab it from the slab allocator or free list. Things
+  // that release slab, bump down the currSlabAllocSize_ after actually
+  // releasing and adding it to free list or slab allocator.
+  if (allSlabsAllocated()) {
+    return allocs;
+  }
+
+  // TODO: introduce a new sharded lock by allocation class id for this slow
+  // path Currently this would also serialize the slow paths of two different
+  // allocation class ids that need slab to initiate an allocation.
+  LockHolder l(lock_);
+  allocs = ac.allocate(batch);
+  if (allocs.size() > 0) {
+    currAllocSize_ += allocSize * allocs.size();
+    return allocs;
+  }
+
+  // see if we have a slab to add to the allocation class.
+  auto slab = getSlabLocked();
+  if (slab == nullptr) {
+    // out of memory
+    return allocs;
+  }
+
+  // add it to the allocation class and try to allocate.
+  allocs = ac.addSlabAndAllocate(slab, batch);
+  XDCHECK_NE(allocs.size(), 0);
+
+  currAllocSize_ += allocSize * allocs.size();
+  return allocs;
+}
+
 void* MemoryPool::allocate(uint32_t size) {
   auto& ac = getAllocationClassFor(size);
 

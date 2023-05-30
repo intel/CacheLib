@@ -16,12 +16,13 @@
       },
       {
         "ratio": 1,
-        "memBindNodes": 1
+        "memBindNodes": 0
       }
     ]
   },
   "test_config":
     {
+      "generator": "online",
       "addChainedRatio": 0.0,
       "delRatio": 0.0,
       "enableLookaside": true,
@@ -38,7 +39,8 @@
       "loneGetRatio": 0.008844707140632665,
       "numKeys": 8935378,
       "numOps": 5000000,
-      "opRatePerSec": 500000,
+      //"opRatePerSec": 500000,
+      "opRatePerSec": 1500000,
       "numThreads": 24,
       "popDistFile": "pop.json",
       "setRatio": 0.0,

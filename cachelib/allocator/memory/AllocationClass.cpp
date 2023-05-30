@@ -140,11 +140,33 @@ void* AllocationClass::addSlabAndAllocate(Slab* slab) {
   });
 }
 
+std::vector<void*> AllocationClass::addSlabAndAllocate(Slab* slab, uint64_t n) {
+  XDCHECK_NE(nullptr, slab);
+  return lock_->lock_combine([this, n, slab]() {
+    addSlabLocked(slab);
+    return allocateLocked(n);
+  });
+}
+
 void* AllocationClass::allocateFromCurrentSlabLocked() noexcept {
   XDCHECK(canAllocateFromCurrentSlabLocked());
   void* ret = currSlab_->memoryAtOffset(currOffset_);
   currOffset_ += allocationSize_;
   return ret;
+}
+
+void AllocationClass::allocateFromCurrentSlabLocked(std::vector<void*>& allocs, 
+                                                                  int64_t n) noexcept {
+  XDCHECK_GT(n,0);
+  XDCHECK(canAllocateFromCurrentSlabLocked());
+  int allocd = 0;
+  while (canAllocateFromCurrentSlabLocked() && allocd < n) {
+    void* ret = currSlab_->memoryAtOffset(currOffset_);
+    currOffset_ += allocationSize_;
+    allocs.push_back(ret);
+    allocd++;
+  }
+  return;
 }
 
 bool AllocationClass::canAllocateFromCurrentSlabLocked() const noexcept {
@@ -157,6 +179,53 @@ void* AllocationClass::allocate() {
     return nullptr;
   }
   return lock_->lock_combine([this]() -> void* { return allocateLocked(); });
+}
+
+std::vector<void*> AllocationClass::allocate(uint64_t n) {
+  if (!canAllocate_) {
+    return std::vector<void*>();
+  }
+  return lock_->lock_combine([this, n]() -> std::vector<void*> { return allocateLocked(n); });
+}
+
+std::vector<void*> AllocationClass::allocateLocked(uint64_t n) {
+  std::vector<void*> allocs;
+  int allocd = 0;
+  // fast path for case when the cache is mostly full.
+  if (freedAllocations_.empty() && freeSlabs_.empty() &&
+      !canAllocateFromCurrentSlabLocked()) {
+    canAllocate_ = false;
+    return allocs;
+  }
+
+  XDCHECK(canAllocate_);
+
+  // grab from the free list if possible.
+  while (!freedAllocations_.empty() && allocd < n) {
+    FreeAlloc* ret = freedAllocations_.getHead();
+    XDCHECK(ret != nullptr);
+    freedAllocations_.pop();
+    allocs.push_back(reinterpret_cast<void*>(ret));
+    allocd++;
+  }
+
+  // see if we have an active slab that is being used to carve the
+  // allocations.
+  if (canAllocateFromCurrentSlabLocked()) {
+    allocateFromCurrentSlabLocked(allocs,n-allocd);
+    allocd += allocs.size() - allocd;
+  }
+  
+  while (!freeSlabs_.empty() && allocd < n) {
+    XDCHECK(canAllocate_);
+    XDCHECK(!freeSlabs_.empty());
+    setupCurrentSlabLocked();
+    // grab a free slab and make it current.
+    allocateFromCurrentSlabLocked(allocs,n-allocd);
+    allocd += allocs.size() - allocd;
+  }
+  return allocs;
+
 }
 
 void* AllocationClass::allocateLocked() {
