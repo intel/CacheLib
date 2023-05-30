@@ -523,3 +523,13 @@ MPStats MemoryPool::getStats() const {
                  slabsUnAllocated,    nSlabResize_,       nSlabRebalance_,
                  curSlabsAdvised_};
 }
+
+double MemoryPool::getApproxUsage(ClassId cid) const {
+  const auto& ac = ac_[cid];
+  return ac->getApproxUsage();
+}
+
+uint32_t MemoryPool::getPerSlab(ClassId cid) const {
+  const auto& ac = ac_[cid];
+  return ac->getPerSlab();
+}

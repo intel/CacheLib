@@ -132,6 +132,8 @@ class MemoryPool {
   }
 
   MPStats getStats() const;
+  double getApproxUsage(ClassId cid) const;
+  uint32_t getPerSlab(ClassId cid) const;
 
   // allocates memory of at least _size_ bytes.
   //

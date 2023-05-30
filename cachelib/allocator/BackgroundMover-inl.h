@@ -85,34 +85,39 @@ template <typename CacheT>
 void BackgroundMover<CacheT>::checkAndRun() {
   auto assignedMemory = mutex.lock_combine([this] { return assignedMemory_; });
 
-  unsigned int moves = 0;
-  std::set<ClassId> classes{};
-  auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
+  while (true) {
+    unsigned int moves = 0;
+    //std::set<ClassId> classes{};
+    auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
+    const auto begin = util::getCurrentTimeNs();
+    for (size_t i = 0; i < batches.size(); i++) {
+      const auto [tid, pid, cid] = assignedMemory[i];
+      const auto batch = batches[i];
 
-  const auto begin = util::getCurrentTimeNs();
-  //const auto& mpStats = cache_.getPoolByTid(0, 0).getStats();
-  for (size_t i = 0; i < batches.size(); i++) {
-    const auto [tid, pid, cid] = assignedMemory[i];
-    const auto batch = batches[i];
+      //classes.insert(cid);
 
-    classes.insert(cid);
+      if (batch == 0) {
+        continue;
+      }
 
-    if (!batch) {
-      continue;
+      // try moving BATCH items from the class in order to reach free target
+      auto moved = moverFunc(cache_, tid, pid, cid, batch);
+      moves += moved;
+      moves_per_class_[assignedMemory[i]] += moved;
+      //totalBytesMoved.add(moved * mpStats.acStats.at(cid).allocSize);
     }
-
-    // try moving BATCH items from the class in order to reach free target
-    auto moved = moverFunc(cache_, tid, pid, cid, batch);
-    moves += moved;
-    moves_per_class_[assignedMemory[i]] += moved;
-    //totalBytesMoved.add(moved * mpStats.acStats.at(cid).allocSize);
-  }
-  auto end = util::getCurrentTimeNs();
-  if (moves > 0) {
-    traversalStats_.recordTraversalTime(end > begin ? end - begin : 0);
-    numMovedItems.add(moves);
-    numTraversals.inc();
-    totalClasses.add(classes.size());
+    auto end = util::getCurrentTimeNs();
+    if (moves > 0) {
+      traversalStats_.recordTraversalTime(end > begin ? end - begin : 0);
+      numMovedItems.add(moves);
+      numTraversals.inc();
+      //totalClasses.add(classes.size());
+    }
+    //we didn't move that many objects done with this run
+    if (moves == 0 || moves < batches.size() || shouldStopWork()) {
+        break;
+    }
+    break;
   }
 
 }
