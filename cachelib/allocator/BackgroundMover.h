@@ -51,6 +51,13 @@ struct BackgroundMoverAPIWrapper {
                                         size_t batch) {
     return cache.traverseAndPromoteItems(tid, pid, cid, batch);
   }
+  static size_t getBatchForTarget(C& cache,
+                                        unsigned int tid,
+                                        unsigned int pid,
+                                        unsigned int cid,
+                                        double target) {
+    return cache.getPoolByTid(pid,tid).getBatchForTarget(cid, target);
+  }
 };
 
 enum class MoverDir { Evict = 0, Promote };

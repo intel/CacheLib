@@ -135,6 +135,8 @@ class MemoryPool {
   double getApproxUsage(ClassId cid) const;
   uint32_t getPerSlab(ClassId cid) const;
 
+  double getBatchForTarget(ClassId cid, double target) const;
+
   // allocates memory of at least _size_ bytes.
   //
   // @param size  size of the allocation.

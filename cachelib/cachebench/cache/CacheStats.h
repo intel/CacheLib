@@ -313,7 +313,7 @@ struct Stats {
             tid, pid, cid, promoted) << std::endl;
         }
       });
-      out << folly::sformat("Total promotions: {:,}",promote) << std::endl;
+      out << folly::sformat("Total promotions: {:,}",totalpromote) << std::endl;
     }
 
     if (reaperStats.numReapedItems > 0) {

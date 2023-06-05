@@ -99,6 +99,7 @@ class AllocationClass {
 
   // get approx usage as fraction of used allocs/total allocs in this class
   double getApproxUsage() const;
+  uint32_t getBatchForTarget(double target);
   uint32_t getPerSlab() const;
 
   // Whether the pool is full or free to allocate more in the current state.

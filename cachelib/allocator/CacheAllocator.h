@@ -2019,19 +2019,16 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
     candidates.reserve(batch);
 
     size_t tries = 0;
-    mmContainer.withEvictionIterator(
-        [&tries, &candidates, &batch, &mmContainer, this](auto&& itr) {
-          while (candidates.size() < batch &&
-                 (config_.maxEvictionPromotionHotness == 0 ||
-                  tries < config_.maxEvictionPromotionHotness) &&
-                 itr) {
-            tries++;
-            Item* candidate = itr.get();
-            XDCHECK(candidate);
+    mmContainer.withEvictionIterator([tid, pid, cid, &tries, &candidates, &batch, &mmContainer, this](auto &&itr) {
+      while (candidates.size() < batch && itr) {
+        tries++;
+        (*stats_.evictionAttempts)[tid][pid][cid].inc();
+        Item* candidate = itr.get();
+        XDCHECK(candidate);
 
-            if (candidate->isChainedItem()) {
-              throw std::runtime_error("Not supported for chained items");
-            }
+        if (candidate->isChainedItem()) {
+          throw std::runtime_error("Not supported for chained items");
+        }
 
         if (candidate->markMoving(true)) {
           mmContainer.remove(itr);

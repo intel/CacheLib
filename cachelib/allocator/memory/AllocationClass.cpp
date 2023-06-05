@@ -780,7 +780,10 @@ uint32_t AllocationClass::getPerSlab() const {
 double AllocationClass::getApproxUsage() const {
   const unsigned long long nSlabsAllocated = allocatedSlabs_.size();
   if (nSlabsAllocated == 0) {
-      return 0.0;
+    return 0.0;
+  }
+  if (canAllocate_) {
+    return 0.0;
   }
   const unsigned long long perSlab = getAllocsPerSlab();
   const auto freeAllocsInCurrSlab =
@@ -791,6 +794,31 @@ double AllocationClass::getApproxUsage() const {
   const unsigned long long nActiveAllocs =
       nSlabsAllocated * perSlab - nFreedAllocs - freeAllocsInCurrSlab;
   return (double) nActiveAllocs / (double) (nSlabsAllocated * perSlab);
+}
+
+uint32_t AllocationClass::getBatchForTarget(double target) {
+  const unsigned long long nSlabsAllocated = allocatedSlabs_.size();
+  if (nSlabsAllocated == 0) {
+    return 0;
+  }
+  if (canAllocate_) {
+    return 0;
+  }
+  const unsigned long long perSlab = getAllocsPerSlab();
+  const auto freeAllocsInCurrSlab =
+      canAllocateFromCurrentSlabLocked()
+          ? (Slab::kSize - currOffset_) / allocationSize_
+          : 0;
+  const unsigned long long nFreedAllocs = freedAllocations_.size();
+  const unsigned long long nActiveAllocs =
+      nSlabsAllocated * perSlab - nFreedAllocs - freeAllocsInCurrSlab;
+  double curr = (double) nActiveAllocs / (double) (nSlabsAllocated * perSlab);
+  if (target < curr) {
+    double frac = curr - target;
+    uint32_t batch = frac * (double) (nSlabsAllocated * perSlab);
+    return batch;
+  }
+  return 0;
 }
 
 void AllocationClass::createSlabReleaseAllocMapLocked(const Slab* slab) {

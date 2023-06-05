@@ -575,6 +575,11 @@ double MemoryPool::getApproxUsage(ClassId cid) const {
   return ac->getApproxUsage();
 }
 
+double MemoryPool::getBatchForTarget(ClassId cid, double target) const {
+  auto& allocClass = getAllocationClassFor(cid);
+  return allocClass.getBatchForTarget(target);
+}
+
 uint32_t MemoryPool::getPerSlab(ClassId cid) const {
   const auto& ac = ac_[cid];
   return ac->getPerSlab();
