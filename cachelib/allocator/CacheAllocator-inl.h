@@ -1600,11 +1600,12 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
     Item* toRecycle = nullptr;
     Item* candidate = nullptr;
+    bool isExpired = false;
     typename NvmCacheT::PutToken token;
 
     mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate, &toRecycle,
                                       &searchTries, &mmContainer, &lastTier,
-                                      &token](auto&& itr) {
+                                      &isExpired, &token](auto&& itr) {
       if (!itr) {
         ++searchTries;
         (*stats_.evictionAttempts)[tid][pid][cid].inc();
@@ -1633,7 +1634,8 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
 
         if (evictToNvmCache && !token_.isValid()) {
           stats_.evictFailConcurrentFill.inc();
-        } else if ( (lastTier && candidate_->markForEviction()) ||
+        } else if ( ((lastTier || candidate_->isExpired()) &&
+                      candidate_->markForEviction()) ||
                     (!lastTier && candidate_->markMoving(true)) ) {
           XDCHECK(candidate_->isMoving() || candidate_->isMarkedForEviction());
           // markForEviction to make sure no other thead is evicting the item
@@ -1641,6 +1643,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
           // since we won't be moving the item to the next tier
           toRecycle = toRecycle_;
           candidate = candidate_;
+          isExpired = candidate_->isExpired();
           token = std::move(token_);
 
           // Check if parent changed for chained items - if yes, we cannot
@@ -1674,7 +1677,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
     XDCHECK(toRecycle);
     XDCHECK(candidate);
 
-    auto evictedToNext = lastTier ? nullptr
+    auto evictedToNext = (lastTier || isExpired) ? nullptr
         : tryEvictToNextMemoryTier(*candidate, false);
     if (!evictedToNext) {
       //if insertOrReplace was called during move
@@ -1700,7 +1703,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
       // as exclusive since we will not be moving the item to the next tier
       // but rather just evicting all together, no need to
       // markForEvictionWhenMoving
-      auto ret = lastTier ? true : candidate->markForEvictionWhenMoving();
+      auto ret = (lastTier || isExpired) ? true : candidate->markForEvictionWhenMoving();
       XDCHECK(ret);
 
       unlinkItemForEviction(*candidate);
@@ -1807,11 +1810,6 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
   if(item.hasChainedItem()) return WriteHandle{}; // TODO: We do not support ChainedItem yet
-  if(item.isExpired()) {
-    accessContainer_->remove(item);
-    item.unmarkMoving();
-    return acquire(&item);
-  }
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
