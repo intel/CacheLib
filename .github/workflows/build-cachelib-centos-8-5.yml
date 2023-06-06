@@ -13,8 +13,6 @@
 # limitations under the License.
 name: build-cachelib-centos-8.5
 on:
-#   push:
-  pull_request:
   schedule:
      - cron:  '0 9 * * *'
 jobs:
