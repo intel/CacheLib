@@ -1596,12 +1596,13 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
   typename NvmCacheT::PutToken token;
   Item* toRecycle = nullptr;
   Item* candidate = nullptr;
+  bool isExpired = false;
   auto& mmContainer = getMMContainer(tid, pid, cid);
   bool lastTier = tid+1 >= getNumTiers();
 
   mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate, &toRecycle,
                                     &searchTries, &mmContainer, &lastTier,
-                                    &token](auto&& itr) {
+                                    &isExpired, &token](auto&& itr) {
     if (!itr) {
       ++searchTries;
       (*stats_.evictionAttempts)[tid][pid][cid].inc();
@@ -1634,7 +1635,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
         continue;
       }
 
-      auto marked = lastTier ? candidate_->markForEviction() : candidate_->markMoving(true);
+      auto marked = (lastTier || candidate_->isExpired()) ? candidate_->markForEviction() : candidate_->markMoving(true);
       if (!marked) {
         if (candidate_->hasChainedItem()) {
           stats_.evictFailParentAC.inc();
@@ -1651,6 +1652,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
       // since we won't be moving the item to the next tier
       toRecycle = toRecycle_;
       candidate = candidate_;
+      isExpired = candidate_->isExpired();
       token = std::move(token_);
 
       // Check if parent changed for chained items - if yes, we cannot
@@ -1673,7 +1675,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
   XDCHECK(candidate);
   XDCHECK(candidate->isMoving() || candidate->isMarkedForEviction());
 
-  auto evictedToNext = lastTier ? nullptr
+  auto evictedToNext = (lastTier || isExpired) ? nullptr
       : tryEvictToNextMemoryTier(*candidate, false);
   if (!evictedToNext) {
     //if insertOrReplace was called during move
@@ -1699,7 +1701,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
     // as exclusive since we will not be moving the item to the next tier
     // but rather just evicting all together, no need to
     // markForEvictionWhenMoving
-    auto ret = lastTier ? true : candidate->markForEvictionWhenMoving();
+    auto ret = (lastTier || isExpired) ? true : candidate->markForEvictionWhenMoving();
     XDCHECK(ret);
 
     unlinkItemForEviction(*candidate);
@@ -1824,11 +1826,6 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
   XDCHECK(item.isMoving());
   XDCHECK(item.getRefCount() == 0);
   if(item.hasChainedItem()) return WriteHandle{}; // TODO: We do not support ChainedItem yet
-  if(item.isExpired()) {
-    accessContainer_->remove(item);
-    item.unmarkMoving();
-    return acquire(&item);
-  }
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
