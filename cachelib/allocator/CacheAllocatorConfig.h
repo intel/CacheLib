@@ -309,6 +309,9 @@ class CacheAllocatorConfig {
   // Library team if you find yourself customizing this.
   CacheAllocatorConfig& setThrottlerConfig(util::Throttler::Config config);
 
+  // Disable unconditional inserting to the tompost memory tier.
+  CacheAllocatorConfig& disableInsertTopTier();
+
   // Passes in a callback to initialize an event tracker when the allocator
   // starts
   CacheAllocatorConfig& setEventTracker(EventTrackerSharedPtr&&);
@@ -522,6 +525,11 @@ class CacheAllocatorConfig {
   // ABOVE are the config for various cache workers
   //
 
+  // if turned on, always insert new elements to topmost memory tier.
+  // if turned off, insert new element to first free memory tier or evict memory
+  // from the bottom one if memory cache is full
+  bool insertTopTier = true;
+
   // the number of tries to search for an item to evict
   // 0 means it's infinite
   unsigned int evictionSearchTries{50};
@@ -656,6 +664,12 @@ class CacheAllocatorConfig {
   MemoryTierConfigs memoryTierConfigs{
       {MemoryTierCacheConfig::fromShm().setRatio(1)}};
 };
+
+template <typename T>
+CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::disableInsertTopTier() {
+  insertTopTier = false;
+  return *this;
+}
 
 template <typename T>
 CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::setCacheName(
@@ -1234,6 +1248,7 @@ std::map<std::string, std::string> CacheAllocatorConfig<T>::serialize() const {
   configMap["nvmAdmissionMinTTL"] = std::to_string(nvmAdmissionMinTTL);
   configMap["delayCacheWorkersStart"] =
       delayCacheWorkersStart ? "true" : "false";
+  configMap["insertTopTier"] = std::to_string(insertTopTier);
   mergeWithPrefix(configMap, throttleConfig.serialize(), "throttleConfig");
   mergeWithPrefix(configMap,
                   chainedItemAccessConfig.serialize(),

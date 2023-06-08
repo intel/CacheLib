@@ -1520,13 +1520,19 @@ class CacheAllocator : public CacheBase {
   // For description see allocateInternal.
   //
   // @param tid id a memory tier
+  // @param fromBgThread whether this function was called from a bg
+  //        thread - this is used to decide whether bg thread should
+  //        be waken in case there is no free memory
+  // @param evict whether to evict an item from tier tid in case there
+  //        is not enough memory
   WriteHandle allocateInternalTier(TierId tid,
                                    PoolId id,
                                    Key key,
                                    uint32_t size,
                                    uint32_t creationTime,
                                    uint32_t expiryTime,
-                                   bool fromBgThread);
+                                   bool fromBgThread,
+                                   bool evict);
 
   // Allocate a chained item
   //
