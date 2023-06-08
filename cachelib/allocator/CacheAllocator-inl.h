@@ -425,7 +425,8 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
                                                  uint32_t size,
                                                  uint32_t creationTime,
                                                  uint32_t expiryTime,
-                                                 bool fromBgThread) {
+                                                 bool fromBgThread,
+                                                 bool evict) {
   util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
@@ -446,7 +447,9 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
     backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
   }
   
-  if (memory == nullptr) {
+  if (memory == nullptr && !evict) {
+    return {};
+  } else if (memory == nullptr) {
     memory = findEviction(tid, pid, cid);
   }
 
@@ -496,7 +499,8 @@ CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              bool fromBgThread) {
   auto tid = 0; /* TODO: consult admission policy */
   for(TierId tid = 0; tid < getNumTiers(); ++tid) {
-    auto handle = allocateInternalTier(tid, pid, key, size, creationTime, expiryTime, fromBgThread);
+    bool evict = !config_.insertToFirstFreeTier || tid == getNumTiers() - 1;
+    auto handle = allocateInternalTier(tid, pid, key, size, creationTime, expiryTime, fromBgThread, evict);
     if (handle) return handle;
   }
   return {};
@@ -1813,13 +1817,17 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
+    // always evict item from the nextTier to make room for new item
+    bool evict = true;
+
     // allocateInternal might trigger another eviction
     auto newItemHdl = allocateInternalTier(nextTier, pid,
                      item.getKey(),
                      item.getSize(),
                      item.getCreationTime(),
                      item.getExpiryTime(),
-                     fromBgThread);
+                     fromBgThread,
+                     evict);
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
@@ -1855,13 +1863,17 @@ CacheAllocator<CacheTrait>::tryPromoteToNextMemoryTier(
     auto toPromoteTier = nextTier - 1;
     --nextTier;
 
+    // always evict item from the toPromoteTier to make room for new item
+    bool evict = true;
+
     // allocateInternal might trigger another eviction
     auto newItemHdl = allocateInternalTier(toPromoteTier, pid,
                      item.getKey(),
                      item.getSize(),
                      item.getCreationTime(),
                      item.getExpiryTime(),
-                     fromBgThread);
+                     fromBgThread,
+                     true);
 
     if (newItemHdl) {
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
@@ -3228,6 +3240,8 @@ CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
 
   const auto allocInfo =
       allocator_[getTierId(oldItem)]->getAllocInfo(static_cast<const void*>(&oldItem));
+    
+  bool evict = !config_.insertToFirstFreeTier || getTierId(oldItem) == getNumTiers() - 1;
 
   // Set up the destination for the move. Since oldItem would have the moving
   // bit set, it won't be picked for eviction.
@@ -3237,7 +3251,8 @@ CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
                                          oldItem.getSize(),
                                          oldItem.getCreationTime(),
                                          oldItem.getExpiryTime(),
-                                         false);
+                                         false,
+                                         evict);
   if (!newItemHdl) {
     return {};
   }
