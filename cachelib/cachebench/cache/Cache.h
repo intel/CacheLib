@@ -578,6 +578,8 @@ Cache<Allocator>::Cache(const CacheConfig& config,
     allocatorConfig_.configureMemoryTiers(config_.memoryTierConfigs);
   }
 
+  allocatorConfig_.insertToFirstFreeTier = config_.insertToFirstFreeTier;
+
   auto cleanupGuard = folly::makeGuard([&] {
     if (!nvmCacheFilePath_.empty()) {
       util::removePath(nvmCacheFilePath_);
