@@ -1988,10 +1988,12 @@ class CacheAllocator : public CacheBase {
     std::vector<WriteHandle> new_items_hdl;
     std::vector<Item*> new_items;
     candidates.reserve(batch);
+    uint32_t tries = 0;
 
-    mmContainer.withEvictionIterator([this, tid, pid, cid,
+    mmContainer.withEvictionIterator([this, tid, pid, cid, &tries,
                                       &candidates, &batch, &mmContainer](auto &&itr) {
-      while (candidates.size() < batch && itr) {
+      while (tries < batch*2 && candidates.size() < batch && itr) {
+        tries++;
         Item* candidate = itr.get();
         XDCHECK(candidate);
         (*stats_.evictionAttempts)[tid][pid][cid].inc();
@@ -2008,6 +2010,10 @@ class CacheAllocator : public CacheBase {
         }
       }
     });
+
+    if (candidates.size() == 0) {
+        return evictions;
+    }
 
     for (Item *candidate : candidates) {
       auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true /* from BgThread */);
@@ -2057,10 +2063,6 @@ class CacheAllocator : public CacheBase {
         (*stats_.numWritebacks)[tid][pid][cid].inc();
         wakeUpWaiters(*candidates_with_alloc[index], std::move(new_items_hdl[index]));
       } else {
-        //moveRegularItem failed due to insertOrReplace being called 
-        //at the same time
-        //new item hdl is in mmContainer, remove it
-        mmContainer.remove(*new_items[index]);
         //item should be released by the handle destructor
         wakeUpWaiters(*candidates_with_alloc[index], {});
       }
