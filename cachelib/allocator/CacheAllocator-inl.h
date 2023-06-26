@@ -1700,13 +1700,14 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
             const auto res =
                 releaseBackToAllocator(*toRecycleParent, RemoveContext::kNormal, false);
             XDCHECK(res == ReleaseRes::kReleased);
+          } else {
+            auto parentHandle = acquire(toRecycleParent);
+            if (parentHandle) {
+              wakeUpWaiters(*toRecycleParent,std::move(parentHandle));
+            } //in case where parent handle is null that means some other thread
+              // would have called wakeUpWaiters with null handle and released
+              // parent back to allocator
           }
-          auto parentHandle = acquire(toRecycleParent);
-          if (parentHandle) {
-            wakeUpWaiters(*toRecycleParent,std::move(parentHandle));
-          } //in case where parent handle is null that means some other thread
-            // would have called wakeUpWaiters with null handle and released
-            // parent back to allocator
           return toRecycle;
       } else {
         wakeUpWaiters(*candidate, std::move(evictedToNext));
@@ -1730,6 +1731,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid) {
                            candidate->getConfiguredTTL().count());
     }
 
+    XDCHECK(!candidate->isChainedItem());
     // check if by releasing the item we intend to, we actually
     // recycle the candidate.
     auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
@@ -1806,14 +1808,12 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     if(item.isChainedItem()) {
         chainedItem = true;
         parentItem = &item.asChainedItem().getParentItem(compressor_);
-        if (!parentItem->isMoving()) {
-            XDCHECK(item.isInMMContainer()); //parent changed
-            return WriteHandle{};
-        }
+        XDCHECK(parentItem->isMoving());
         XDCHECK(item.isChainedItem() && item.getRefCount() == 1);
         XDCHECK_EQ(0, parentItem->getRefCount());
-        newItemHdl =
-            allocateChainedItemInternalTier(*parentItem, item.getSize(), nextTier);
+        newItemHdl = allocateChainedItemInternalTier(*parentItem,
+                                                     item.getSize(),
+                                                     nextTier);
     } else {
       // this assert can fail if parent changed
       XDCHECK(item.isMoving());
@@ -3491,7 +3491,8 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
     auto pid = allocInfo.poolId;
     auto cid = allocInfo.classId;
     auto& mmContainer = getMMContainer(tid, pid, cid);
-    mmContainer.withContainerLock([this, &syncItem, &item, &markedMoving]() {
+    mmContainer.withContainerLock([this, &mmContainer,
+                                   &syncItem, &item, &markedMoving]() {
       //we rely on the mmContainer lock to safely check that the item is
       //currently in the mmContainer (no other threads are currently allocating
       //this item). This is needed to sync on the case where a chained item
@@ -3502,6 +3503,8 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
         return;
       }
       bool chainedItem_ = item->isChainedItem();
+      XDCHECK_EQ(&getMMContainer(*item),&mmContainer);
+      XDCHECK_EQ(item->isChainedItem(),chainedItem_);
       Item* syncItem_ = chainedItem_
                   ? &item->asChainedItem().getParentItem(compressor_)
                   : item;
@@ -3511,6 +3514,8 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
       auto l_ = chainedItem_
                 ? chainedItemLocks_.tryLockExclusive(syncItem_->getKey())
                 : decltype(chainedItemLocks_.tryLockExclusive(syncItem_->getKey()))();
+
+      XDCHECK_EQ(item->isChainedItem(),chainedItem_);
       if (chainedItem_ &&
             ( !l_ || &item->asChainedItem().getParentItem(compressor_) != syncItem_) ) {
           markedMoving = false;

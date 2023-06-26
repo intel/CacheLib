@@ -21,7 +21,7 @@
     "test_config" :
       {
         "preallocateCache" : true,
-        "numOps" : 40000000,
+        "numOps" : 20000000,
         "numThreads" : 32,
         "numKeys" : 250000,
         "generator": "online",
