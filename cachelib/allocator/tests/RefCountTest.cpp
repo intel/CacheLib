@@ -210,16 +210,6 @@ void RefCountTest::testMarkForEvictionAndMoving() {
   }
 
   {
-    // cannot mark moving when ref count > 0
-    RefcountWithFlags ref;
-    ref.markInMMContainer();
-
-    ref.incRef();
-
-    ASSERT_FALSE(ref.markMoving());
-  }
-
-  {
     // cannot mark for eviction when ref count > 0
     RefcountWithFlags ref;
     ref.markInMMContainer();

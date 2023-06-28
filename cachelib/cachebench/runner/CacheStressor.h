@@ -77,7 +77,7 @@ class CacheStressor : public Stressor {
         std::unique_lock<folly::SharedMutex> lock;
 
         CacheStressSyncObj(CacheStressor& s, std::string itemKey)
-            : lock{s.chainedItemAcquireUniqueLock(itemKey)} {}
+            : lock{s.chainedItemTryAcquireUniqueLock(itemKey)} {}
       };
       movingSync = [this](typename CacheT::Item::Key key) {
         return std::make_unique<CacheStressSyncObj>(*this, key.str());
@@ -246,6 +246,10 @@ class CacheStressor : public Stressor {
   auto chainedItemAcquireUniqueLock(Key key) {
     using Lock = std::unique_lock<folly::SharedMutex>;
     return lockEnabled_ ? Lock{getLock(key)} : Lock{};
+  }
+  auto chainedItemTryAcquireUniqueLock(Key key) {
+    using Lock = std::unique_lock<folly::SharedMutex>;
+    return lockEnabled_ ? Lock{getLock(key), std::try_to_lock} : Lock{};
   }
 
   // populate the input item handle according to the stress setup.
