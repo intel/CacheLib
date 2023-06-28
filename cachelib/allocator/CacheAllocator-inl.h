@@ -523,6 +523,19 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateChainedItemInternal(const Item& parent,
                                                         uint32_t size) {
+  auto tid = 0; /* TODO: consult admission policy */
+  for(TierId tid = 0; tid < getNumTiers(); ++tid) {
+    auto handle = allocateChainedItemInternalTier(parent, size, tid);
+    if (handle) return handle;
+  }
+  return {};
+}
+
+template <typename CacheTrait>
+typename CacheAllocator<CacheTrait>::WriteHandle
+CacheAllocator<CacheTrait>::allocateChainedItemInternalTier(const Item& parent,
+                                                            uint32_t size,
+                                                            TierId tid) {
   util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
@@ -530,11 +543,9 @@ CacheAllocator<CacheTrait>::allocateChainedItemInternal(const Item& parent,
   // number of bytes required for this item
   const auto requiredSize = ChainedItem::getRequiredSize(size);
 
-  // TODO: is this correct?
-  auto tid = getTierId(parent);
-
-  const auto pid = allocator_[tid]->getAllocInfo(parent.getMemory()).poolId;
-  const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
+  const auto ptid = getTierId(parent); //it is okay because pools/classes are duplicated among the tiers
+  const auto pid = allocator_[ptid]->getAllocInfo(parent.getMemory()).poolId;
+  const auto cid = allocator_[ptid]->getAllocationClassId(pid, requiredSize);
 
   util::RollingLatencyTracker rollTracker{
       (*stats_.classAllocLatency)[tid][pid][cid]};
@@ -903,7 +914,10 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
   // memory for a chained item but has decided not to insert the chained item
   // to a parent item and instead drop the chained item handle. In this case,
   // we free the chained item directly without calling remove callback.
-  if (it.isChainedItem()) {
+  //
+  // Except if we are moving a chained item between tiers -
+  // then it == toRecycle and we will want the normal recycle path
+  if (it.isChainedItem() && &it != toRecycle) {
     if (toRecycle) {
       throw std::runtime_error(
           folly::sformat("Can not recycle a chained item {}, toRecyle",
@@ -976,7 +990,7 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
 
     while (head) {
       auto next = head->getNext(compressor_);
-
+      const auto tid = getTierId(head);
       const auto childInfo =
           allocator_[tid]->getAllocInfo(static_cast<const void*>(head));
       (*stats_.fragmentationSize)[tid][childInfo.poolId][childInfo.classId].sub(
@@ -1007,6 +1021,7 @@ CacheAllocator<CacheTrait>::releaseBackToAllocator(Item& it,
   }
 
   if (&it == toRecycle) {
+    XDCHECK_EQ(it.getRefCount(),0u);
     XDCHECK(ReleaseRes::kReleased != res);
     res = ReleaseRes::kRecycled;
   } else {
@@ -1315,14 +1330,19 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
     newItemHdl->markNvmClean();
   }
 
-  // Execute the move callback. We cannot make any guarantees about the
-  // consistency of the old item beyond this point, because the callback can
-  // do more than a simple memcpy() e.g. update external references. If there
-  // are any remaining handles to the old item, it is the caller's
-  // responsibility to invalidate them. The move can only fail after this
-  // statement if the old item has been removed or replaced, in which case it
-  // should be fine for it to be left in an inconsistent state.
-  config_.moveCb(oldItem, *newItemHdl, nullptr);
+  if (config_.moveCb) {
+    // Execute the move callback. We cannot make any guarantees about the
+    // consistency of the old item beyond this point, because the callback can
+    // do more than a simple memcpy() e.g. update external references. If there
+    // are any remaining handles to the old item, it is the caller's
+    // responsibility to invalidate them. The move can only fail after this
+    // statement if the old item has been removed or replaced, in which case it
+    // should be fine for it to be left in an inconsistent state.
+    config_.moveCb(oldItem, *newItemHdl, nullptr);
+  } else {
+    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
+                oldItem.getSize());
+  }
 
   // Adding the item to mmContainer has to succeed since no one can remove the
   // item
@@ -1370,14 +1390,19 @@ bool CacheAllocator<CacheTrait>::moveChainedItem(ChainedItem& oldItem,
 
   auto parentPtr = &parentItem;
 
-  // Execute the move callback. We cannot make any guarantees about the
-  // consistency of the old item beyond this point, because the callback can
-  // do more than a simple memcpy() e.g. update external references. If there
-  // are any remaining handles to the old item, it is the caller's
-  // responsibility to invalidate them. The move can only fail after this
-  // statement if the old item has been removed or replaced, in which case it
-  // should be fine for it to be left in an inconsistent state.
-  config_.moveCb(oldItem, *newItemHdl, parentPtr);
+  if (config_.moveCb) {
+    // Execute the move callback. We cannot make any guarantees about the
+    // consistency of the old item beyond this point, because the callback can
+    // do more than a simple memcpy() e.g. update external references. If there
+    // are any remaining handles to the old item, it is the caller's
+    // responsibility to invalidate them. The move can only fail after this
+    // statement if the old item has been removed or replaced, in which case it
+    // should be fine for it to be left in an inconsistent state.
+    config_.moveCb(oldItem, *newItemHdl, parentPtr);
+  } else {
+    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
+                oldItem.getSize());
+  }
 
   // Replace the new item in the position of the old one before both in the
   // parent's chain and the MMContainer.
@@ -1421,12 +1446,16 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
                                              unsigned int& searchTries) {
   typename NvmCacheT::PutToken token;
   Item* toRecycle = nullptr;
+  Item* toRecycleParent = nullptr;
   Item* candidate = nullptr;
   bool isExpired = false;
+  bool chainedItem = false;
   auto& mmContainer = getMMContainer(tid, pid, cid);
   bool lastTier = tid+1 >= getNumTiers();
 
-  mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate, &toRecycle,
+  mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate,
+                                    &toRecycle, &toRecycleParent,
+                                    &chainedItem,
                                     &searchTries, &mmContainer, &lastTier,
                                     &isExpired, &token](auto&& itr) {
     if (!itr) {
@@ -1442,11 +1471,38 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
       (*stats_.evictionAttempts)[tid][pid][cid].inc();
 
       auto* toRecycle_ = itr.get();
-      auto* candidate_ =
-          toRecycle_->isChainedItem()
+      bool chainedItem_ = toRecycle_->isChainedItem();
+      Item* toRecycleParent_ = chainedItem_
               ? &toRecycle_->asChainedItem().getParentItem(compressor_)
-              : toRecycle_;
+              : nullptr;
+      // in order to safely check if the expected parent (toRecycleParent_) matches
+      // the current parent on the chained item, we need to take the chained
+      // item lock so we are sure that nobody else will be editing the chain
+      auto l_ = chainedItem_
+                ? chainedItemLocks_.tryLockExclusive(toRecycleParent_->getKey())
+                : decltype(chainedItemLocks_.tryLockExclusive(toRecycle_->getKey()))();
 
+      if (chainedItem_ &&
+          ( !l_ || &toRecycle_->asChainedItem().getParentItem(compressor_)
+                    != toRecycleParent_) ) {
+          // Fail moving if we either couldn't acquire the chained item lock,
+          // or if the parent had already been replaced in the meanwhile.
+          ++itr;
+          continue;
+      }
+      Item* candidate_;
+      Item* syncItem_;
+      //sync on the parent item for chained items to move to next tier
+      if (!lastTier && chainedItem_) {
+          syncItem_ = toRecycleParent_;
+          candidate_ = toRecycle_;
+      } else if (lastTier && chainedItem_) {
+          candidate_ = toRecycleParent_;
+          syncItem_ = toRecycleParent_;
+      } else {
+          candidate_ = toRecycle_;
+          syncItem_ = toRecycle_;
+      }
       // if it's last tier, the item will be evicted
       // need to create put token before marking it exclusive
       const bool evictToNvmCache = lastTier && shouldWriteToNvmCache(*candidate_);
@@ -1461,7 +1517,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
         continue;
       }
 
-      auto marked = (lastTier || candidate_->isExpired()) ? candidate_->markForEviction() : candidate_->markMoving();
+      auto marked = (lastTier || candidate_->isExpired()) ? syncItem_->markForEviction() : syncItem_->markMoving();
       if (!marked) {
         if (candidate_->hasChainedItem()) {
           stats_.evictFailParentAC.inc();
@@ -1469,10 +1525,14 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
           stats_.evictFailAC.inc();
         }
         ++itr;
+        XDCHECK_EQ(toRecycle,nullptr);
+        XDCHECK_EQ(candidate,nullptr);
         continue;
       }
 
-      XDCHECK(candidate_->isMoving() || candidate_->isMarkedForEviction());
+      XDCHECK(syncItem_->isMoving() || syncItem_->isMarkedForEviction());
+      toRecycleParent = toRecycleParent_;
+      chainedItem = chainedItem_;
       // markForEviction to make sure no other thead is evicting the item
       // nor holding a handle to that item if this is last tier
       // since we won't be moving the item to the next tier
@@ -1480,15 +1540,12 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
       candidate = candidate_;
       isExpired = candidate_->isExpired();
       token = std::move(token_);
-
-      // Check if parent changed for chained items - if yes, we cannot
-      // remove the child from the mmContainer as we will not be evicting
-      // it. We could abort right here, but we need to cleanup in case
-      // unmarkForEviction() returns 0 - so just go through normal path.
-      if (!toRecycle_->isChainedItem() ||
-          &toRecycle->asChainedItem().getParentItem(compressor_) == candidate) {
-        mmContainer.remove(itr);
+      if (chainedItem) {
+          XDCHECK(l_);
+          XDCHECK_EQ(toRecycleParent,&toRecycle_->asChainedItem().getParentItem(compressor_));
       }
+      mmContainer.remove(itr);
+
       return;
     }
   });
@@ -1499,11 +1556,18 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
 
   XDCHECK(toRecycle);
   XDCHECK(candidate);
-  XDCHECK(candidate->isMoving() || candidate->isMarkedForEviction());
 
   auto evictedToNext = (lastTier || isExpired) ? nullptr
       : tryEvictToNextMemoryTier(*candidate, false);
   if (!evictedToNext) {
+    //failed to move a chained item - so evict the entire chain
+    if (candidate->isChainedItem()) {
+      //candidate should be parent now
+      XDCHECK(toRecycleParent->isMoving());
+      XDCHECK_EQ(candidate,toRecycle);
+      candidate = toRecycleParent; //but now we evict the chain and in
+                                    //doing so recycle the child
+    }
     //if insertOrReplace was called during move
     //then candidate will not be accessible (failed replace during tryEvict)
     // - therefore this was why we failed to
@@ -1548,7 +1612,34 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
     XDCHECK(candidate->getKey() == evictedToNext->getKey());
 
     (*stats_.numWritebacks)[tid][pid][cid].inc();
-    wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
+    if (chainedItem) {
+      XDCHECK(toRecycleParent->isMoving());
+      XDCHECK_EQ(evictedToNext->getRefCount(),2u);
+      (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
+      // check if by releasing the item we intend to, we actually
+      // recycle the candidate.
+      auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
+                                        /* isNascent */ false, toRecycle);
+      XDCHECK_EQ(ret,ReleaseRes::kRecycled);
+      evictedToNext.reset(); //once we unmark moving threads will try and alloc, drop
+                              //the handle now - and refcount will drop to 1
+      auto ref = toRecycleParent->unmarkMoving();
+      if (UNLIKELY(ref == 0)) {
+        wakeUpWaiters(toRecycleParent->getKey(),{});
+        const auto res =
+            releaseBackToAllocator(*toRecycleParent, RemoveContext::kNormal, false);
+        XDCHECK(res == ReleaseRes::kReleased);
+      } else {
+        auto parentHandle = acquire(toRecycleParent);
+        if (parentHandle) {
+          wakeUpWaiters(toRecycleParent->getKey(),std::move(parentHandle));
+        } //in case where parent handle is null that means some other thread
+          // would have called wakeUpWaiters with null handle and released
+          // parent back to allocator
+      }
+    } else {
+      wakeUpWaiters(candidate->getKey(), std::move(evictedToNext));
+    }
   }
 
   XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
@@ -1649,9 +1740,6 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     TierId tid, PoolId pid, Item& item, bool fromBgThread) {
-  XDCHECK(item.isMoving());
-  XDCHECK(item.getRefCount() == 0);
-  if(item.hasChainedItem()) return WriteHandle{}; // TODO: We do not support ChainedItem yet
 
   TierId nextTier = tid; // TODO - calculate this based on some admission policy
   while (++nextTier < getNumTiers()) { // try to evict down to the next memory tiers
@@ -1659,22 +1747,43 @@ CacheAllocator<CacheTrait>::tryEvictToNextMemoryTier(
     bool evict = true;
 
     // allocateInternal might trigger another eviction
-    auto newItemHdl = allocateInternalTier(nextTier, pid,
+    WriteHandle newItemHdl{};
+    Item* parentItem;
+    bool chainedItem = false;
+    if(item.isChainedItem()) {
+        chainedItem = true;
+        parentItem = &item.asChainedItem().getParentItem(compressor_);
+        XDCHECK(parentItem->isMoving());
+        XDCHECK(item.isChainedItem() && item.getRefCount() == 1);
+        XDCHECK_EQ(0, parentItem->getRefCount());
+        newItemHdl = allocateChainedItemInternalTier(*parentItem,
+                                                     item.getSize(),
+                                                     nextTier);
+    } else {
+      // this assert can fail if parent changed
+      XDCHECK(item.isMoving());
+      XDCHECK(item.getRefCount() == 0);
+      newItemHdl = allocateInternalTier(nextTier, pid,
                      item.getKey(),
                      item.getSize(),
                      item.getCreationTime(),
                      item.getExpiryTime(),
                      fromBgThread,
                      evict);
+    }
 
     if (newItemHdl) {
-      
-      bool moveSuccess = moveRegularItem(item, newItemHdl);
+      bool moveSuccess = chainedItem
+                      ? moveChainedItem(item.asChainedItem(), newItemHdl)
+                      : moveRegularItem(item, newItemHdl);
       if (!moveSuccess) {
         return WriteHandle{};
       }
       XDCHECK_EQ(newItemHdl->getSize(), item.getSize());
-      item.unmarkMoving();
+      if (!chainedItem) { // TODO: do we need it?
+        XDCHECK_EQ(newItemHdl->getKey(),item.getKey());
+        item.unmarkMoving();
+      }
       return newItemHdl;
     } else {
       return WriteHandle{};
@@ -3030,7 +3139,6 @@ bool CacheAllocator<CacheTrait>::moveForSlabRelease(Item& oldItem) {
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::allocateNewItemForOldItem(const Item& oldItem) {
-  XDCHECK(oldItem.isMoving());
   if (oldItem.isChainedItem()) {
     const Item& parentItem = oldItem.asChainedItem().getParentItem(compressor_);
 

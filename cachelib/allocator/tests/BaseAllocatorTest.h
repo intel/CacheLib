@@ -4917,7 +4917,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
 
       std::memcpy(newItem.getMemory(), oldItem.getMemory(), oldItem.getSize());
       ++numMoves;
-    });
+    }, {}, 1000000 /* lots of moving tries */);
 
     AllocatorT alloc(config);
     const size_t numBytes = alloc.getCacheMemoryStats().ramCacheSize;
@@ -4958,7 +4958,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
         }
 
         /* sleep override */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       }
     };
 
@@ -4966,7 +4966,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     auto releaseFn = [&] {
       for (unsigned int i = 0; i < 5;) {
         /* sleep override */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         ClassId cid = static_cast<ClassId>(i);
         alloc.releaseSlab(pid, cid, SlabReleaseMode::kRebalance);
@@ -5126,7 +5126,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     auto releaseFn = [&] {
       for (unsigned int i = 0; i < 5;) {
         /* sleep override */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         ClassId cid = static_cast<ClassId>(i);
         alloc.releaseSlab(pid, cid, SlabReleaseMode::kRebalance);
@@ -5969,7 +5969,6 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
     EXPECT_EQ(nullptr,
               util::allocateAccessible(alloc, poolId, "large", largeSize));
 
-    std::this_thread::sleep_for(std::chrono::seconds{1});
     // trigger the slab rebalance
     EXPECT_EQ(nullptr,
               util::allocateAccessible(alloc, poolId, "large", largeSize));

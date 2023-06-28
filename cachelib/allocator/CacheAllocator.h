@@ -1565,6 +1565,26 @@ class CacheAllocator : public CacheBase {
   //            if the item is invalid
   WriteHandle allocateChainedItemInternal(const Item& parent, uint32_t size);
 
+  // Allocate a chained item to a specific tier
+  //
+  // The resulting chained item does not have a parent item yet
+  // and if we fail to link to the chain for any reasoin
+  // the chained item will be freed once the handle is dropped.
+  //
+  // The parent item parameter here is mainly used to find the
+  // correct pool to allocate memory for this chained item
+  //
+  // @param parent    parent item
+  // @param size      the size for the chained allocation
+  // @param tid       the tier to allocate on
+  //
+  // @return    handle to the chained allocation
+  // @throw     std::invalid_argument if the size requested is invalid or
+  //            if the item is invalid
+  WriteHandle allocateChainedItemInternalTier(const Item& parent,
+                                              uint32_t size,
+                                              TierId tid);
+
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
   //
@@ -1669,9 +1689,8 @@ class CacheAllocator : public CacheBase {
   // will be unmarked as having chained allocations. Parent will not be null
   // after calling this API.
   //
-  // Parent and NewParent must be valid handles to items with same key and
-  // parent must have chained items and parent handle must be the only
-  // outstanding handle for parent. New parent must be without any chained item
+  // NewParent must be valid handles to item with same key as Parent and
+  // Parent must have chained items. New parent must be without any chained item
   // handles.
   //
   // Chained item lock for the parent's key needs to be held in exclusive mode.
