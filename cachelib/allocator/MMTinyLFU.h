@@ -497,6 +497,10 @@ class MMTinyLFU {
     template <typename F>
     void withEvictionIterator(F&& f);
     
+    // Execute provided function under container lock.
+    template <typename F>
+    void withContainerLock(F&& f);
+
     template <typename F>
     void withPromotionIterator(F&& f);
 

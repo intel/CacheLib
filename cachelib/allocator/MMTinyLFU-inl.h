@@ -222,6 +222,13 @@ MMTinyLFU::Container<T, HookPtr>::getEvictionIterator() const noexcept {
 
 template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
 template <typename F>
+void MMTinyLFU::Container<T, HookPtr>::withContainerLock(F&& fun) {
+  LockHolder l(lruMutex_);
+  fun();
+}
+
+template <typename T, MMTinyLFU::Hook<T> T::*HookPtr>
+template <typename F>
 void MMTinyLFU::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
   // TinyLFU uses spin lock which does not support combined locking
   fun(getEvictionIterator());

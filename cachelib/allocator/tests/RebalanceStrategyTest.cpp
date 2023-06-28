@@ -214,6 +214,9 @@ class RebalanceStrategyTest : public testing::Test {
     config.poolRebalancerFreeAllocThreshold = 20;
 
     initAllocatorConfigForStrategy(config, LruTailAge);
+    //TODO: why does this fail with orig. value of 8?
+    //on upstream this fails too, it always reports 4 instead
+    //of the original test value, which is 8 expected slabs
     doWork(config, true, 8);
   }
 

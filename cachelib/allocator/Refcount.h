@@ -140,9 +140,9 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   // @return true if refcount is bumped. false otherwise (if item is exclusive)
   // @throw  exception::RefcountOverflow if new count would be greater than
   // maxCount
-  FOLLY_ALWAYS_INLINE incResult incRef(bool failIfMoving) {
+  FOLLY_ALWAYS_INLINE incResult incRef() {
     incResult res = incOk;
-    auto predicate = [failIfMoving, &res](const Value curValue) {
+    auto predicate = [&res](const Value curValue) {
        Value bitMask = getAdminRef<kExclusive>();
 
        const bool exlusiveBitIsSet = curValue & bitMask;
@@ -151,7 +151,7 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
        } else if (exlusiveBitIsSet && (curValue & kAccessRefMask) == 0) {
          res = incFailedEviction;
          return false;
-       } else if (exlusiveBitIsSet && failIfMoving) {
+       } else if (exlusiveBitIsSet) {
          res = incFailedMoving;
          return false;
        }
@@ -330,14 +330,18 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
    * Unmarking clears `kExclusive` bit and decreses the interanl refCount by 1.
    * `unmarkMoving` does does not depend on `isInMMContainer`
    */
-  bool markMoving(bool failIfRefNotZero) {
+  bool markMoving() {
     Value linkedBitMask = getAdminRef<kLinked>();
     Value exclusiveBitMask = getAdminRef<kExclusive>();
+    Value isChainedItemFlag = getFlag<kIsChainedItem>();
 
-    auto predicate = [failIfRefNotZero, linkedBitMask, exclusiveBitMask](const Value curValue) {
+    auto predicate = [linkedBitMask, exclusiveBitMask, isChainedItemFlag](const Value curValue) {
       const bool unlinked = !(curValue & linkedBitMask);
       const bool alreadyExclusive = curValue & exclusiveBitMask;
-      if (failIfRefNotZero && (curValue & kAccessRefMask) != 0) {
+      const bool isChained = curValue & isChainedItemFlag;
+
+      // chained item can have ref count == 1, this just means it's linked in the chain
+      if ((curValue & kAccessRefMask) > isChained ? 1 : 0) {
         return false;
       }
       if (unlinked || alreadyExclusive) {
