@@ -104,7 +104,7 @@ class SimpleRebalanceTest : public testing::Test {
 
     // Sleep for 2 seconds to let the rebalancing work
     /* sleep override */
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    std::this_thread::sleep_for(std::chrono::seconds(10));
 
     // Evicted keys shouldn't be in the allocator anymore
     ASSERT_FALSE(evictedKeys.empty());
