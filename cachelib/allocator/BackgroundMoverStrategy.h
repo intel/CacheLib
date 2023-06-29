@@ -33,8 +33,8 @@ class BackgroundMoverStrategy {
 
 class DefaultBackgroundMoverStrategy : public BackgroundMoverStrategy {
   public:
-    DefaultBackgroundMoverStrategy(uint64_t batchSize)
-      : batchSize_(batchSize) {}
+    DefaultBackgroundMoverStrategy(uint64_t batchSize, double targetFree)
+      : batchSize_(batchSize), targetFree_((double)targetFree/100.0) {}
     ~DefaultBackgroundMoverStrategy() {}
 
   std::vector<size_t> calculateBatchSizes(
@@ -44,7 +44,7 @@ class DefaultBackgroundMoverStrategy : public BackgroundMoverStrategy {
     for (auto [tid, pid, cid] : acVec) {
         double usage = cache.getPoolByTid(pid, tid).getApproxUsage(cid);
         uint32_t perSlab = cache.getPoolByTid(pid, tid).getPerSlab(cid);
-        if (usage > 0.90) {
+        if (usage >= (1.0-targetFree_)) {
           uint32_t batch = batchSize_ > perSlab ? perSlab : batchSize_;
           batches.push_back(batch);
         } else {
@@ -55,6 +55,7 @@ class DefaultBackgroundMoverStrategy : public BackgroundMoverStrategy {
   }
   private:
     uint64_t batchSize_{100};
+    double targetFree_{0.05};
 };
 
 /*
