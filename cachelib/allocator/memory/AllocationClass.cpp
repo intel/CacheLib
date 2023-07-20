@@ -227,7 +227,7 @@ SlabReleaseContext AllocationClass::startSlabRelease(
     // if a hint is provided, use it. If not, try to get a free/allocated slab.
     slab = hint == nullptr ? getSlabForReleaseLocked() : hintSlab;
     if (slab == nullptr) {
-      throw std::invalid_argument("Can not figure out a slab for release");
+      throw std::invalid_argument(folly::sformat("Can not figure out a slab for release, id {}",getId()));
     }
 
     header = slabAlloc_.getSlabHeader(slab);

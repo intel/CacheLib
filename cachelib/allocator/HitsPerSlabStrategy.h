@@ -89,9 +89,10 @@ class HitsPerSlabStrategy : public RebalanceStrategy {
   }
 
   RebalanceContext pickVictimAndReceiverImpl(const CacheBase& cache,
+                                             TierId tid,
                                              PoolId pid) override final;
 
-  ClassId pickVictimImpl(const CacheBase& cache, PoolId pid) override final;
+  ClassId pickVictimImpl(const CacheBase& cache, TierId tid, PoolId pid) override final;
 
  private:
   static AllocInfo makeAllocInfo(PoolId pid,

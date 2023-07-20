@@ -30,16 +30,16 @@ MarginalHitsStrategy::MarginalHitsStrategy(Config config)
     : RebalanceStrategy(MarginalHits), config_(std::move(config)) {}
 
 RebalanceContext MarginalHitsStrategy::pickVictimAndReceiverImpl(
-    const CacheBase& cache, PoolId pid) {
+    const CacheBase& cache, TierId tid, PoolId pid) {
   const auto config = getConfigCopy();
-  if (!cache.getPool(pid).allSlabsAllocated()) {
+  if (!cache.getPoolByTid(pid, tid).allSlabsAllocated()) {
     XLOGF(DBG,
           "Pool Id: {} does not have all its slabs allocated"
           " and does not need rebalancing.",
           static_cast<int>(pid));
     return kNoOpContext;
   }
-  auto poolStats = cache.getPoolStats(pid);
+  auto poolStats = cache.getPoolStats(tid, pid);
   auto scores = computeClassMarginalHits(pid, poolStats);
   auto classesSet = poolStats.getClassIds();
   std::vector<ClassId> classes(classesSet.begin(), classesSet.end());
@@ -66,8 +66,9 @@ RebalanceContext MarginalHitsStrategy::pickVictimAndReceiverImpl(
 }
 
 ClassId MarginalHitsStrategy::pickVictimImpl(const CacheBase& cache,
+                                             TierId tid,
                                              PoolId pid) {
-  return pickVictimAndReceiverImpl(cache, pid).victimClassId;
+  return pickVictimAndReceiverImpl(cache, tid, pid).victimClassId;
 }
 
 std::unordered_map<ClassId, double>

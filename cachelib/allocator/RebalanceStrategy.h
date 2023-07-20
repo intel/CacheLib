@@ -69,11 +69,11 @@ class RebalanceStrategy {
   // Pool to rebalance
   //
   // @return RebalanceContext   contains victim and receiver
-  RebalanceContext pickVictimAndReceiver(const CacheBase& cache, PoolId pid);
+  RebalanceContext pickVictimAndReceiver(const CacheBase& cache, TierId tid, PoolId pid);
 
   // Pick only the victim irrespective of who is receiving the slab. This is
   // used mostly for pool resizing.
-  ClassId pickVictimForResizing(const CacheBase& cache, PoolId pid);
+  ClassId pickVictimForResizing(const CacheBase& cache, TierId tid, PoolId pid);
 
   virtual void updateConfig(const BaseConfig&) {}
 
@@ -83,11 +83,11 @@ class RebalanceStrategy {
   using PoolState = std::array<detail::Info, MemoryAllocator::kMaxClasses>;
   static const RebalanceContext kNoOpContext;
 
-  virtual RebalanceContext pickVictimAndReceiverImpl(const CacheBase&, PoolId) {
+  virtual RebalanceContext pickVictimAndReceiverImpl(const CacheBase&, TierId, PoolId) {
     return {};
   }
 
-  virtual ClassId pickVictimImpl(const CacheBase&, PoolId) {
+  virtual ClassId pickVictimImpl(const CacheBase&, TierId, PoolId) {
     return Slab::kInvalidClassId;
   }
 
@@ -148,7 +148,7 @@ class RebalanceStrategy {
 
  private:
   // picks any of the class id ordered by the total slabs.
-  ClassId pickAnyClassIdForResizing(const CacheBase& cache, PoolId pid);
+  ClassId pickAnyClassIdForResizing(const CacheBase& cache, TierId tid, PoolId pid);
 
   // initialize the pool's state to the current stats.
   void initPoolState(PoolId pid, const PoolStats& stats);
@@ -159,7 +159,7 @@ class RebalanceStrategy {
 
   // Pick a receiver with max alloc failures. If no alloc failures, return
   // invalid classid.
-  ClassId pickReceiverWithAllocFailures(const CacheBase& cache, PoolId pid);
+  ClassId pickReceiverWithAllocFailures(const CacheBase& cache, TierId tid, PoolId pid);
 
   // Ensure pool state is initialized before calling impl, and update pool
   // state after calling impl.
@@ -170,6 +170,7 @@ class RebalanceStrategy {
   // first time encountering a pool
   template <typename T>
   T executeAndRecordCurrentState(const CacheBase& cache,
+                                 TierId tid,
                                  PoolId pid,
                                  const std::function<T()>& impl,
                                  T noOp);

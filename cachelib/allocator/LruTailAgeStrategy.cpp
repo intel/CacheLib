@@ -138,7 +138,7 @@ ClassId LruTailAgeStrategy::pickReceiver(
 }
 
 RebalanceContext LruTailAgeStrategy::pickVictimAndReceiverImpl(
-    const CacheBase& cache, PoolId pid) {
+    const CacheBase& cache, TierId tid, PoolId pid) {
   if (!cache.getPool(pid).allSlabsAllocated()) {
     XLOGF(DBG,
           "Pool Id: {}"
@@ -151,9 +151,9 @@ RebalanceContext LruTailAgeStrategy::pickVictimAndReceiverImpl(
 
   const auto config = getConfigCopy();
 
-  const auto poolStats = cache.getPoolStats(pid);
+  const auto poolStats = cache.getPoolStats(tid, pid);
   const auto poolEvictionAgeStats =
-      cache.getPoolEvictionAgeStats(pid, config.slabProjectionLength);
+      cache.getPoolEvictionAgeStats(tid, pid, config.slabProjectionLength);
 
   RebalanceContext ctx;
   ctx.victimClassId = pickVictim(config, pid, poolStats, poolEvictionAgeStats);
@@ -190,10 +190,10 @@ RebalanceContext LruTailAgeStrategy::pickVictimAndReceiverImpl(
   return ctx;
 }
 
-ClassId LruTailAgeStrategy::pickVictimImpl(const CacheBase& cache, PoolId pid) {
+ClassId LruTailAgeStrategy::pickVictimImpl(const CacheBase& cache, TierId tid, PoolId pid) {
   const auto config = getConfigCopy();
   const auto poolEvictionAgeStats =
-      cache.getPoolEvictionAgeStats(pid, config.slabProjectionLength);
+      cache.getPoolEvictionAgeStats(tid, pid, config.slabProjectionLength);
   return pickVictim(config, pid, cache.getPoolStats(pid), poolEvictionAgeStats);
 }
 } // namespace cachelib

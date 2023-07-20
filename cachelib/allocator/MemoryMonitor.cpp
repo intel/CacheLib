@@ -162,14 +162,14 @@ void MemoryMonitor::checkPoolsAndAdviseReclaim() {
       PoolId poolId = result.first;
       uint64_t slabsToAdvise = result.second;
       while (slabsAdvised < slabsToAdvise) {
-        const auto classId = strategy_->pickVictimForResizing(cache_, poolId);
+        const auto classId = strategy_->pickVictimForResizing(cache_, 0, poolId);
         if (classId == Slab::kInvalidClassId) {
           break;
         }
         try {
           const auto now = util::getCurrentTimeMs();
           auto stats = cache_.getPoolStats(poolId);
-          cache_.releaseSlab(poolId, classId, SlabReleaseMode::kAdvise);
+          cache_.releaseSlab(0, poolId, classId, SlabReleaseMode::kAdvise);
           ++slabsAdvised;
           const auto elapsed_time =
               static_cast<uint64_t>(util::getCurrentTimeMs() - now);

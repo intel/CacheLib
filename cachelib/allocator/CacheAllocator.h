@@ -1232,6 +1232,9 @@ class CacheAllocator : public CacheBase {
   // This can be expensive so it is not part of PoolStats
   PoolEvictionAgeStats getPoolEvictionAgeStats(
       PoolId pid, unsigned int slabProjectionLength) const override final;
+  
+  PoolEvictionAgeStats getPoolEvictionAgeStats(
+      TierId tid, PoolId pid, unsigned int slabProjectionLength) const override final;
 
   // return the cache's metadata
   CacheMetadata getCacheMetadata() const noexcept override final;
@@ -1525,6 +1528,10 @@ class CacheAllocator : public CacheBase {
                                    uint32_t expiryTime,
                                    bool fromBgThread,
                                    bool evict);
+  
+  void* allocateInternalTierByCid(TierId tid,
+                                   PoolId pid,
+                                   ClassId cid);
 
   // Allocate a chained item
   //
@@ -1799,6 +1806,7 @@ class CacheAllocator : public CacheBase {
   // @param  cid  the id of the class to look for evictions inside
   // @return An evicted item or nullptr  if there is no suitable candidate.
   Item* findEviction(TierId tid, PoolId pid, ClassId cid);
+  std::vector<Item*> findEviction(TierId tid, PoolId pid, ClassId cid, uint64_t batch);
 
   // Try to move the item down to the next memory tier
   //
@@ -1870,7 +1878,8 @@ class CacheAllocator : public CacheBase {
   // @throw std::invalid_argument if the hint is invalid or if the pid or cid
   //        is invalid.
   // @throw std::runtime_error if fail to release a slab due to internal error
-  void releaseSlab(PoolId pid,
+  void releaseSlab(TierId tid,
+                   PoolId pid,
                    ClassId cid,
                    SlabReleaseMode mode,
                    const void* hint = nullptr) final;
@@ -1898,7 +1907,8 @@ class CacheAllocator : public CacheBase {
   //        also specified. Receiver class id can only be specified if the mode
   //        is set to kRebalance.
   // @throw std::runtime_error if fail to release a slab due to internal error
-  void releaseSlab(PoolId pid,
+  void releaseSlab(TierId tid,
+                   PoolId pid,
                    ClassId victim,
                    ClassId receiver,
                    SlabReleaseMode mode,
@@ -1981,14 +1991,40 @@ class CacheAllocator : public CacheBase {
   // in batch. This should improve insertion path for tiered memory config
   size_t traverseAndEvictItems(unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
     auto& mmContainer = getMMContainer(tid, pid, cid);
+    uint32_t currItems = mmContainer.size();
+    if (currItems < batch) {
+        batch = currItems/2;
+        if (batch < 5) {
+          return 0;
+        }
+    }
     size_t evictions = 0;
     size_t evictionCandidates = 0;
     std::vector<Item*> candidates;
     std::vector<Item*> candidates_with_alloc;
     std::vector<WriteHandle> new_items_hdl;
     std::vector<Item*> new_items;
+    std::vector<void*> new_allocs;
     candidates.reserve(batch);
     uint32_t tries = 0;
+
+    //try and get batch allocations in next tier, if we fail to get any
+    //then quit, else proceed with whatever we got
+    uint32_t allocTries = 0;
+    while (allocTries < batch*2 && new_allocs.size() < batch) {
+      void *new_alloc = allocateInternalTierByCid(tid+1, pid, cid);
+      if (new_alloc) {
+        new_allocs.push_back(new_alloc);
+      }
+      allocTries++;
+    }
+    if (new_allocs.size() < batch) {
+      if (new_allocs.size() == 0) {
+          return evictions;
+      }
+      batch = new_allocs.size();
+    }
+    
 
     mmContainer.withEvictionIterator([this, tid, pid, cid, &tries,
                                       &candidates, &batch, &mmContainer](auto &&itr) {
@@ -2011,37 +2047,47 @@ class CacheAllocator : public CacheBase {
       }
     });
 
-    if (candidates.size() == 0) {
+    XDCHECK_EQ(candidates.size(),new_allocs.size());
+    if (candidates.size() < new_allocs.size()) {
+      throw std::runtime_error(
+        folly::sformat("Was not able get enough candidates, candidats {} and new allocs {}", candidates.size(), new_allocs.size()));
+      //need to release new items back to allocator
+      uint32_t erased = 0;
+      uint32_t toErase = new_allocs.size() - candidates.size();
+      //for (auto rit = new_allocs.rbegin(); rit != new_allocs.rend(); ++rit) {
+      for (int i = new_allocs.size()-1; i > 0; --i) {
+        allocator_[tid+1]->free(new_allocs[i]);
+        new_allocs.pop_back();
+        erased++;
+        if (erased == toErase) {
+         break;
+        }
+      }
+      if (candidates.size() == 0) {
         return evictions;
-    }
-
-    for (Item *candidate : candidates) {
-      auto evictedToNext = tryEvictToNextMemoryTier(*candidate, true /* from BgThread */);
-      if (!evictedToNext) {
-	auto token = createPutToken(*candidate);
-
-	auto ret = candidate->markForEvictionWhenMoving();
-	XDCHECK(ret);
-
-        unlinkItemForEviction(*candidate);
-      	// wake up any readers that wait for the move to complete
-      	// it's safe to do now, as we have the item marked exclusive and
-      	// no other reader can be added to the waiters list
-      	wakeUpWaiters(*candidate, WriteHandle{});
-
-      	if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)) {
-      	  nvmCache_->put(*candidate, std::move(token));
-      	}
-        auto res = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-                                /* isNascent */ false);
-        XDCHECK(res == ReleaseRes::kReleased);
-      } else {
-        candidates_with_alloc.push_back(candidate);
-        new_items.push_back(evictedToNext.get()); //new handle
-        new_items_hdl.push_back(std::move(evictedToNext));
       }
     }
-    
+
+
+    for (auto index = 0U; index < candidates.size(); index++) {
+      WriteHandle newItemHdl = acquire(new (new_allocs[index]) 
+              Item(candidates[index]->getKey(), candidates[index]->getSize(),
+                   candidates[index]->getCreationTime(), candidates[index]->getExpiryTime()));
+      if (newItemHdl) {
+        newItemHdl.markNascent();
+        (*stats_.fragmentationSize)[tid][pid][cid].add(
+            util::getFragmentation(*this, *newItemHdl));
+        new_items.push_back(newItemHdl.getInternal());
+        new_items_hdl.push_back(std::move(newItemHdl));
+        candidates_with_alloc.push_back(candidates[index]);
+      } else {
+        XDCHECK(false);
+        throw std::runtime_error(
+           folly::sformat("Was not to acquire new alloc, failed alloc {}", new_allocs[index]));
+        //allocator_[tid+1]->free(new_allocs[index]);
+        //should clean up new alloc
+      }
+    }
     auto& newMMContainer = getMMContainer(tid+1, pid, cid);
     uint32_t added = newMMContainer.addBatch(new_items);
     if (added != new_items.size()) {
@@ -2494,7 +2540,7 @@ class CacheAllocator : public CacheBase {
   std::unique_ptr<NvmCacheT> nvmCache_;
 
   // rebalancer for the pools
-  std::unique_ptr<PoolRebalancer> poolRebalancer_;
+  std::vector<std::unique_ptr<PoolRebalancer>> poolRebalancer_;
 
   // resizer for the pools.
   std::unique_ptr<PoolResizer> poolResizer_;

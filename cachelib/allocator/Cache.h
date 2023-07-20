@@ -162,6 +162,7 @@ class CacheBase {
   //
   // @param poolId   the pool id
   virtual PoolStats getPoolStats(PoolId poolId) const = 0;
+  virtual PoolStats getPoolStats(TierId tid, PoolId poolId) const = 0;
 
   // Get Allocation Class specific stats.
   //
@@ -182,6 +183,8 @@ class CacheBase {
   // @return PoolEvictionAgeStats   see CacheStats.h
   virtual PoolEvictionAgeStats getPoolEvictionAgeStats(
       PoolId pid, unsigned int slabProjectionLength) const = 0;
+  virtual PoolEvictionAgeStats getPoolEvictionAgeStats(
+      TierId tid, PoolId pid, unsigned int slabProjectionLength) const = 0;
 
   // @return a map of <stat name -> stat value> representation for all the nvm
   // cache stats. This is useful for our monitoring to directly upload them.
@@ -317,7 +320,8 @@ class CacheBase {
   //
   // @throw std::invalid_argument if the hint is invalid or if the pid or cid
   //        is invalid.
-  virtual void releaseSlab(PoolId pid,
+  virtual void releaseSlab(TierId tid,
+                           PoolId pid,
                            ClassId cid,
                            SlabReleaseMode mode,
                            const void* hint = nullptr) = 0;
@@ -350,7 +354,8 @@ class CacheBase {
   //
   // @throw std::invalid_argument if the hint is invalid or if the pid or cid
   //        is invalid.
-  virtual void releaseSlab(PoolId pid,
+  virtual void releaseSlab(TierId tid,
+                           PoolId pid,
                            ClassId victim,
                            ClassId receiver,
                            SlabReleaseMode mode,

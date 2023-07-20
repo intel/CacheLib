@@ -55,12 +55,12 @@ void PoolResizer::work() {
 
       // use the rebalance strategy and see if there is some allocation class
       // that is over provisioned.
-      const auto classId = strategy->pickVictimForResizing(cache_, poolId);
+      const auto classId = strategy->pickVictimForResizing(cache_, 0, poolId);
 
       try {
         const auto now = util::getCurrentTimeMs();
         // Throws excption if the strategy did not pick a valid victim classId.
-        cache_.releaseSlab(poolId, classId, SlabReleaseMode::kResize);
+        cache_.releaseSlab(0, poolId, classId, SlabReleaseMode::kResize);
         XLOGF(DBG, "Moved a slab from classId {} for poolid: {}",
               static_cast<int>(classId), static_cast<int>(poolId));
         ++slabsReleased_;

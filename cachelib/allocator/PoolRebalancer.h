@@ -43,6 +43,7 @@ class PoolRebalancer : public PeriodicWorker {
   // of allocations in a slab. Only allocation classes with a higher
   // free-alloc-slab could get picked as a victim.
   PoolRebalancer(CacheBase& cache,
+                 TierId tid,
                  std::shared_ptr<RebalanceStrategy> strategy,
                  unsigned int freeAllocThreshold);
 
@@ -75,6 +76,7 @@ class PoolRebalancer : public PeriodicWorker {
   void releaseSlab(PoolId pid, ClassId victim, ClassId receiver);
   // cache allocator's interface for rebalancing
   CacheBase& cache_;
+  TierId tid_;
 
   std::shared_ptr<RebalanceStrategy> defaultStrategy_{nullptr};
 

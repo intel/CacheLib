@@ -38,8 +38,9 @@ class RandomStrategy : public RebalanceStrategy {
   explicit RandomStrategy(Config c) : RebalanceStrategy(Random), config_{c} {}
 
   RebalanceContext pickVictimAndReceiverImpl(const CacheBase& cache,
+                                             TierId tid,
                                              PoolId pid) final {
-    const auto stats = cache.getPoolStats(pid);
+    const auto stats = cache.getPoolStats(tid, pid);
     auto victimIds =
         filterByNumEvictableSlabs(stats, stats.getClassIds(), config_.minSlabs);
     const auto victim = pickRandom(victimIds);

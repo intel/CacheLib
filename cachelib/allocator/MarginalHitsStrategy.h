@@ -67,10 +67,11 @@ class MarginalHitsStrategy : public RebalanceStrategy {
 
   // pick victim and receiver classes from a pool
   RebalanceContext pickVictimAndReceiverImpl(const CacheBase& cache,
+                                             TierId tid,
                                              PoolId pid) override final;
 
   // pick victim class from a pool to shrink
-  ClassId pickVictimImpl(const CacheBase& cache, PoolId pid) override final;
+  ClassId pickVictimImpl(const CacheBase& cache, TierId tid, PoolId pid) override final;
 
  private:
   // compute delta of tail hits for every class in this pool

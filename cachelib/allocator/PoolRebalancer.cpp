@@ -25,9 +25,11 @@ namespace facebook {
 namespace cachelib {
 
 PoolRebalancer::PoolRebalancer(CacheBase& cache,
+                               TierId tid,
                                std::shared_ptr<RebalanceStrategy> strategy,
                                unsigned int freeAllocThreshold)
     : cache_(cache),
+      tid_(tid),
       defaultStrategy_(std::move(strategy)),
       freeAllocThreshold_(freeAllocThreshold) {
   if (!defaultStrategy_) {
@@ -47,7 +49,7 @@ void PoolRebalancer::work() {
       tryRebalancing(pid, *strategy);
     }
   } catch (const std::exception& ex) {
-    XLOGF(ERR, "Rebalancing interrupted due to exception: {}", ex.what());
+    XLOGF(ERR, "Rebalancing at tid {} interrupted due to exception: {}", tid_, ex.what());
   }
 }
 
@@ -56,7 +58,7 @@ void PoolRebalancer::releaseSlab(PoolId pid,
                                  ClassId receiverClassId) {
   const auto now = util::getCurrentTimeMs();
 
-  cache_.releaseSlab(pid, victimClassId, receiverClassId,
+  cache_.releaseSlab(tid_, pid, victimClassId, receiverClassId,
                      SlabReleaseMode::kRebalance);
   const auto elapsed_time =
       static_cast<uint64_t>(util::getCurrentTimeMs() - now);
@@ -83,7 +85,7 @@ void PoolRebalancer::releaseSlab(PoolId pid,
 }
 
 RebalanceContext PoolRebalancer::pickVictimByFreeAlloc(PoolId pid) const {
-  const auto& mpStats = cache_.getPool(pid).getStats();
+  const auto& mpStats = cache_.getPoolByTid(pid,tid_).getStats();
   uint64_t maxFreeAllocSlabs = 1;
   ClassId retId = Slab::kInvalidClassId;
   for (auto& id : mpStats.classIds) {
@@ -110,11 +112,11 @@ bool PoolRebalancer::tryRebalancing(PoolId pid, RebalanceStrategy& strategy) {
     }
   }
 
-  if (!cache_.getPool(pid).allSlabsAllocated()) {
+  if (!cache_.getPoolByTid(pid,tid_).allSlabsAllocated()) {
     return false;
   }
 
-  const auto context = strategy.pickVictimAndReceiver(cache_, pid);
+  const auto context = strategy.pickVictimAndReceiver(cache_, tid_, pid);
   if (context.victimClassId == Slab::kInvalidClassId) {
     XLOGF(DBG,
           "Pool Id: {} rebalancing strategy didn't find an victim",

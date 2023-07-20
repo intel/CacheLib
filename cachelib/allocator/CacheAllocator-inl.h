@@ -283,7 +283,7 @@ void CacheAllocator<CacheTrait>::initWorkers() {
                         config_.poolResizeStrategy);
   }
 
-  if (config_.poolRebalancingEnabled() && !poolRebalancer_) {
+  if (config_.poolRebalancingEnabled() && poolRebalancer_.empty()) {
     startNewPoolRebalancer(config_.poolRebalanceInterval,
                            config_.defaultPoolRebalanceStrategy,
                            config_.poolRebalancerFreeAllocThreshold);
@@ -416,6 +416,49 @@ size_t CacheAllocator<CacheTrait>::backgroundWorkerId(TierId tid, PoolId pid, Cl
   return (tid + pid + cid) % numWorkers;
 }
 
+template <typename CacheTrait>
+void* CacheAllocator<CacheTrait>::allocateInternalTierByCid(TierId tid,
+                                                 PoolId pid,
+                                                 ClassId cid) {
+  util::LatencyTracker tracker{stats().allocateLatency_};
+
+  SCOPE_FAIL { stats_.invalidAllocs.inc(); };
+
+  util::RollingLatencyTracker rollTracker{
+      (*stats_.classAllocLatency)[tid][pid][cid]};
+
+  (*stats_.allocAttempts)[tid][pid][cid].inc();
+  
+  void* memory = allocator_[tid]->allocateByCid(pid, cid);
+  
+  if (memory == nullptr) {
+    memory = findEviction(tid, pid, cid);
+  }
+
+  WriteHandle handle;
+  if (memory != nullptr) {
+    // At this point, we have a valid memory allocation that is ready for use.
+    // Ensure that when we abort from here under any circumstances, we free up
+    // the memory. Item's handle could throw because the key size was invalid
+    // for example.
+    SCOPE_FAIL {
+      // free back the memory to the allocator since we failed.
+      allocator_[tid]->free(memory);
+    };
+
+    return memory;
+
+  } else { // failed to allocate memory.
+    (*stats_.allocFailures)[tid][pid][cid].inc();
+    // wake up rebalancer
+    if (poolRebalancer_.size() > 0 && poolRebalancer_.size() > tid) {
+      poolRebalancer_[tid]->wakeUp();
+    }
+  }
+
+  return nullptr;
+}
+
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
@@ -474,8 +517,8 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   } else { // failed to allocate memory.
     (*stats_.allocFailures)[tid][pid][cid].inc();
     // wake up rebalancer
-    if (poolRebalancer_) {
-      poolRebalancer_->wakeUp();
+    if (poolRebalancer_.size() > 0 && poolRebalancer_.size() > tid) {
+      poolRebalancer_[tid]->wakeUp();
     }
   }
 
@@ -1381,8 +1424,13 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
     // should be fine for it to be left in an inconsistent state.
     config_.moveCb(oldItem, *newItemHdl, nullptr);
   } else {
-    std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
+    if (fromBgThread) {
+      std::memmove(newItemHdl->getMemory(), oldItem.getMemory(),
                 oldItem.getSize());
+    } else {
+      std::memcpy(newItemHdl->getMemory(), oldItem.getMemory(),
+                oldItem.getSize());
+    }
   }
 
   if (!fromBgThread) {
@@ -1519,6 +1567,7 @@ void CacheAllocator<CacheTrait>::unlinkItemForEviction(Item& it) {
   XDCHECK(ref == 0u);
 }
 
+/*
 template <typename CacheTrait>
 std::vector<typename CacheAllocator<CacheTrait>::Item*>
 CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid, uint64_t batch) {
@@ -1697,7 +1746,7 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid, ui
         // check if by releasing the item we intend to, we actually
         // recycle the candidate.
         auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-                                          /* isNascent */ false, toRecycle);
+                                           false, toRecycle);
         XDCHECK_EQ(ret,ReleaseRes::kRecycled);
         evictedToNext.reset(); //once we unmark moving threads will try and alloc, drop
                                //the handle now - and refcount will drop to 1
@@ -1742,13 +1791,14 @@ CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid, ui
   // check if by releasing the item we intend to, we actually
   // recycle the candidate.
   auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-                                    /* isNascent */ false, toRecycle);
+                                    false, toRecycle);
   if (ret == ReleaseRes::kRecycled) {
     return toRecycle;
   }
   
-  return nullptr;
+  return {};
 }
+*/
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::Item*
@@ -2976,8 +3026,9 @@ AllSlabReleaseEvents CacheAllocator<CacheTrait>::getAllSlabReleaseEvents(
   // lock protects against workers being restarted
   {
     std::lock_guard<std::mutex> l(workersMutex_);
-    if (poolRebalancer_) {
-      res.rebalancerEvents = poolRebalancer_->getSlabReleaseEvents(poolId);
+    if (poolRebalancer_.size() > 0) {
+      //TODO fix 
+      res.rebalancerEvents = poolRebalancer_[0]->getSlabReleaseEvents(poolId);
     }
     if (poolResizer_) {
       res.resizerEvents = poolResizer_->getSlabReleaseEvents(poolId);
@@ -3194,6 +3245,23 @@ ACStats CacheAllocator<CacheTrait>::getACStats(TierId tid,
 
 template <typename CacheTrait>
 PoolEvictionAgeStats CacheAllocator<CacheTrait>::getPoolEvictionAgeStats(
+   TierId tid, PoolId pid, unsigned int slabProjectionLength) const {
+  PoolEvictionAgeStats stats;
+  const auto& pool = allocator_[tid]->getPool(pid);
+  const auto& allocSizes = pool.getAllocSizes();
+  for (ClassId cid = 0; cid < static_cast<ClassId>(allocSizes.size()); ++cid) {
+    auto& mmContainer = getMMContainer(tid, pid, cid);
+    const auto numItemsPerSlab =
+        allocator_[tid]->getPool(pid).getAllocationClass(cid).getAllocsPerSlab();
+    const auto projectionLength = numItemsPerSlab * slabProjectionLength;
+    stats.classEvictionAgeStats[cid] =
+        mmContainer.getEvictionAgeStat(projectionLength);
+  }
+  return stats;
+}
+
+template <typename CacheTrait>
+PoolEvictionAgeStats CacheAllocator<CacheTrait>::getPoolEvictionAgeStats(
     PoolId pid, unsigned int slabProjectionLength) const {
   PoolEvictionAgeStats stats;
   const auto& pool = allocator_[currentTier()]->getPool(pid);
@@ -3216,15 +3284,17 @@ CacheMetadata CacheAllocator<CacheTrait>::getCacheMetadata() const noexcept {
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::releaseSlab(PoolId pid,
+void CacheAllocator<CacheTrait>::releaseSlab(TierId tid,
+                                             PoolId pid,
                                              ClassId cid,
                                              SlabReleaseMode mode,
                                              const void* hint) {
-  releaseSlab(pid, cid, Slab::kInvalidClassId, mode, hint);
+  releaseSlab(tid, pid, cid, Slab::kInvalidClassId, mode, hint);
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::releaseSlab(PoolId pid,
+void CacheAllocator<CacheTrait>::releaseSlab(TierId tid,
+                                             PoolId pid,
                                              ClassId victim,
                                              ClassId receiver,
                                              SlabReleaseMode mode,
@@ -3244,7 +3314,7 @@ void CacheAllocator<CacheTrait>::releaseSlab(PoolId pid,
   }
 
   try {
-    auto releaseContext = allocator_[currentTier()]->startSlabRelease(
+    auto releaseContext = allocator_[tid]->startSlabRelease(
         pid, victim, receiver, mode, hint,
         [this]() -> bool { return shutDownInProgress_; });
 
@@ -3253,21 +3323,22 @@ void CacheAllocator<CacheTrait>::releaseSlab(PoolId pid,
       return;
     }
 
-    releaseSlabImpl(currentTier(), releaseContext);
-    if (!allocator_[currentTier()]->allAllocsFreed(releaseContext)) {
+    releaseSlabImpl(tid, releaseContext);
+    if (!allocator_[tid]->allAllocsFreed(releaseContext)) {
       throw std::runtime_error(
-          folly::sformat("Was not able to free all allocs. PoolId: {}, AC: {}",
+          folly::sformat("Was not able to free all allocs. Tier: {} PoolId: {}, AC: {}",
+                         tid,
                          releaseContext.getPoolId(),
                          releaseContext.getClassId()));
     }
 
-    allocator_[currentTier()]->completeSlabRelease(releaseContext);
+    allocator_[tid]->completeSlabRelease(releaseContext);
   } catch (const exception::SlabReleaseAborted& e) {
     stats_.numAbortedSlabReleases.inc();
     throw exception::SlabReleaseAborted(folly::sformat(
         "Slab release aborted while releasing "
-        "a slab in pool {} victim {} receiver {}. Original ex msg: ",
-        pid, static_cast<int>(victim), static_cast<int>(receiver), e.what()));
+        "a slab in tier {} pool {} victim {} receiver {}. Original ex msg: ",
+        tid, pid, static_cast<int>(victim), static_cast<int>(receiver), e.what()));
   }
 }
 
@@ -3278,7 +3349,7 @@ SlabReleaseStats CacheAllocator<CacheTrait>::getSlabReleaseStats() const noexcep
                           stats_.numReleasedForRebalance.get(),
                           stats_.numReleasedForResize.get(),
                           stats_.numReleasedForAdvise.get(),
-                          poolRebalancer_ ? poolRebalancer_->getRunCount()
+                          poolRebalancer_.size() > 0 ? poolRebalancer_[0]->getRunCount()
                                           : 0ULL,
                           poolResizer_ ? poolResizer_->getRunCount() : 0ULL,
                           memMonitor_ ? memMonitor_->getRunCount() : 0ULL,
@@ -4382,16 +4453,19 @@ bool CacheAllocator<CacheTrait>::startNewPoolRebalancer(
     std::chrono::milliseconds interval,
     std::shared_ptr<RebalanceStrategy> strategy,
     unsigned int freeAllocThreshold) {
-  if (!startNewWorker("PoolRebalancer", poolRebalancer_, std::chrono::milliseconds(1) , strategy,
-                      freeAllocThreshold)) {
-    return false;
+  poolRebalancer_.resize(getNumTiers());
+  bool result = true;
+  for (int i = 0; i < getNumTiers(); i++) {
+    auto ret = startNewWorker("PoolRebalancer" + std::to_string(i), 
+                poolRebalancer_[i], std::chrono::milliseconds(1), i , strategy, freeAllocThreshold);
+    result = result && ret;
   }
 
   config_.poolRebalanceInterval = interval;
   config_.defaultPoolRebalanceStrategy = strategy;
   config_.poolRebalancerFreeAllocThreshold = freeAllocThreshold;
 
-  return true;
+  return result;
 }
 
 template <typename CacheTrait>
@@ -4524,7 +4598,12 @@ bool CacheAllocator<CacheTrait>::startNewBackgroundPromoter(
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopPoolRebalancer(
     std::chrono::seconds timeout) {
-  return stopWorker("PoolRebalancer", poolRebalancer_, timeout);
+  bool result = true;
+  for (size_t i = 0; i < poolRebalancer_.size(); i++) {
+    auto ret = stopWorker("PoolRebalancer" + std::to_string(i), poolRebalancer_[i], timeout);
+    result = result && ret;
+  }
+  return result;
 }
 
 template <typename CacheTrait>
