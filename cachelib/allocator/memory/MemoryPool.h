@@ -136,6 +136,8 @@ class MemoryPool {
   double getApproxUsage(ClassId cid) const;
   // approx slabs assigned to a given class
   uint32_t getApproxSlabs(ClassId cid) const;
+  
+  uint32_t getApproxFreeSlabs() const;
   // items per slab for a class
   uint32_t getPerSlab(ClassId cid) const;
 
@@ -145,6 +147,7 @@ class MemoryPool {
   // @return pointer to allocation or nullptr on failure to allocate.
   // @throw  std::invalid_argument if size is invalid.
   void* allocate(uint32_t size);
+  void* allocateByCid(ClassId cid);
 
   // Allocate a slab with zeroed memory
   //
@@ -329,6 +332,8 @@ class MemoryPool {
 
   // create allocation classes corresponding to the pool's configuration.
   ACVector createAllocationClasses() const;
+  
+  void* allocateForClass(AllocationClass& ac);
 
   // @return  AllocationClass corresponding to the memory, if it
   //          belongs to an AllocationClass

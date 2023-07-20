@@ -205,10 +205,11 @@ struct Stats {
 
         // If the pool is not full, extrapolate usageFraction for AC assuming it
         // will grow at the same rate. This value will be the same for all ACs.
-        const auto acUsageFraction = (poolUsageFraction.at(tid)[pid] < 1.0)
-                                   ? poolUsageFraction.at(tid)[pid]
-                                   : stats.usageFraction();
+        //const auto acUsageFraction = (poolUsageFraction.at(tid)[pid] < 1.0)
+        //                           ? poolUsageFraction.at(tid)[pid]
 
+        if (memorySize > 0) {
+          const auto acUsageFraction = stats.approxUsage();
           out << folly::sformat(
                    "tid{:2} pid{:2} cid{:4} {:8.2f}{} usageFraction: {:4.2f} "
                    "memorySize: {:8.2f}{} "
@@ -219,6 +220,7 @@ struct Stats {
                    (double)(stats.evictions/(double)stats.evictionAttempts),
                    stats.allocLatencyNs.estimate())
           << std::endl;
+        }
       });
 
     }

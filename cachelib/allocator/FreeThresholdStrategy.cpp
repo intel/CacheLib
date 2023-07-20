@@ -36,6 +36,9 @@ std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
   std::vector<size_t> batches{};
   for (auto [tid, pid, cid] : acVec) {
     const auto& pool = cache.getPoolByTid(pid, tid);
+    if (pool.getApproxFreeSlabs()) {
+      batches.push_back(0);
+    }
     double usage = pool.getApproxUsage(cid);
     if ((1-usage)*100 >= highEvictionAcWatermark) {
       batches.push_back(0);

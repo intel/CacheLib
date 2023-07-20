@@ -4631,7 +4631,7 @@ template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::stopBackgroundEvictor(std::chrono::seconds timeout) {
   bool result = true;
   for (size_t i = 0; i < backgroundEvictor_.size(); i++) {
-    auto ret = stopWorker("BackgroundEvictor", backgroundEvictor_[i], timeout);
+    auto ret = stopWorker("BackgroundEvictor" + std::to_string(i), backgroundEvictor_[i], timeout);
     result = result && ret;
   }
   return result;

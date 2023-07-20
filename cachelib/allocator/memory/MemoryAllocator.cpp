@@ -71,6 +71,11 @@ void* MemoryAllocator::allocate(PoolId id, uint32_t size) {
   return mp.allocate(size);
 }
 
+void* MemoryAllocator::allocateByCid(PoolId id, ClassId cid) {
+  auto& mp = memoryPoolManager_.getPoolById(id);
+  return mp.allocateByCid(cid);
+}
+
 void* MemoryAllocator::allocateZeroedSlab(PoolId id) {
   if (!config_.enableZeroedSlabAllocs) {
     throw std::logic_error("Zeroed Slab allcoation is not enabled");

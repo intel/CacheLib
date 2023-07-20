@@ -262,12 +262,9 @@ Slab* MemoryPool::getSlabLocked() noexcept {
   return slab;
 }
 
-void* MemoryPool::allocate(uint32_t size) {
-  auto& ac = getAllocationClassFor(size);
-
+void* MemoryPool::allocateForClass(AllocationClass& ac) {
   auto alloc = ac.allocate();
   const auto allocSize = ac.getAllocSize();
-  XDCHECK_GE(allocSize, size);
 
   if (alloc != nullptr) {
     currAllocSize_ += allocSize;
@@ -307,6 +304,18 @@ void* MemoryPool::allocate(uint32_t size) {
 
   currAllocSize_ += allocSize;
   return alloc;
+}
+
+void* MemoryPool::allocateByCid(ClassId cid) {
+  auto& ac = getAllocationClassFor(cid);
+  return allocateForClass(ac);
+}
+
+void* MemoryPool::allocate(uint32_t size) {
+  auto& ac = getAllocationClassFor(size);
+  const auto allocSize = ac.getAllocSize();
+  XDCHECK_GE(allocSize, size);
+  return allocateForClass(ac);
 }
 
 void* MemoryPool::allocateZeroedSlab() { return allocate(Slab::kSize); }
@@ -527,6 +536,10 @@ MPStats MemoryPool::getStats() const {
 double MemoryPool::getApproxUsage(ClassId cid) const {
   const auto& ac = getAllocationClassFor(cid);
   return ac.getApproxUsage();
+}
+
+uint32_t MemoryPool::getApproxFreeSlabs() const {
+  return freeSlabs_.size();
 }
 
 uint32_t MemoryPool::getApproxSlabs(ClassId cid) const {
