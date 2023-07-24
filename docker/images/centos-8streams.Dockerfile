@@ -17,6 +17,8 @@ json-c-devel \
 perf \
 numactl
 
+# updated to fix compile errors and better symbol
+# resolving in VTune
 RUN dnf -y install gcc-toolset-12
 RUN echo "source /opt/rh/gcc-toolset-12/enable" >> /etc/bashrc
 SHELL ["/bin/bash", "--login", "-c"]
