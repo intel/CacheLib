@@ -2013,6 +2013,7 @@ class CacheAllocator : public CacheBase {
                                unsigned int pid,
                                unsigned int cid,
                                size_t batch) {
+    util::LatencyTracker tracker{stats().bgEvictLatency_, batch};
     auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t evictions = 0;
     size_t evictionCandidates = 0;
@@ -2089,6 +2090,7 @@ class CacheAllocator : public CacheBase {
                                  unsigned int pid,
                                  unsigned int cid,
                                  size_t batch) {
+    util::LatencyTracker tracker{stats().bgPromoteLatency_, batch};
     auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t promotions = 0;
     std::vector<Item*> candidates;
@@ -3004,7 +3006,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
                                                  uint32_t expiryTime,
                                                  bool fromBgThread,
                                                  bool evict) {
-  util::LatencyTracker tracker{stats().allocateLatency_};
+  util::LatencyTracker tracker{stats().allocateLatency_, static_cast<size_t>(!fromBgThread)};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
 
