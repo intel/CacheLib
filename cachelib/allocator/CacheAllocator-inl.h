@@ -426,7 +426,6 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
                                                  uint32_t expiryTime,
                                                  bool fromBgThread,
                                                  bool evict) {
-  util::LatencyTracker tracker{stats().allocateLatency_};
 
   SCOPE_FAIL { stats_.invalidAllocs.inc(); };
 
@@ -435,8 +434,11 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
 
   // the allocation class in our memory allocator.
   const auto cid = allocator_[tid]->getAllocationClassId(pid, requiredSize);
-  util::RollingLatencyTracker rollTracker{
-      (*stats_.classAllocLatency)[tid][pid][cid]};
+
+  if (!fromBgThread) {
+    util::LatencyTracker tracker{stats().allocateLatency_};
+    util::RollingLatencyTracker rollTracker{(*stats_.classAllocLatency)[tid][pid][cid]};
+  }
 
   (*stats_.allocAttempts)[tid][pid][cid].inc();
   

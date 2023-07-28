@@ -91,6 +91,8 @@ struct Stats {
   uint64_t numNvmItemRemovedSetSize{0};
 
   util::PercentileStats::Estimates cacheAllocateLatencyNs;
+  util::PercentileStats::Estimates cacheBgEvictLatencyNs;
+  util::PercentileStats::Estimates cacheBgPromoteLatencyNs;
   util::PercentileStats::Estimates cacheFindLatencyNs;
 
   double nvmReadLatencyMicrosP50{0};
@@ -282,6 +284,8 @@ struct Stats {
 
         printLatencies("Cache Find API latency", cacheFindLatencyNs);
         printLatencies("Cache Allocate API latency", cacheAllocateLatencyNs);
+        printLatencies("Cache Background Eviction API latency", cacheBgEvictLatencyNs);
+        printLatencies("Cache Background Promotion API latency", cacheBgPromoteLatencyNs);
       }
     }
 
@@ -510,6 +514,8 @@ struct Stats {
 
     counters["find_latency_p99"] = cacheFindLatencyNs.p99;
     counters["alloc_latency_p99"] = cacheAllocateLatencyNs.p99;
+    counters["bg_evict_latency_p99"] = cacheBgEvictLatencyNs.p99;
+    counters["bg_promote_latency_p99"] = cacheBgPromoteLatencyNs.p99;
 
     counters["ram_hit_rate"] = calcInvertPctFn(numCacheGetMiss, numCacheGets);
     counters["nvm_hit_rate"] = calcInvertPctFn(numCacheGetMiss, numCacheGets);
