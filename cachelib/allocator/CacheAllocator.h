@@ -2016,7 +2016,8 @@ class CacheAllocator : public CacheBase {
   // exposed for the background evictor to iterate through the memory and evict
   // in batch. This should improve insertion path for tiered memory config
   size_t traverseAndEvictItems(unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
-auto& mmContainer = getMMContainer(tid, pid, cid);
+    util::LatencyTracker tracker{stats().bgEvictLatency_, batch};
+    auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t evictions = 0;
     size_t evictionCandidates = 0;
     std::vector<Item*> candidates;
@@ -2089,6 +2090,7 @@ auto& mmContainer = getMMContainer(tid, pid, cid);
   }
 
   size_t traverseAndPromoteItems(unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
+    util::LatencyTracker tracker{stats().bgPromoteLatency_, batch};
     auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t promotions = 0;
     std::vector<Item*> candidates;
