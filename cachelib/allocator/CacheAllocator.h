@@ -2020,6 +2020,7 @@ class CacheAllocator : public CacheBase {
                                unsigned int pid,
                                unsigned int cid,
                                size_t batch) {
+    util::LatencyTracker tracker{stats().bgEvictLatency_, batch};
     auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t evictions = 0;
     size_t evictionCandidates = 0;
@@ -2096,6 +2097,7 @@ class CacheAllocator : public CacheBase {
                                  unsigned int pid,
                                  unsigned int cid,
                                  size_t batch) {
+    util::LatencyTracker tracker{stats().bgPromoteLatency_, batch};
     auto& mmContainer = getMMContainer(tid, pid, cid);
     size_t promotions = 0;
     std::vector<Item*> candidates;
