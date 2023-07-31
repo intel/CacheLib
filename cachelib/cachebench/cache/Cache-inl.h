@@ -743,6 +743,8 @@ Stats Cache<Allocator>::getStats() const {
       static_cast<int64_t>(itemRecords_.count()) - totalDestructor_;
 
   ret.cacheAllocateLatencyNs = cacheStats.allocateLatencyNs;
+  ret.cacheBgEvictLatencyNs = cacheStats.bgEvictLatencyNs;
+  ret.cacheBgPromoteLatencyNs = cacheStats.bgPromoteLatencyNs;
   ret.cacheFindLatencyNs = cacheFindLatency_.estimate();
 
   // Populate counters.
