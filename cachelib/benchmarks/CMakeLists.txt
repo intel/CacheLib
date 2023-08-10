@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_thrift_file(DATATYPEBENCH DataTypeBench.thrift frozen2)
+#add_thrift_file(DATATYPEBENCH DataTypeBench.thrift frozen2)
 
 if (BUILD_TESTS)
   add_library (benchmark_test_support
