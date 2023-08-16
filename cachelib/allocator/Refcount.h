@@ -131,10 +131,10 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   RefcountWithFlags(RefcountWithFlags&&) = delete;
   RefcountWithFlags& operator=(RefcountWithFlags&&) = delete;
   enum incResult {
-     incOk,
-     incFailedMoving,
-     incFailedEviction
-   };
+    incOk,
+    incFailedMoving,
+    incFailedEviction
+  };
   // Bumps up the reference count only if the new count will be strictly less
   // than or equal to the maxCount and the item is not exclusive
   // @return true if refcount is bumped. false otherwise (if item is exclusive)
@@ -143,28 +143,25 @@ class FOLLY_PACK_ATTR RefcountWithFlags {
   FOLLY_ALWAYS_INLINE incResult incRef() {
     incResult res = incOk;
     auto predicate = [&res](const Value curValue) {
-       Value bitMask = getAdminRef<kExclusive>();
+      Value bitMask = getAdminRef<kExclusive>();
 
-       const bool exlusiveBitIsSet = curValue & bitMask;
-       if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {
-         throw exception::RefcountOverflow("Refcount maxed out.");
-       } else if (exlusiveBitIsSet && (curValue & kAccessRefMask) == 0) {
-         res = incFailedEviction;
-         return false;
-       } else if (exlusiveBitIsSet) {
-         res = incFailedMoving;
-         return false;
-       }
-       res = incOk;
-       return true;
-     };
+      const bool exlusiveBitIsSet = curValue & bitMask;
+      if (UNLIKELY((curValue & kAccessRefMask) == (kAccessRefMask))) {
+        throw exception::RefcountOverflow("Refcount maxed out.");
+      } else if (exlusiveBitIsSet) {
+        res = (curValue & kAccessRefMask) == 0 ? incFailedEviction : incFailedMoving;
+        return false;
+      }
+      res = incOk;
+      return true;
+    };
 
-     auto newValue = [](const Value curValue) {
-       return (curValue + static_cast<Value>(1));
-     };
+    auto newValue = [](const Value curValue) {
+      return (curValue + static_cast<Value>(1));
+    };
 
-     atomicUpdateValue(predicate, newValue);
-     return res;
+    atomicUpdateValue(predicate, newValue);
+    return res;
   }
 
   // Bumps down the reference count

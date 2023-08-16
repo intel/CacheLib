@@ -1224,10 +1224,6 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
   XDCHECK(oldItem.isMoving());
   XDCHECK(!oldItem.isExpired());
   util::LatencyTracker tracker{stats_.moveRegularLatency_};
-  /*
-  if (!oldItem.isAccessible() || oldItem.isExpired()) {
-    return false;
-  }*/
 
   XDCHECK_EQ(newItemHdl->getSize(), oldItem.getSize());
 
@@ -1281,7 +1277,7 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
     // we rely on moving flag being set (it should block all readers)
     XDCHECK_EQ(item.getRefCount(),0);
     XDCHECK(item.isMoving());
-    return item.isMoving();
+    return true;
   };
   if (!accessContainer_->replaceIf(oldItem, *newItemHdl, predicate)) {
     newContainer.remove(*newItemHdl);
@@ -1343,9 +1339,6 @@ bool CacheAllocator<CacheTrait>::moveChainedItem(ChainedItem& oldItem,
   // Replace the new item in the position of the old one before both in the
   // parent's chain and the MMContainer.
   XDCHECK_EQ(parentItem.getRefCount(),0);
-  XDCHECK(parentItem.isMoving());
-  XDCHECK(l);
-
   auto& newContainer = getMMContainer(*newItemHdl);
   auto mmContainerAdded = newContainer.add(*newItemHdl);
   XDCHECK(mmContainerAdded);
@@ -2835,23 +2828,10 @@ void CacheAllocator<CacheTrait>::evictForSlabRelease(
 
     typename NvmCacheT::PutToken token;
     bool isChainedItem = item.isChainedItem();
-    Item* evicted;
-    Item *expectedParent = isChainedItem
-                           ? &item.asChainedItem().getParentItem(compressor_)
-                           : nullptr;
-    if (isChainedItem) {
-      XDCHECK(expectedParent->isMoving());
-      XDCHECK_EQ(expectedParent,&item.asChainedItem().getParentItem(compressor_));
-      if (expectedParent != &item.asChainedItem().getParentItem(compressor_)) {
-          XDCHECK_EQ(expectedParent,&item.asChainedItem().getParentItem(compressor_));
-          throw std::runtime_error(folly::sformat(
-              "Slab release aborted while evicting "
-              "item {}", item.toString()));
-      }
-      evicted = expectedParent;
-    } else {
-      evicted = &item;
-    }
+    Item* evicted = isChainedItem
+                    ? &item.asChainedItem().getParentItem(compressor_)
+                    : &item;
+
     XDCHECK(evicted->isMoving());
     token = createPutToken(*evicted);
     auto ret = evicted->markForEvictionWhenMoving();
@@ -3074,10 +3054,7 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
     // Since this callback is executed, the item is not yet freed
     itemFreed = false;
     Item* item = static_cast<Item*>(memory);
-    auto allocInfo = allocator_->getAllocInfo(memory);
-    auto pid = allocInfo.poolId;
-    auto cid = allocInfo.classId;
-    auto& mmContainer = getMMContainer(pid, cid);
+    auto& mmContainer = getMMContainer(*item);
     mmContainer.withContainerLock([this, &mmContainer,
                                    &syncItem, &item, &markedMoving]() {
       //we rely on the mmContainer lock to safely check that the item is
@@ -3091,7 +3068,6 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
       }
       bool chainedItem_ = item->isChainedItem();
       XDCHECK_EQ(&getMMContainer(*item),&mmContainer);
-      XDCHECK_EQ(item->isChainedItem(),chainedItem_);
       Item* syncItem_ = chainedItem_
                   ? &item->asChainedItem().getParentItem(compressor_)
                   : item;
@@ -3102,7 +3078,6 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
                 ? chainedItemLocks_.tryLockExclusive(syncItem_->getKey())
                 : decltype(chainedItemLocks_.tryLockExclusive(syncItem_->getKey()))();
 
-      XDCHECK_EQ(item->isChainedItem(),chainedItem_);
       if (chainedItem_ &&
             ( !l_ || &item->asChainedItem().getParentItem(compressor_) != syncItem_) ) {
           markedMoving = false;
@@ -3126,22 +3101,6 @@ bool CacheAllocator<CacheTrait>::markMovingForSlabRelease(
     } else if (markedMoving) {
       Item* item = static_cast<Item*>(alloc);
       XDCHECK(syncItem->isMoving());
-      XDCHECK(item->isChainedItem()
-              ? item->asChainedItem().getParentItem(compressor_).isMoving()
-              : item->isMoving()) << item->toString() << "\n" << syncItem->toString();
-      if ( ( item->isChainedItem() &&
-              !item->asChainedItem().getParentItem(compressor_).isMoving() )
-           || (!item->isChainedItem() && !item->isMoving()) ) {
-        throw std::runtime_error(
-            folly::sformat("Slab Release aborted - failed to mark"
-                           " as moving for Item: {}. Pool: {}, Class: {}. Parent is {}",
-                           item->toString(), ctx.getPoolId(),
-                           ctx.getClassId(),
-                           item->isChainedItem()
-                            ? item->asChainedItem().getParentItem(compressor_).toString()
-                            : "none"));
-
-      }
       return true;
     }
 

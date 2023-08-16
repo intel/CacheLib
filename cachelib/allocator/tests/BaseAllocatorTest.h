@@ -4841,7 +4841,7 @@ class BaseAllocatorTest : public AllocatorTest<AllocatorT> {
 
       std::memcpy(newItem.getMemory(), oldItem.getMemory(), oldItem.getSize());
       ++numMoves;
-    }, {}, 1000000 /* lots of moving tries */);
+    });
 
     AllocatorT alloc(config);
     const size_t numBytes = alloc.getCacheMemoryStats().ramCacheSize;
