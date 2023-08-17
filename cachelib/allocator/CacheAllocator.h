@@ -1482,18 +1482,6 @@ class CacheAllocator : public CacheBase {
   WriteHandle allocateChainedItemInternal(const Item& parent,
                                           uint32_t size);
 
-  // Given an item and its parentKey, validate that the parentKey
-  // corresponds to an item that's the parent of the supplied item.
-  //
-  // @param item       item that we want to get the parent handle for
-  // @param parentKey  key of the item's parent
-  //
-  // @return  handle to the parent item if the validations pass
-  //          otherwise, an empty Handle is returned.
-  //
-  ReadHandle validateAndGetParentHandleForChainedMoveLocked(
-      const ChainedItem& item, const Key& parentKey);
-
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
   //
