@@ -35,4 +35,4 @@ echo "Build a Docker image tagged with: ${CONTAINER_REG}:${TAG}"
 docker build -t ${CONTAINER_REG}:${TAG} \
 	--build-arg http_proxy=$http_proxy \
 	--build-arg https_proxy=$https_proxy \
-	-f ${OS}-${OS_VER}.Dockerfile .
+	-f ${OS}-${OS_VER}.Dockerfile ../.. # need access to contrib and submodules

@@ -15,7 +15,7 @@ rm -rf idxd-config
 # Install DML Library
 git clone --recursive https://github.com/intel/DML.git
 cd DML
-git checkout e44443c24d53552b248b9869b1b16f89cd970f52
+git checkout v1.1.0
 mkdir build
 cd build
 cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
