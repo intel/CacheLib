@@ -40,6 +40,7 @@ jobs:
       - name: "checkout sources"
         uses: actions/checkout@v2
         with:
+          submodules: recursive
           fetch-depth: 0
 
       - name: Pull the image or rebuild and push it
