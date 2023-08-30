@@ -25,10 +25,25 @@ BackgroundMover<CacheT>::BackgroundMover(
     : cache_(cache), strategy_(strategy), direction_(direction) {
   if (direction_ == MoverDir::Evict) {
     moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItems;
-
   } else if (direction_ == MoverDir::Promote) {
     moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndPromoteItems;
   }
+}
+
+template <typename CacheT>
+void BackgroundMover<CacheT>::TraversalStats::recordTraversalTime(uint64_t nsTaken) {
+  lastTraversalTimeNs_.store(nsTaken, std::memory_order_relaxed);
+  minTraversalTimeNs_.store(std::min(minTraversalTimeNs_.load(), nsTaken),
+                            std::memory_order_relaxed);
+  maxTraversalTimeNs_.store(std::max(maxTraversalTimeNs_.load(), nsTaken),
+                            std::memory_order_relaxed);
+  totalTraversalTimeNs_.fetch_add(nsTaken, std::memory_order_relaxed);
+}
+
+template <typename CacheT>
+uint64_t BackgroundMover<CacheT>::TraversalStats::getAvgTraversalTimeNs(
+    uint64_t numTraversals) const {
+  return numTraversals ? totalTraversalTimeNs_ / numTraversals : 0;
 }
 
 template <typename CacheT>
@@ -64,46 +79,58 @@ template <typename CacheT>
 void BackgroundMover<CacheT>::checkAndRun() {
   auto assignedMemory = mutex.lock_combine([this] { return assignedMemory_; });
 
-  unsigned int moves = 0;
-  std::set<ClassId> classes{};
-  auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
+  while (true) {
+    unsigned int moves = 0;
+    std::set<ClassId> classes{};
+    auto batches = strategy_->calculateBatchSizes(cache_, assignedMemory);
 
-  for (size_t i = 0; i < batches.size(); i++) {
-    const auto [tid, pid, cid] = assignedMemory[i];
-    const auto batch = batches[i];
+    const auto begin = util::getCurrentTimeNs();
+    for (size_t i = 0; i < batches.size(); i++) {
+      const auto [tid, pid, cid] = assignedMemory[i];
+      const auto batch = batches[i];
+      if (!batch) {
+        continue;
+      }
 
-    classes.insert(cid);
-    const auto& mpStats = cache_.getPoolByTid(pid, tid).getStats();
-
-    if (!batch) {
-      continue;
+      // try moving BATCH items from the class in order to reach free target
+      auto moved = moverFunc(cache_, tid, pid, cid, batch);
+      moves += moved;
+      moves_per_class_[assignedMemory[i]] += moved;
+    }
+    auto end = util::getCurrentTimeNs();
+    if (moves > 0) {
+      traversalStats_.recordTraversalTime(end > begin ? end - begin : 0);
+      numMovedItems.add(moves);
+      numTraversals.inc();
     }
 
-    // try moving BATCH items from the class in order to reach free target
-    auto moved = moverFunc(cache_, tid, pid, cid, batch);
-    moves += moved;
-    moves_per_class_[tid][pid][cid] += moved;
-    totalBytesMoved.add(moved * mpStats.acStats.at(cid).allocSize);
+    //we didn't move any objects done with this run
+    if (moves == 0 || shouldStopWork()) {
+        break;
+    }
   }
-
-  numTraversals.inc();
-  numMovedItems.add(moves);
-  totalClasses.add(classes.size());
 }
 
 template <typename CacheT>
 BackgroundMoverStats BackgroundMover<CacheT>::getStats() const noexcept {
   BackgroundMoverStats stats;
   stats.numMovedItems = numMovedItems.get();
-  stats.runCount = numTraversals.get();
   stats.totalBytesMoved = totalBytesMoved.get();
   stats.totalClasses = totalClasses.get();
+  auto runCount = getRunCount();
+  stats.runCount = runCount;
+  stats.numTraversals = numTraversals.get();
+  stats.avgItemsMoved = (double) stats.numMovedItems / (double)runCount;
+  stats.lastTraversalTimeNs = traversalStats_.getLastTraversalTimeNs();
+  stats.avgTraversalTimeNs = traversalStats_.getAvgTraversalTimeNs(runCount);
+  stats.minTraversalTimeNs = traversalStats_.getMinTraversalTimeNs();
+  stats.maxTraversalTimeNs = traversalStats_.getMaxTraversalTimeNs();
 
   return stats;
 }
 
 template <typename CacheT>
-std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+std::map<MemoryDescriptorType,uint64_t>
 BackgroundMover<CacheT>::getClassStats() const noexcept {
   return moves_per_class_;
 }

@@ -167,6 +167,7 @@ class MemoryAllocator {
   // @throw std::invalid_argument if the poolId is invalid or the size is
   //        invalid.
   void* allocate(PoolId id, uint32_t size);
+  void* allocateByCid(PoolId id, ClassId cid);
 
   // Allocate a zeroed Slab
   //
