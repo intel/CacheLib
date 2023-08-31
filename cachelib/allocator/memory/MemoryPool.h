@@ -148,6 +148,7 @@ class MemoryPool {
   // @throw  std::invalid_argument if size is invalid.
   void* allocate(uint32_t size);
   void* allocateByCid(ClassId cid);
+  std::vector<void*> allocateByCidBatch(ClassId cid, uint64_t batch);
 
   // Allocate a slab with zeroed memory
   //
@@ -334,6 +335,7 @@ class MemoryPool {
   ACVector createAllocationClasses() const;
   
   void* allocateForClass(AllocationClass& ac);
+  std::vector<void*> allocateForClassBatch(AllocationClass& ac, uint64_t batch);
 
   // @return  AllocationClass corresponding to the memory, if it
   //          belongs to an AllocationClass

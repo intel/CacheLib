@@ -1530,6 +1530,10 @@ class CacheAllocator : public CacheBase {
   void* allocateInternalTierByCid(TierId tid,
                                    PoolId pid,
                                    ClassId cid);
+  std::vector<void*> allocateInternalTierByCidBatch(TierId tid,
+                                   PoolId pid,
+                                   ClassId cid,
+                                   uint64_t batch);
 
   // Allocate a chained item
   //
@@ -1817,7 +1821,7 @@ class CacheAllocator : public CacheBase {
   // @return An evicted item or nullptr  if there is no suitable candidate found
   // within the configured number of attempts.
   Item* findEviction(TierId tid, PoolId pid, ClassId cid);
-  std::vector<Item*> findEviction(TierId tid, PoolId pid, ClassId cid, uint64_t batch);
+  std::vector<Item*> findEvictionBatch(TierId tid, PoolId pid, ClassId cid, unsigned int batch);
 
   // Get next eviction candidate from MMContainer, remove from AccessContainer,
   // MMContainer and insert into NVMCache if enabled.
@@ -2037,20 +2041,21 @@ class CacheAllocator : public CacheBase {
 
     //try and get batch allocations in next tier, if we fail to get any
     //then quit, else proceed with whatever we got
-    uint32_t allocTries = 0;
-    while (allocTries < batch*2 && new_allocs.size() < batch) {
-      void *new_alloc = allocateInternalTierByCid(tid+1, pid, cid);
-      if (new_alloc) {
-        new_allocs.push_back(new_alloc);
-      }
-      allocTries++;
-    }
-    if (new_allocs.size() < batch) {
-      if (new_allocs.size() == 0) {
-          return evictions;
-      }
-      batch = new_allocs.size();
-    }
+    new_allocs = allocateInternalTierByCidBatch(tid+1, pid, cid, batch);
+    //uint32_t allocTries = 0;
+    //while (allocTries < batch*2 && new_allocs.size() < batch) {
+    //  void *new_alloc = allocateInternalTierByCid(tid+1, pid, cid);
+    //  if (new_alloc) {
+    //    new_allocs.push_back(new_alloc);
+    //  }
+    //  allocTries++;
+    //}
+    //if (new_allocs.size() < batch) {
+    //  if (new_allocs.size() == 0) {
+    //      return evictions;
+    //  }
+    //  batch = new_allocs.size();
+    //}
     
 
     mmContainer.withEvictionIterator([this, tid, pid, cid, &tries, &candidates_hdl,

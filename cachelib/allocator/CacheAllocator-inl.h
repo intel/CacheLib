@@ -416,6 +416,45 @@ size_t CacheAllocator<CacheTrait>::backgroundWorkerId(TierId tid, PoolId pid, Cl
 }
 
 template <typename CacheTrait>
+std::vector<void*> CacheAllocator<CacheTrait>::allocateInternalTierByCidBatch(TierId tid,
+                                                 PoolId pid,
+                                                 ClassId cid, uint64_t batch) {
+  //util::LatencyTracker tracker{stats().allocateLatency_};
+
+  //SCOPE_FAIL { stats_.invalidAllocs.inc(); };
+
+  //util::RollingLatencyTracker rollTracker{
+  //    (*stats_.classAllocLatency)[tid][pid][cid]};
+
+  //(*stats_.allocAttempts)[tid][pid][cid].inc();
+  
+  auto memory = allocator_[tid]->allocateByCidBatch(pid, cid, batch);
+  
+  if (memory.size() < batch) {
+    uint64_t toEvict = batch - memory.size();
+    auto evicted = findEvictionBatch(tid, pid, cid, toEvict);
+    if (evicted.size() == toEvict) {
+      memory.insert(memory.end(),evicted.begin(),evicted.end());
+      return memory;
+    } else {
+      if (memory.size() != 0) {
+        for (auto ptr : memory) {
+          allocator_[tid]->free(ptr);
+        }
+      }
+      if (evicted.size() != 0) {
+        for (auto ptr : evicted) {
+          allocator_[tid]->free(ptr);
+        }
+      }
+    }
+    return std::vector<void*>{};
+  } else {
+    return memory;
+  }
+}
+
+template <typename CacheTrait>
 void* CacheAllocator<CacheTrait>::allocateInternalTierByCid(TierId tid,
                                                  PoolId pid,
                                                  ClassId cid) {
@@ -480,9 +519,9 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   
   void* memory = allocator_[tid]->allocate(pid, requiredSize);
   
-  if (backgroundEvictor_.size() && !fromBgThread && (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
-    backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
-  }
+  //if (backgroundEvictor_.size() && !fromBgThread && (memory == nullptr || shouldWakeupBgEvictor(tid, pid, cid))) {
+  //  backgroundEvictor_[backgroundWorkerId(tid, pid, cid, backgroundEvictor_.size())]->wakeUp();
+  //}
   
   if (memory == nullptr && !evict) {
     return {};
@@ -1563,6 +1602,173 @@ void CacheAllocator<CacheTrait>::unlinkItemForEviction(Item& it) {
 }
 
 template <typename CacheTrait>
+std::vector<typename CacheAllocator<CacheTrait>::Item*>
+CacheAllocator<CacheTrait>::findEvictionBatch(TierId tid,
+                                             PoolId pid,
+                                             ClassId cid,
+                                             unsigned int batch) {
+  std::vector<typename NvmCacheT::PutToken> tokens;
+  std::vector<Item*> toRecycles;
+  std::vector<Item*> toRecycleParents;
+  std::vector<Item*> candidates;
+  std::vector<bool> isExpireds;
+  std::vector<Item*> syncItems;
+  std::vector<bool> chainedItems;
+  auto& mmContainer = getMMContainer(tid, pid, cid);
+  bool lastTier = tid+1 >= getNumTiers();
+  unsigned int searchTries = 0;
+  unsigned int maxSearchTries = std::max(config_.evictionSearchTries,
+                                            batch*4);
+
+  mmContainer.withEvictionIterator([this, tid, pid, cid, batch, &candidates,
+                                    &toRecycles, &toRecycleParents, &syncItems,
+                                    &chainedItems, &searchTries,
+                                    maxSearchTries, &mmContainer, &lastTier,
+                                    &isExpireds, &tokens](auto&& itr) {
+    if (!itr) {
+      ++searchTries;
+      (*stats_.evictionAttempts)[tid][pid][cid].inc();
+      return;
+    }
+
+    while ((config_.evictionSearchTries == 0 ||
+            maxSearchTries > searchTries) &&
+           itr && candidates.size() < batch) {
+      ++searchTries;
+      (*stats_.evictionAttempts)[tid][pid][cid].inc();
+
+      auto* toRecycle_ = itr.get();
+      bool chainedItem_ = toRecycle_->isChainedItem();
+      Item* toRecycleParent_ = chainedItem_
+              ? &toRecycle_->asChainedItem().getParentItem(compressor_)
+              : nullptr;
+      // in order to safely check if the expected parent (toRecycleParent_) matches
+      // the current parent on the chained item, we need to take the chained
+      // item lock so we are sure that nobody else will be editing the chain
+      auto l_ = chainedItem_
+                ? chainedItemLocks_.tryLockExclusive(toRecycleParent_->getKey())
+                : decltype(chainedItemLocks_.tryLockExclusive(toRecycle_->getKey()))();
+
+      if (chainedItem_ &&
+          ( !l_ || &toRecycle_->asChainedItem().getParentItem(compressor_)
+                    != toRecycleParent_) ) {
+          ++itr;
+          continue;
+      }
+      Item* candidate_;
+      Item* syncItem_;
+      //sync on the parent item for chained items to move to next tier
+      if (!lastTier && chainedItem_) {
+          syncItem_ = toRecycleParent_;
+          candidate_ = toRecycle_;
+      } else if (lastTier && chainedItem_) {
+          candidate_ = toRecycleParent_;
+          syncItem_ = toRecycleParent_;
+      } else {
+          candidate_ = toRecycle_;
+          syncItem_ = toRecycle_;
+      }
+      // if it's last tier, the item will be evicted
+      // need to create put token before marking it exclusive
+      const bool evictToNvmCache = lastTier && shouldWriteToNvmCache(*candidate_);
+
+      auto token_ = evictToNvmCache
+                        ? nvmCache_->createPutToken(candidate_->getKey())
+                        : typename NvmCacheT::PutToken{};
+      
+      if (evictToNvmCache && !token_.isValid()) {
+        stats_.evictFailConcurrentFill.inc();
+        ++itr;
+        continue;
+      }
+      
+      auto marked = (lastTier || candidate_->isExpired()) ? syncItem_->markForEviction() : syncItem_->markMoving();
+      if (!marked) {
+        if (candidate_->hasChainedItem()) {
+          stats_.evictFailParentAC.inc();
+        } else {
+          stats_.evictFailAC.inc();
+        }
+        ++itr;
+        continue;
+      }
+      
+      XDCHECK(syncItem_->isMoving() || syncItem_->isMarkedForEviction());
+      if (chainedItem_) {
+          XDCHECK(l_);
+          XDCHECK_EQ(toRecycleParent_,&toRecycle_->asChainedItem().getParentItem(compressor_));
+      }
+      mmContainer.remove(itr);
+      candidates.push_back(candidate_);
+      toRecycles.push_back(toRecycle_);
+      chainedItems.push_back(chainedItem_);
+      toRecycleParents.push_back(toRecycleParent_);
+      isExpireds.push_back(candidate_->isExpired());
+      tokens.push_back(std::move(token_));
+    }
+  });
+
+  XDCHECK(lastTier);
+  XDCHECK_EQ(candidates.size(),batch);
+
+  for (int i = 0; i < candidates.size(); i++) {
+    Item *candidate = candidates[i];
+    Item *toRecycleParent = toRecycleParents[i];
+    Item *toRecycle = toRecycles[i];
+    typename NvmCacheT::PutToken token = std::move(tokens[i]);
+
+    if (candidate->isChainedItem()) {
+      //candidate should be parent now
+      XDCHECK(toRecycleParent->isMoving());
+      XDCHECK_EQ(candidate,toRecycle);
+      candidate = toRecycleParent; //but now we evict the chain and in
+                                    //doing so recycle the child
+    }
+    //if insertOrReplace was called during move
+    //then candidate will not be accessible (failed replace during tryEvict)
+    // - therefore this was why we failed to
+    //   evict to the next tier and insertOrReplace
+    //   will remove from NVM cache
+    //however, if candidate is accessible
+    //that means the allocation in the next
+    //tier failed - so we will continue to
+    //evict the item to NVM cache
+    bool failedToReplace = !candidate->isAccessible();
+    if (!token.isValid() && !failedToReplace) {
+      token = createPutToken(*candidate);
+    }
+    // tryEvictToNextMemoryTier can fail if:
+    //    a) allocation of the new item fails in that case,
+    //       it should be still possible to mark item for eviction.
+    //    b) another thread calls insertOrReplace and the item
+    //       is no longer accessible
+    //
+    // in case that we are on the last tier, we whould have already marked
+    // as exclusive since we will not be moving the item to the next tier
+    // but rather just evicting all together, no need to
+    // markForEvictionWhenMoving
+    auto ret = (lastTier || isExpireds[i]) ? true : candidate->markForEvictionWhenMoving();
+    XDCHECK(ret);
+
+    unlinkItemForEviction(*candidate);
+    
+    if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)
+            && !failedToReplace) {
+      nvmCache_->put(*candidate, std::move(token));
+    }
+    // wake up any readers that wait for the move to complete
+    // it's safe to do now, as we have the item marked exclusive and
+    // no other reader can be added to the waiters list
+    wakeUpWaiters(*candidate, {});
+    auto released = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
+                                    /* isNascent */ false, toRecycle);
+    XDCHECK_EQ(released,ReleaseRes::kRecycled);
+  }
+
+  return toRecycles;
+}
+
+template <typename CacheTrait>
 std::pair<typename CacheAllocator<CacheTrait>::Item*,
           typename CacheAllocator<CacheTrait>::Item*>
 CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
@@ -1770,239 +1976,6 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
 
   return {candidate, toRecycle};
 }
-
-/*
-template <typename CacheTrait>
-std::vector<typename CacheAllocator<CacheTrait>::Item*>
-CacheAllocator<CacheTrait>::findEviction(TierId tid, PoolId pid, ClassId cid, uint64_t batch) {
-  auto& mmContainer = getMMContainer(tid, pid, cid);
-  bool lastTier = tid+1 >= getNumTiers();
-  // Keep searching for a candidate until we were able to evict it
-  // or until the search limit has been exhausted
-  unsigned int searchTries = 0;
-  std::vector<bool> isExpired;
-  std::vector<typename NvmCacheT::PutToken> tokens;
-  std::vector<bool> chainedItems;
-  std::vector<Item*> candidates;
-  std::vector<Item*> toRecycleParents;
-  std::vector<Item*> toRecycles;
-  std::vector<Item*> syncItems;
-
-  mmContainer.withEvictionIterator([this, tid, pid, cid, &candidates,
-                                    &toRecycles, &toRecycleParents, &syncItems,
-                                    &chainedItems,
-                                    &searchTries, &mmContainer, &lastTier,
-                                    &isExpired, &tokens](auto&& itr) {
-    if (!itr) {
-      ++searchTries;
-      (*stats_.evictionAttempts)[tid][pid][cid].inc();
-      return;
-    }
-
-    while ((config_.evictionSearchTries == 0 ||
-            config_.evictionSearchTries*batch > searchTries) &&
-           itr && candidates.size() < batch) {
-      ++searchTries;
-      (*stats_.evictionAttempts)[tid][pid][cid].inc();
-      Item* toRecycle_ = itr.get();
-      bool chainedItem_ = toRecycle_->isChainedItem();
-      Item* toRecycleParent_ = chainedItem_
-              ? &toRecycle_->asChainedItem().getParentItem(compressor_)
-              : nullptr;
-      // in order to safely check if the expected parent (toRecycleParent_) matches
-      // the current parent on the chained item, we need to take the chained
-      // item lock so we are sure that nobody else will be editing the chain
-      auto l_ = chainedItem_
-                ? chainedItemLocks_.tryLockExclusive(toRecycleParent_->getKey())
-                : decltype(chainedItemLocks_.tryLockExclusive(toRecycle_->getKey()))();
-
-      if (chainedItem_ &&
-          ( !l_ || &toRecycle_->asChainedItem().getParentItem(compressor_)
-                   != toRecycleParent_) ) {
-          ++itr;
-          continue;
-      }
-      Item* candidate_;
-      Item* syncItem_;
-      //sync on the parent item for chained items to move to next tier
-      if (!lastTier && chainedItem_) {
-          syncItem_ = toRecycleParent_;
-          candidate_ = toRecycle_;
-      } else if (lastTier && chainedItem_) {
-          candidate_ = toRecycleParent_;
-          syncItem_ = toRecycleParent_;
-      } else {
-          candidate_ = toRecycle_;
-          syncItem_ = toRecycle_;
-      }
-      // if it's last tier, the item will be evicted
-      // need to create put token before marking it exclusive
-      const bool evictToNvmCache = lastTier && shouldWriteToNvmCache(*candidate_);
-
-      auto token_ = evictToNvmCache
-                        ? nvmCache_->createPutToken(candidate_->getKey())
-                        : typename NvmCacheT::PutToken{};
-
-      if (evictToNvmCache && !token_.isValid()) {
-        stats_.evictFailConcurrentFill.inc();
-      } else if ( ((lastTier || candidate_->isExpired()) && 
-                    syncItem_->markForEviction()) ||
-                  (!lastTier && syncItem_->markMoving()) ) {
-        XDCHECK(syncItem_->isMoving() || syncItem_->isMarkedForEviction());
-        toRecycleParents.push_back(toRecycleParent_);
-        chainedItems.push_back(chainedItem_);
-        // markForEviction to make sure no other thead is evicting the item
-        // nor holding a handle to that item if this is last tier
-        // since we won't be moving the item to the next tier
-        toRecycles.push_back(toRecycle_);
-        candidates.push_back(candidate_);
-        isExpired.push_back(candidate_->isExpired());
-        token.push_back(std::move(token_));
-        if (chainedItem) {
-            XDCHECK(l_);
-            XDCHECK_EQ(toRecycleParent,&toRecycle_->asChainedItem().getParentItem(compressor_));
-        }
-        mmContainer.remove(itr);
-      } else {
-        if (candidate_->hasChainedItem()) {
-          stats_.evictFailParentAC.inc();
-        } else {
-          stats_.evictFailAC.inc();
-        }
-
-        ++itr;
-        XDCHECK_EQ(toRecycle,nullptr);
-        XDCHECK_EQ(candidate,nullptr);
-      }
-    }
-  });
-
-  if (candidates.size() == 0) {
-      return candidates;
-  }
-  XDCHECK(toRecycle.size() > 1);
-  XDCHECK(candidates.size() > 1);
-
-  for (int i = 0; i < candidates.size(); i++) {
-    if (lastTier
-    nextHandles
-  }
-
-  auto evictedToNext = (lastTier || isExpired) ? nullptr
-      : tryEvictToNextMemoryTier(*candidate, false);
-  if (!evictedToNext) {
-    //failed to move a chained item - so evict the entire chain
-    if (candidate->isChainedItem()) {
-      //candidate should be parent now
-      XDCHECK(toRecycleParent->isMoving());
-      XDCHECK_EQ(candidate,toRecycle);
-      candidate = toRecycleParent; //but now we evict the chain and in
-                                   //doing so recycle the child
-    }
-    //if insertOrReplace was called during move
-    //then candidate will not be accessible (failed replace during tryEvict)
-    // - therefore this was why we failed to
-    //   evict to the next tier and insertOrReplace
-    //   will remove from NVM cache
-    //however, if candidate is accessible
-    //that means the allocation in the next
-    //tier failed - so we will continue to
-    //evict the item to NVM cache
-    bool failedToReplace = !candidate->isAccessible();
-    if (!token.isValid() && !failedToReplace) {
-      token = createPutToken(*candidate);
-    }
-    // tryEvictToNextMemoryTier can fail if:
-    //    a) allocation of the new item fails in that case,
-    //       it should be still possible to mark item for eviction.
-    //    b) another thread calls insertOrReplace and the item
-    //       is no longer accessible
-    //
-    // in case that we are on the last tier, we whould have already marked
-    // as exclusive since we will not be moving the item to the next tier
-    // but rather just evicting all together, no need to
-    // markForEvictionWhenMoving
-    auto ret = (lastTier || isExpired) ? true : candidate->markForEvictionWhenMoving();
-    XDCHECK(ret);
-
-    unlinkItemForEviction(*candidate);
-    
-    if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)
-            && !failedToReplace) {
-      nvmCache_->put(*candidate, std::move(token));
-    }
-    // wake up any readers that wait for the move to complete
-    // it's safe to do now, as we have the item marked exclusive and
-    // no other reader can be added to the waiters list
-    wakeUpWaiters(*candidate, {});
-
-  } else {
-    XDCHECK(!evictedToNext->isMarkedForEviction() && !evictedToNext->isMoving());
-    XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
-    XDCHECK(!candidate->isAccessible());
-    XDCHECK(candidate->getKey() == evictedToNext->getKey());
-
-    (*stats_.numWritebacks)[tid][pid][cid].inc();
-    if (chainedItem) {
-        XDCHECK(toRecycleParent->isMoving());
-        XDCHECK_EQ(evictedToNext->getRefCount(),2u);
-        (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
-        // check if by releasing the item we intend to, we actually
-        // recycle the candidate.
-        auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-                                           false, toRecycle);
-        XDCHECK_EQ(ret,ReleaseRes::kRecycled);
-        evictedToNext.reset(); //once we unmark moving threads will try and alloc, drop
-                               //the handle now - and refcount will drop to 1
-        auto ref = toRecycleParent->unmarkMoving();
-        if (UNLIKELY(ref == 0)) {
-          wakeUpWaiters(*toRecycleParent,{});
-          const auto res =
-              releaseBackToAllocator(*toRecycleParent, RemoveContext::kNormal, false);
-          XDCHECK(res == ReleaseRes::kReleased);
-        } else {
-          auto parentHandle = acquire(toRecycleParent);
-          if (parentHandle) {
-            wakeUpWaiters(*toRecycleParent,std::move(parentHandle));
-          } //in case where parent handle is null that means some other thread
-            // would have called wakeUpWaiters with null handle and released
-            // parent back to allocator
-        }
-        return toRecycle;
-    } else {
-      wakeUpWaiters(*candidate, std::move(evictedToNext));
-    }
-  }
-
-  XDCHECK(!candidate->isMarkedForEviction() && !candidate->isMoving());
-
-  // recycle the item. it's safe to do so, even if toReleaseHandle was
-  // NULL. If `ref` == 0 then it means that we are the last holder of
-  // that item.
-  if (candidate->hasChainedItem()) {
-    (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
-  } else {
-    (*stats_.regularItemEvictions)[tid][pid][cid].inc();
-  }
-
-  if (auto eventTracker = getEventTracker()) {
-    eventTracker->record(AllocatorApiEvent::DRAM_EVICT, candidate->getKey(),
-                         AllocatorApiResult::EVICTED, candidate->getSize(),
-                         candidate->getConfiguredTTL().count());
-  }
-
-  XDCHECK(!candidate->isChainedItem());
-  // check if by releasing the item we intend to, we actually
-  // recycle the candidate.
-  auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
-                                    false, toRecycle);
-  if (ret == ReleaseRes::kRecycled) {
-    return toRecycle;
-  }
-  
-  return {};
-}
-*/
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::Item*
