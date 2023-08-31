@@ -2027,6 +2027,7 @@ class CacheAllocator : public CacheBase {
     size_t evictions = 0;
     size_t evictionCandidates = 0;
     std::vector<Item*> candidates;
+    std::vector<WriteHandle> candidates_hdl;
     std::vector<Item*> candidates_with_alloc;
     std::vector<WriteHandle> new_items_hdl;
     std::vector<Item*> new_items;
@@ -2052,7 +2053,7 @@ class CacheAllocator : public CacheBase {
     }
     
 
-    mmContainer.withEvictionIterator([this, tid, pid, cid, &tries,
+    mmContainer.withEvictionIterator([this, tid, pid, cid, &tries, &candidates_hdl,
                                       &candidates, &batch, &mmContainer](auto &&itr) {
       while (tries < batch*2 && candidates.size() < batch && itr) {
         tries++;
@@ -2063,9 +2064,10 @@ class CacheAllocator : public CacheBase {
         if (candidate->isChainedItem()) {
           throw std::runtime_error("Not supported for chained items");
         }
-
-        if (candidate->markMoving()) {
+        auto hdl = acquire(candidate);
+        if (hdl && hdl->getRefCount() == 1) {
           mmContainer.remove(itr);
+          candidates_hdl.push_back(std::move(hdl));
           candidates.push_back(candidate);
         } else {
           ++itr;
@@ -2124,8 +2126,8 @@ class CacheAllocator : public CacheBase {
       bool moved = moveRegularItem(*candidates_with_alloc[index],
                                     new_items_hdl[index],
                                     true);
-      auto ref = candidates_with_alloc[index]->unmarkMoving();
-      XDCHECK_EQ(ref,0);
+      //auto ref = candidates_with_alloc[index]->unmarkMoving();
+      //XDCHECK_EQ(ref,0);
       if (moved) {
         evictions++;
         XDCHECK(!candidates_with_alloc[index]->isMarkedForEviction());
@@ -2133,10 +2135,10 @@ class CacheAllocator : public CacheBase {
         XDCHECK(!candidates_with_alloc[index]->isAccessible());
         XDCHECK_EQ(candidates_with_alloc[index]->getKey(),new_items_hdl[index]->getKey());
         (*stats_.numWritebacks)[tid][pid][cid].inc();
-        wakeUpWaiters(*candidates_with_alloc[index], std::move(new_items_hdl[index]));
+        //wakeUpWaiters(*candidates_with_alloc[index], std::move(new_items_hdl[index]));
       } else {
         //item should be released by the handle destructor
-        wakeUpWaiters(*candidates_with_alloc[index], {});
+        //wakeUpWaiters(*candidates_with_alloc[index], {});
       }
 
       if (candidates_with_alloc[index]->hasChainedItem()) {
@@ -2148,9 +2150,9 @@ class CacheAllocator : public CacheBase {
       // it's safe to recycle the item here as there are no more
       // references and the item could not been marked as moving
       // by other thread since it's detached from MMContainer.
-      auto res = releaseBackToAllocator(*candidates_with_alloc[index], RemoveContext::kEviction,
-                                /* isNascent */ false);
-      XDCHECK(res == ReleaseRes::kReleased);
+      //auto res = releaseBackToAllocator(*candidates_with_alloc[index], RemoveContext::kEviction,
+      //                          /* isNascent */ false);
+      //XDCHECK(res == ReleaseRes::kReleased);
     }
     return evictions;
   }

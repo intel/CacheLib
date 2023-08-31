@@ -1394,7 +1394,7 @@ size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
 template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::moveRegularItem(
     Item& oldItem, WriteHandle& newItemHdl, bool fromBgThread) {
-  XDCHECK(oldItem.isMoving());
+  //XDCHECK(oldItem.isMoving());
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
@@ -1457,9 +1457,10 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
   
   auto predicate = [&](const Item& item){
     // we rely on moving flag being set (it should block all readers)
-    XDCHECK_EQ(item.getRefCount(),0);
-    XDCHECK(item.isMoving());
-    return item.isMoving();
+    //XDCHECK_EQ(item.getRefCount(),0);
+    //XDCHECK(item.isMoving());
+    //return item.isMoving();
+    return true;
   };
 
   auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl,
