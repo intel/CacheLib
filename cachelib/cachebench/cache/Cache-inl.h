@@ -105,6 +105,7 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   }
 
   allocatorConfig_.insertToFirstFreeTier = config_.insertToFirstFreeTier;
+  allocatorConfig_.useHandleForBgSync = config_.useHandleForBgSync;
 
   auto cleanupGuard = folly::makeGuard([&] {
     if (!nvmCacheFilePath_.empty()) {

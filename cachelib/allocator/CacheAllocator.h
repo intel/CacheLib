@@ -1506,16 +1506,12 @@ class CacheAllocator : public CacheBase {
                                Key key,
                                uint32_t size,
                                uint32_t creationTime,
-                               uint32_t expiryTime,
-                               bool fromBgThread = false);
+                               uint32_t expiryTime);
 
   // create a new cache allocation on specific memory tier.
   // For description see allocateInternal.
   //
   // @param tid id a memory tier
-  // @param fromBgThread whether this function was called from a bg
-  //        thread - this is used to decide whether bg thread should
-  //        be waken in case there is no free memory
   // @param evict whether to evict an item from tier tid in case there
   //        is not enough memory
   WriteHandle allocateInternalTier(TierId tid,
@@ -1524,12 +1520,31 @@ class CacheAllocator : public CacheBase {
                                    uint32_t size,
                                    uint32_t creationTime,
                                    uint32_t expiryTime,
-                                   bool fromBgThread,
                                    bool evict);
   
+  // create a new cache allocation on specific memory tier,
+  // for a given class id. used in moving between tiers since
+  // class id's are the same among the tiers.
+  // For description see allocateInternal.
+  //
+  // @param tid id a memory tier
+  // @param pid a poold id
+  // @param cid a class id
+  //
   void* allocateInternalTierByCid(TierId tid,
                                    PoolId pid,
                                    ClassId cid);
+
+  // create a new cache allocation on specific memory tier,
+  // for a given class id. used in moving between tiers since
+  // class id's are the same among the tiers.
+  // For description see allocateInternal.
+  //
+  // @param tid id a memory tier
+  // @param pid a poold id
+  // @param cid a class id
+  // @param batch the number of allocations to make
+  //
   std::vector<void*> allocateInternalTierByCidBatch(TierId tid,
                                    PoolId pid,
                                    ClassId cid,
@@ -1649,12 +1664,12 @@ class CacheAllocator : public CacheBase {
   //
   // @param oldItem     Reference to the item being moved
   // @param newItemHdl  Reference to the handle of the new item being moved into
-  // @param fromBgThread so we can tell if we should add in mmContainer or wait
+  // @param skipAddInMMContainer so we can tell if we should add in mmContainer or wait
   //                     to do in batch
-  //
+  // @param fromBgThread use memmove instead of memcopy (for DTO testing)
   // @return true  If the move was completed, and the containers were updated
   //               successfully.
-  bool moveRegularItem(Item& oldItem, WriteHandle& newItemHdl, bool fromBgThread);
+  bool moveRegularItem(Item& oldItem, WriteHandle& newItemHdl, bool skipAddInMMContainer, bool fromBgThread);
 
   // Moves a chained item to a different memory tier.
   //
@@ -1839,6 +1854,44 @@ class CacheAllocator : public CacheBase {
                                            ClassId cid,
                                            unsigned int& searchTries);
 
+  // similiar to the above method but returns a batch of evicted items
+  // as a pair of vectors
+  std::pair<std::vector<Item*>, std::vector<Item*>> getNextCandidates(TierId tid,
+                                                                      PoolId pid,
+                                                                      ClassId cid,
+                                                                      unsigned int batch,
+                                                                      bool markMoving,
+                                                                      bool fromBgThread);
+  
+  std::vector<Item*> getNextCandidatesPromotion(TierId tid,
+                                       PoolId pid,
+                                       ClassId cid,
+                                       unsigned int batch,
+                                       bool markMoving,
+                                       bool fromBgThread);
+
+  // 
+  // Common function in case move among tiers fails during eviction
+  // @param candidate that failed to move
+  // @param the corresponding put token
+  // @param if we are on the last tier
+  // @param if candidate is expired
+  // @param if we are using moving bit
+  //
+  // if insertOrReplace was called during move
+  // then candidate will not be accessible (failed replace during tryEvict)
+  //  - therefore this was why we failed to
+  //    evict to the next tier and insertOrReplace
+  //    will remove from NVM cache
+  // however, if candidate is accessible
+  // that means the allocation in the next
+  // tier failed - so we will continue to
+  // evict the item to NVM cache
+  bool handleFailedMove(Item* candidate, 
+                        typename NvmCacheT::PutToken& token, 
+                        bool isExpired,
+                        bool markMoving);
+
   // Try to move the item down to the next memory tier
   //
   // @param tid current tier ID of the item
@@ -1847,11 +1900,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle.
-  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
-
-  WriteHandle tryPromoteToNextMemoryTier(TierId tid, PoolId pid, Item& item, bool fromBgThread);
-
-  WriteHandle tryPromoteToNextMemoryTier(Item& item, bool fromBgThread);
+  WriteHandle tryEvictToNextMemoryTier(TierId tid, PoolId pid, Item& item);
 
   // Wakes up waiters if there are any
   //
@@ -1871,7 +1920,7 @@ class CacheAllocator : public CacheBase {
   //
   // @return valid handle to the item. This will be the last
   //         handle to the item. On failure an empty handle. 
-  WriteHandle tryEvictToNextMemoryTier(Item& item, bool fromBgThread);
+  WriteHandle tryEvictToNextMemoryTier(Item& item);
 
   // Deserializer CacheAllocatorMetadata and verify the version
   //
@@ -2024,235 +2073,22 @@ class CacheAllocator : public CacheBase {
     uint32_t currItems = mmContainer.size();
     if (currItems < batch) {
         batch = currItems/2;
-        if (batch < 5) {
+        if (batch < 2) {
           return 0;
         }
     }
-    size_t evictions = 0;
-    size_t evictionCandidates = 0;
-    std::vector<Item*> candidates;
-    std::vector<WriteHandle> candidates_hdl;
-    std::vector<Item*> candidates_with_alloc;
-    std::vector<WriteHandle> new_items_hdl;
-    std::vector<Item*> new_items;
-    std::vector<void*> new_allocs;
-    candidates.reserve(batch);
-    uint32_t tries = 0;
-
-    //try and get batch allocations in next tier, if we fail to get any
-    //then quit, else proceed with whatever we got
-    new_allocs = allocateInternalTierByCidBatch(tid+1, pid, cid, batch);
-    //uint32_t allocTries = 0;
-    //while (allocTries < batch*2 && new_allocs.size() < batch) {
-    //  void *new_alloc = allocateInternalTierByCid(tid+1, pid, cid);
-    //  if (new_alloc) {
-    //    new_allocs.push_back(new_alloc);
-    //  }
-    //  allocTries++;
-    //}
-    //if (new_allocs.size() < batch) {
-    //  if (new_allocs.size() == 0) {
-    //      return evictions;
-    //  }
-    //  batch = new_allocs.size();
-    //}
-    
-
-    mmContainer.withEvictionIterator([this, tid, pid, cid, &tries, &candidates_hdl,
-                                      &candidates, &batch, &mmContainer](auto &&itr) {
-      while (tries < batch*2 && candidates.size() < batch && itr) {
-        tries++;
-        Item* candidate = itr.get();
-        XDCHECK(candidate);
-        (*stats_.evictionAttempts)[tid][pid][cid].inc();
-
-        if (candidate->isChainedItem()) {
-          throw std::runtime_error("Not supported for chained items");
-        }
-        auto hdl = acquire(candidate);
-        if (hdl && hdl->getRefCount() == 1) {
-          mmContainer.remove(itr);
-          candidates_hdl.push_back(std::move(hdl));
-          candidates.push_back(candidate);
-        } else {
-          ++itr;
-        }
-      }
-    });
-
-    XDCHECK_EQ(candidates.size(),new_allocs.size());
-    if (candidates.size() < new_allocs.size()) {
-      throw std::runtime_error(
-        folly::sformat("Was not able get enough candidates, candidats {} and new allocs {}", candidates.size(), new_allocs.size()));
-      //need to release new items back to allocator
-      uint32_t erased = 0;
-      uint32_t toErase = new_allocs.size() - candidates.size();
-      //for (auto rit = new_allocs.rbegin(); rit != new_allocs.rend(); ++rit) {
-      for (int i = new_allocs.size()-1; i > 0; --i) {
-        allocator_[tid+1]->free(new_allocs[i]);
-        new_allocs.pop_back();
-        erased++;
-        if (erased == toErase) {
-         break;
-        }
-      }
-      if (candidates.size() == 0) {
-        return evictions;
-      }
-    }
-
-
-    for (auto index = 0U; index < candidates.size(); index++) {
-      WriteHandle newItemHdl = acquire(new (new_allocs[index]) 
-              Item(candidates[index]->getKey(), candidates[index]->getSize(),
-                   candidates[index]->getCreationTime(), candidates[index]->getExpiryTime()));
-      if (newItemHdl) {
-        newItemHdl.markNascent();
-        (*stats_.fragmentationSize)[tid][pid][cid].add(
-            util::getFragmentation(*this, *newItemHdl));
-        new_items.push_back(newItemHdl.getInternal());
-        new_items_hdl.push_back(std::move(newItemHdl));
-        candidates_with_alloc.push_back(candidates[index]);
-      } else {
-        XDCHECK(false);
-        throw std::runtime_error(
-           folly::sformat("Was not to acquire new alloc, failed alloc {}", new_allocs[index]));
-        //allocator_[tid+1]->free(new_allocs[index]);
-        //should clean up new alloc
-      }
-    }
-    auto& newMMContainer = getMMContainer(tid+1, pid, cid);
-    uint32_t added = newMMContainer.addBatch(new_items);
-    if (added != new_items.size()) {
-      throw std::runtime_error(
-        folly::sformat("Was not able to add all new items, failed item {} and handle {}", new_items[added]->toString(),new_items_hdl[added]->toString()));
-    }
-    for (auto index = 0U; index < candidates_with_alloc.size(); index++) {
-      bool moved = moveRegularItem(*candidates_with_alloc[index],
-                                    new_items_hdl[index],
-                                    true);
-      //auto ref = candidates_with_alloc[index]->unmarkMoving();
-      //XDCHECK_EQ(ref,0);
-      if (moved) {
-        evictions++;
-        XDCHECK(!candidates_with_alloc[index]->isMarkedForEviction());
-        XDCHECK(!candidates_with_alloc[index]->isMoving());
-        XDCHECK(!candidates_with_alloc[index]->isAccessible());
-        XDCHECK_EQ(candidates_with_alloc[index]->getKey(),new_items_hdl[index]->getKey());
-        (*stats_.numWritebacks)[tid][pid][cid].inc();
-        //wakeUpWaiters(*candidates_with_alloc[index], std::move(new_items_hdl[index]));
-      } else {
-        //item should be released by the handle destructor
-        //wakeUpWaiters(*candidates_with_alloc[index], {});
-      }
-
-      if (candidates_with_alloc[index]->hasChainedItem()) {
-        (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
-      } else {
-        (*stats_.regularItemEvictions)[tid][pid][cid].inc();
-      }
-
-      // it's safe to recycle the item here as there are no more
-      // references and the item could not been marked as moving
-      // by other thread since it's detached from MMContainer.
-      //auto res = releaseBackToAllocator(*candidates_with_alloc[index], RemoveContext::kEviction,
-      //                          /* isNascent */ false);
-      //XDCHECK(res == ReleaseRes::kReleased);
-    }
+    auto [candidates, toRecycles] = getNextCandidates(tid,pid,cid,batch,
+                                     !config_.useHandleForBgSync,true);
+    size_t evictions = candidates.size();
+    (*stats_.regularItemEvictions)[tid][pid][cid].add(evictions);
     return evictions;
   }
-
+  
   size_t traverseAndPromoteItems(unsigned int tid, unsigned int pid, unsigned int cid, size_t batch) {
     util::LatencyTracker tracker{stats().bgPromoteLatency_, batch};
-    auto& mmContainer = getMMContainer(tid, pid, cid);
-    size_t promotions = 0;
-    std::vector<Item*> candidates;
-    std::vector<Item*> candidates_with_alloc;
-    std::vector<WriteHandle> new_items_hdl;
-    std::vector<Item*> new_items;
-    candidates.reserve(batch);
-
-    mmContainer.withPromotionIterator([&candidates, &batch, &mmContainer, this](auto &&itr){
-      while (candidates.size() < batch && itr) {
-        Item* candidate = itr.get();
-        XDCHECK(candidate);
-
-        if (candidate->isChainedItem()) {
-          throw std::runtime_error("Not supported for chained items");
-        }
-
-        // TODO: only allow it for read-only items?
-        // or implement mvcc
-        if (candidate->markMoving()) {
-          // promotions should rarely fail since we already marked moving
-          mmContainer.remove(itr);
-          candidates.push_back(candidate);
-        } else {
-          ++itr;
-        }
-
-      }
-    });
-
-    for (Item *candidate : candidates) {
-      auto promoted = tryPromoteToNextMemoryTier(*candidate, true);
-      if (!promoted) {
-        // we failed to allocate a new item, this item is no  longer moving
-        // put back in mmContainer and wake up waiters
-	bool added = mmContainer.add(*candidate);
-        XDCHECK(added);
-        auto ref = candidate->unmarkMoving();
-        XDCHECK_NE(ref,0);
-	auto hdl = acquire(candidate);
-	wakeUpWaiters(*candidate,std::move(hdl));
-      } else {
-        candidates_with_alloc.push_back(candidate);
-        new_items.push_back(promoted.get()); //new handle
-        new_items_hdl.push_back(std::move(promoted));
-      }
-    }
-    //need an Item& for each handle
-    auto& newMMContainer = getMMContainer(tid-1, pid, cid);
-    int added = newMMContainer.addBatch(new_items);
-    if (added != new_items.size()) {
-      throw std::runtime_error(
-        folly::sformat("Was not able to add all new items promoter, failed item {} and handle {}", new_items[added]->toString(),new_items_hdl[added]->toString()));
-    }
-    
-    for (auto index = 0U; index < candidates_with_alloc.size(); index++) {
-      bool moved = moveRegularItem(*candidates_with_alloc[index],
-                                    new_items_hdl[index],
-                                    true);
-      auto ref = candidates_with_alloc[index]->unmarkMoving();
-      if (moved) {
-        promotions++;
-        XDCHECK(!candidates_with_alloc[index]->isMarkedForEviction());
-        XDCHECK(!candidates_with_alloc[index]->isMoving());
-        // it's safe to remove the item here as there are no more
-        // references and the item could not been marked as moving
-        // by other thread since it's detached from MMContainer.
-        //
-        // but we need to wake up waiters before releasing
-        // since candidate's key can change after being sent
-        // back to allocator
-        wakeUpWaiters(*candidates_with_alloc[index], std::move(new_items_hdl[index]));
-        const auto res =
-            releaseBackToAllocator(*candidates_with_alloc[index], RemoveContext::kNormal, false);
-        XDCHECK(res == ReleaseRes::kReleased);
-      } else {
-        newMMContainer.remove(*new_items[index]);
-        //case where we failed to replace in access
-        //container due to another thread calling insertOrReplace
-        //unmark moving and return null handle
-	wakeUpWaiters(*candidates_with_alloc[index],{});
-	if (UNLIKELY(ref == 0)) {
-            const auto res =
-              releaseBackToAllocator(*candidates_with_alloc[index], RemoveContext::kNormal, false);
-            XDCHECK(res == ReleaseRes::kReleased);
-        }
-      }
-    }
-    return promotions;
+    auto candidates = getNextCandidatesPromotion(tid,pid,cid,batch,
+                                     !config_.useHandleForBgSync,true);
+    return candidates.size();
   }
 
   // returns true if nvmcache is enabled and we should write this item to

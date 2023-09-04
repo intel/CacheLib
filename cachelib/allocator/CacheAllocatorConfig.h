@@ -313,6 +313,8 @@ class CacheAllocatorConfig {
 
   // Insert items to first free memory tier
   CacheAllocatorConfig& enableInsertToFirstFreeTier();
+  
+  CacheAllocatorConfig& enableUseHandleForBgSync();
 
   // Passes in a callback to initialize an event tracker when the allocator
   // starts
@@ -534,6 +536,10 @@ class CacheAllocatorConfig {
   // if turned on, insert new element to first free memory tier or evict memory
   // from the bottom one if memory cache is full
   bool insertToFirstFreeTier = false;
+  
+  // if false, we use the moving bit sync for background data movement 
+  // if true, we use item handle as sync for background data movement
+  bool useHandleForBgSync = false;
 
   // the number of tries to search for an item to evict
   // 0 means it's infinite
@@ -673,6 +679,12 @@ class CacheAllocatorConfig {
 template <typename T>
 CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enableInsertToFirstFreeTier() {
   insertToFirstFreeTier = true;
+  return *this;
+}
+
+template <typename T>
+CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enableUseHandleForBgSync() {
+  useHandleForBgSync = true;
   return *this;
 }
 
@@ -1256,6 +1268,7 @@ std::map<std::string, std::string> CacheAllocatorConfig<T>::serialize() const {
   configMap["delayCacheWorkersStart"] =
       delayCacheWorkersStart ? "true" : "false";
   configMap["insertToFirstFreeTier"] = std::to_string(insertToFirstFreeTier);
+  configMap["useHandleForBgSync"] = std::to_string(useHandleForBgSync);
   mergeWithPrefix(configMap, throttleConfig.serialize(), "throttleConfig");
   mergeWithPrefix(configMap,
                   chainedItemAccessConfig.serialize(),

@@ -41,7 +41,7 @@ class PromotionStrategy : public BackgroundMoverStrategy {
       XDCHECK(tid > 0);
       const auto& pool = cache.getPoolByTid(pid, tid-1);
       double usage = pool.getApproxUsage(cid);
-      if ((1+usage)*100 <= promotionAcWatermark)
+      if ((1-usage)*100 <= promotionAcWatermark)
         batches.push_back(0);
       else {
         auto maxPossibleItemsToPromote = static_cast<size_t>(
