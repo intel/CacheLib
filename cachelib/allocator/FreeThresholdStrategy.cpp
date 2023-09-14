@@ -40,13 +40,13 @@ std::vector<size_t> FreeThresholdStrategy::calculateBatchSizes(
       batches.push_back(0);
     }
     double usage = pool.getApproxUsage(cid);
-    if ((1-usage)*100 >= highEvictionAcWatermark) {
-      batches.push_back(0);
-    } else {
+    if ((1-usage)*100 < highEvictionAcWatermark && pool.allSlabsAllocated()) {
       auto toFreeMemPercent = highEvictionAcWatermark - (1-usage)*100;
       auto toFreeItems = static_cast<size_t>(
           toFreeMemPercent * (pool.getApproxSlabs(cid) * pool.getPerSlab(cid)) );
       batches.push_back(toFreeItems);
+    } else {
+      batches.push_back(0);
     }
   }
 
