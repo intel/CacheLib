@@ -51,6 +51,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, useCombinedLockForIterators);
   
   JSONSetVal(configJson, insertToFirstFreeTier);
+  JSONSetVal(configJson, noOnlineEviction);
   JSONSetVal(configJson, useHandleForBgSync);
 
   JSONSetVal(configJson, lru2qHotPct);
