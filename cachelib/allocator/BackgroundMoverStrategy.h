@@ -58,21 +58,5 @@ class DefaultBackgroundMoverStrategy : public BackgroundMoverStrategy {
     double targetFree_{0.05};
 };
 
-/*
-class KeepFreeBackgroundMoverStrategy : public BackgroundMoverStrategy {
-  std::vector<size_t> calculateBatchSizes(
-      const CacheBase& cache,
-      std::vector<MemoryDescriptorType> acVec) {
-    std::vector<size_t> batches{};
-    for (auto [tid, pid, cid] : acVec) {
-        auto stats = cache.getACStats(tid, pid, cid);
-        uint32_t toFree = stats.activeAllocsstats.freeAllocs
-        batches.push_back(100);
-    }
-    return batches;
-  }
-};
-*/
-
 } // namespace cachelib
 } // namespace facebook

@@ -80,50 +80,14 @@ struct MemoryDescriptorType {
     PoolId pid_;
     ClassId cid_;
 
-    bool operator<(const MemoryDescriptorType& rhs) {
-        if (this->tid_ < rhs.tid_) return true;
-        if (rhs.tid_ < this->tid_) return false;
-
-        if (this->pid_ < rhs.pid_) return true;
-        if (rhs.pid_ < this->pid_) return false;
-
-        if (this->cid_ < rhs.cid_) return true;
-        if (rhs.cid_ < this->cid_) return false;
-        return false;
+    bool operator<(const MemoryDescriptorType& rhs) const {
+      return std::make_tuple(tid_, pid_, cid_) < std::make_tuple(rhs.tid_, rhs.pid_, rhs.cid_);
     }
 
-    bool operator==(const MemoryDescriptorType& rhs) {
-        if (this->tid_ == rhs.tid_ && this->pid_ == rhs.pid_
-                && this->cid_ == rhs.cid_) {
-          return true;
-        } else {
-          return false;
-        }
+    bool operator==(const MemoryDescriptorType& rhs) const {
+      return std::make_tuple(tid_, pid_, cid_) == std::make_tuple(rhs.tid_, rhs.pid_, rhs.cid_);
     }
-
-    friend bool operator<(const MemoryDescriptorType& lhs, const MemoryDescriptorType& rhs);
-    friend bool operator==(const MemoryDescriptorType& lhs, const MemoryDescriptorType& rhs);
 };
-
-inline bool operator<(const MemoryDescriptorType& lhs, const MemoryDescriptorType& rhs) {
-  if (lhs.tid_ < rhs.tid_) return true;
-  if (rhs.tid_ < lhs.tid_) return false;
-
-  if (lhs.pid_ < rhs.pid_) return true;
-  if (rhs.pid_ < lhs.pid_) return false;
-
-  if (lhs.cid_ < rhs.cid_) return true;
-  if (rhs.cid_ < lhs.cid_) return false;
-  return false;
-}
-inline bool operator==(const MemoryDescriptorType& lhs, MemoryDescriptorType& rhs) {
-  if (lhs.tid_ == rhs.tid_ && lhs.pid_ == rhs.pid_
-          && lhs.cid_ == rhs.cid_) {
-    return true;
-  } else {
-    return false;
-  }
-}
 
 // A base class of cache exposing members and status agnostic of template type.
 class CacheBase {

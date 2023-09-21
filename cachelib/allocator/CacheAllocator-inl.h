@@ -437,66 +437,18 @@ std::vector<void*> CacheAllocator<CacheTrait>::allocateInternalTierByCidBatch(Ti
   if (memory.size() < batch) {
     uint64_t toEvict = batch - memory.size();
     auto evicted = findEvictionBatch(tid, pid, cid, toEvict);
-    if (evicted.size() == toEvict) {
+    if (evicted.size() < toEvict) {
+      (*stats_.allocFailures)[tid][pid][cid].add(toEvict - evicted.size());
+    }
+    if (evicted.size() > 0) {
+      //case where we some allocations from eviction - add them to
+      //the new allocations
       memory.insert(memory.end(),evicted.begin(),evicted.end());
       return memory;
-    } else {
-      if (memory.size() != 0) {
-        for (auto ptr : memory) {
-          allocator_[tid]->free(ptr);
-        }
-      }
-      if (evicted.size() != 0) {
-        for (auto ptr : evicted) {
-          allocator_[tid]->free(ptr);
-        }
-      }
     }
-    return std::vector<void*>{};
-  } else {
-    return memory;
   }
+  return memory;
 }
-
-template <typename CacheTrait>
-void* CacheAllocator<CacheTrait>::allocateInternalTierByCid(TierId tid,
-                                                 PoolId pid,
-                                                 ClassId cid) {
-  util::LatencyTracker tracker{stats().allocateLatency_};
-
-  SCOPE_FAIL { stats_.invalidAllocs.inc(); };
-
-  util::RollingLatencyTracker rollTracker{
-      (*stats_.classAllocLatency)[tid][pid][cid]};
-
-  (*stats_.allocAttempts)[tid][pid][cid].inc();
-  
-  void* memory = allocator_[tid]->allocateByCid(pid, cid);
-  
-  if (memory == nullptr) {
-    memory = findEviction(tid, pid, cid);
-  }
-
-  WriteHandle handle;
-  if (memory != nullptr) {
-    // At this point, we have a valid memory allocation that is ready for use.
-    // Ensure that when we abort from here under any circumstances, we free up
-    // the memory. Item's handle could throw because the key size was invalid
-    // for example.
-    SCOPE_FAIL {
-      // free back the memory to the allocator since we failed.
-      allocator_[tid]->free(memory);
-    };
-
-    return memory;
-
-  } else { // failed to allocate memory.
-    (*stats_.allocFailures)[tid][pid][cid].inc();
-  }
-
-  return nullptr;
-}
-
 
 template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::WriteHandle
@@ -1658,15 +1610,11 @@ CacheAllocator<CacheTrait>::getNextCandidatesPromotion(TierId tid,
   // first try and get allocations in the next tier
   blankAllocs = allocateInternalTierByCidBatch(tid-1,pid,cid,batch);
   if (blankAllocs.empty()) {
-      return candidates;  
-  } else if (blankAllocs.size() != batch) {
-      for (int i = 0; i < blankAllocs.size(); i++) {
-        allocator_[tid-1]->free(blankAllocs[i]);
-      }
-      return candidates;  
+    return candidates;  
+  } else if (blankAllocs.size() < batch) {
+    batch = blankAllocs.size();
   }
   XDCHECK_EQ(blankAllocs.size(),batch);
-  
 
   auto iterateAndMark = [this, tid, pid, cid, batch,
                          markMoving, maxSearchTries,
@@ -1772,18 +1720,17 @@ CacheAllocator<CacheTrait>::getNextCandidatesPromotion(TierId tid,
         auto ref = candidate->unmarkMoving();
         XDCHECK_EQ(ref,0);
         wakeUpWaiters(*candidate, std::move(newHandle));
-        if (fromBgThread) {
-          const auto res =
-              releaseBackToAllocator(*candidate, RemoveContext::kNormal, false);
-          XDCHECK(res == ReleaseRes::kReleased);
-        }
+        const auto res =
+            releaseBackToAllocator(*candidate, RemoveContext::kNormal, false);
+        XDCHECK(res == ReleaseRes::kReleased);
       }
     } else {
-      removeFromMMContainer(*newAllocs[i]);
       typename NvmCacheT::PutToken token{};
+      
+      removeFromMMContainer(*newAllocs[i]);
       auto ret = handleFailedMove(candidate,token,false,markMoving);
       XDCHECK(ret);
-      if (fromBgThread && markMoving && candidate->getRefCountAndFlagsRaw() == 0) {
+      if (markMoving && candidate->getRefCountAndFlagsRaw() == 0) {
         const auto res =
             releaseBackToAllocator(*candidate, RemoveContext::kNormal, false);
         XDCHECK(res == ReleaseRes::kReleased);
@@ -1821,12 +1768,9 @@ CacheAllocator<CacheTrait>::getNextCandidates(TierId tid,
   if (!lastTier) {
     blankAllocs = allocateInternalTierByCidBatch(tid+1,pid,cid,batch);
     if (blankAllocs.empty()) {
-        return {candidates,toRecycles};  
+      return {candidates,toRecycles};  
     } else if (blankAllocs.size() != batch) {
-        for (int i = 0; i < blankAllocs.size(); i++) {
-          allocator_[tid+1]->free(blankAllocs[i]);
-        }
-        return {candidates,toRecycles};  
+      batch = blankAllocs.size(); 
     }
     XDCHECK_EQ(blankAllocs.size(),batch);
   }
@@ -1935,10 +1879,12 @@ CacheAllocator<CacheTrait>::getNextCandidates(TierId tid,
   mmContainer.withEvictionIterator(iterateAndMark);
 
   if (candidates.size() < batch) {
-    unsigned int toErase = batch - candidates.size();
-    for (int i = 0; i < toErase; i++) {
-      allocator_[tid+1]->free(blankAllocs.back());
-      blankAllocs.pop_back();
+    if (!lastTier) {
+      unsigned int toErase = batch - candidates.size();
+      for (int i = 0; i < toErase; i++) {
+        allocator_[tid+1]->free(blankAllocs.back());
+        blankAllocs.pop_back();
+      }
     }
     if (candidates.size() == 0) {
       return {candidates,toRecycles};  
@@ -1993,8 +1939,8 @@ CacheAllocator<CacheTrait>::getNextCandidates(TierId tid,
           }
         }
       } else {
-        removeFromMMContainer(*newAllocs[i]);
         typename NvmCacheT::PutToken token = std::move(tokens[i]);
+        removeFromMMContainer(*newAllocs[i]);
         auto ret = handleFailedMove(candidate,token,isExpireds[i],markMoving);
         XDCHECK(ret);
         if (fromBgThread && markMoving) {
