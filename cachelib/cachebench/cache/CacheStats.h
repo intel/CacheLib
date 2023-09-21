@@ -117,9 +117,11 @@ struct Stats {
   // what to populate since not all of those are interesting when running
   // cachebench.
   std::unordered_map<std::string, double> nvmCounters;
+  
+  using ClassBgStatsType = std::map<MemoryDescriptorType,uint64_t>;
 
-  std::map<MemoryDescriptorType, uint64_t> backgroundEvictionClasses;
-  std::map<MemoryDescriptorType, uint64_t> backgroundPromotionClasses;
+  ClassBgStatsType backgroundEvictionClasses;
+  ClassBgStatsType backgroundPromotionClasses;
 
   // errors from the nvm engine.
   std::unordered_map<std::string, double> nvmErrors;

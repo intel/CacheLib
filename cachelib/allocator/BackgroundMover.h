@@ -53,6 +53,7 @@ enum class MoverDir { Evict = 0, Promote };
 template <typename CacheT>
 class BackgroundMover : public PeriodicWorker {
  public:
+  using ClassBgStatsType = std::map<MemoryDescriptorType,uint64_t>;
   using Cache = CacheT;
   // @param cache               the cache interface
   // @param strategy            the stragey class that defines how objects are
@@ -65,13 +66,13 @@ class BackgroundMover : public PeriodicWorker {
   ~BackgroundMover() override;
 
   BackgroundMoverStats getStats() const noexcept;
-  std::map<MemoryDescriptorType,uint64_t> getClassStats() const noexcept;
+  ClassBgStatsType getClassStats() const noexcept;
 
   void setAssignedMemory(
       std::vector<MemoryDescriptorType>&& assignedMemory);
 
  private:
-  std::map<MemoryDescriptorType,uint64_t> moves_per_class_;
+  ClassBgStatsType moves_per_class_;
 
   struct TraversalStats {
     // record a traversal and its time taken

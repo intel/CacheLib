@@ -220,7 +220,7 @@ class CacheAllocator : public CacheBase {
   using PoolIds = std::set<PoolId>;
 
   using EventTracker = EventInterface<Key>;
-
+  using ClassBgStatsType = std::map<MemoryDescriptorType,uint64_t>;
   // SampleItem is a wrapper for the CacheItem which is provided as the sample
   // for uploading to Scuba (see ItemStatsExporter). It is guaranteed that the
   // CacheItem is accessible as long as the SampleItem is around since the
@@ -1183,9 +1183,9 @@ class CacheAllocator : public CacheBase {
     return stats;
   }
 
-  std::map<MemoryDescriptorType,uint64_t>
+  ClassBgStatsType
   getBackgroundMoverClassStats(MoverDir direction) const {
-    std::map<MemoryDescriptorType,uint64_t> stats;
+    ClassBgStatsType stats;
     auto record = [&](auto &bg) {
       //gives a unique descriptor
       auto classStats = bg->getClassStats();
