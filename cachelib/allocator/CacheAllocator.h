@@ -316,7 +316,7 @@ class CacheAllocator : public CacheBase {
     // the pool that this item is/was
     PoolId pool;
   };
-
+ 
   // call back to execute when moving an item, this could be a simple memcpy
   // or something more complex.
   // An optional parentItem pointer is provided if the item being moved is a
@@ -351,6 +351,38 @@ class CacheAllocator : public CacheBase {
     virtual bool isValid() const { return true; }
   };
   using ChainedItemMovingSync = std::function<std::unique_ptr<SyncObj>(Key)>;
+  
+  // Eviction related data returned from
+  // function executed under mmContainer lock
+  struct EvictionData {
+    EvictionData() = delete;
+    EvictionData(Item *candidate_, 
+                 Item *toRecycle_,
+                 Item *toRecycleParent_,
+                 bool chainedItem_,
+                 bool expired_,
+                 typename NvmCacheT::PutToken token_,
+                 WriteHandle candidateHandle_) :
+                 candidate(candidate_),
+                 toRecycle(toRecycle_),
+                 toRecycleParent(toRecycleParent_),
+                 expired(expired_),
+                 chainedItem(chainedItem_),
+                 token(std::move(token_)),
+                 candidateHandle(std::move(candidateHandle_)) {}
+
+    // item that is candidate for eviction
+    Item *candidate;
+    // acutal alloc that will be recycled
+    // back up to allocator
+    Item *toRecycle;
+    // possible parent ref
+    Item *toRecycleParent;
+    bool expired; //is item expired
+    bool chainedItem; //is it a chained item
+    typename NvmCacheT::PutToken token; //put token for NVM cache
+    WriteHandle candidateHandle; //hande in case we don't use moving bit
+  };
 
   using AccessContainer = typename Item::AccessContainer;
   using MMContainer = typename Item::MMContainer;
@@ -1856,12 +1888,12 @@ class CacheAllocator : public CacheBase {
 
   // similiar to the above method but returns a batch of evicted items
   // as a pair of vectors
-  std::pair<std::vector<Item*>, std::vector<Item*>> getNextCandidates(TierId tid,
-                                                                      PoolId pid,
-                                                                      ClassId cid,
-                                                                      unsigned int batch,
-                                                                      bool markMoving,
-                                                                      bool fromBgThread);
+  std::vector<EvictionData> getNextCandidates(TierId tid,
+                                              PoolId pid,
+                                              ClassId cid,
+                                              unsigned int batch,
+                                              bool markMoving,
+                                              bool fromBgThread);
   
   std::vector<Item*> getNextCandidatesPromotion(TierId tid,
                                        PoolId pid,
@@ -2077,9 +2109,9 @@ class CacheAllocator : public CacheBase {
           return 0;
         }
     }
-    auto [candidates, toRecycles] = getNextCandidates(tid,pid,cid,batch,
+    auto evictionData = getNextCandidates(tid,pid,cid,batch,
                                      !config_.useHandleForBgSync,true);
-    size_t evictions = candidates.size();
+    size_t evictions = evictionData.size();
     (*stats_.regularItemEvictions)[tid][pid][cid].add(evictions);
     return evictions;
   }
