@@ -1706,7 +1706,7 @@ CacheAllocator<CacheTrait>::getNextCandidatesPromotion(TierId tid,
   }
   //2. add in batch to mmContainer
   auto& newMMContainer = getMMContainer(tid-1, pid, cid);
-  uint32_t added = newMMContainer.addBatch(newAllocs);
+  uint32_t added = newMMContainer.addBatch(newAllocs.begin(), newAllocs.end());
   XDCHECK_EQ(added,newAllocs.size());
   if (added != newAllocs.size()) {
     throw std::runtime_error(
@@ -1909,7 +1909,7 @@ CacheAllocator<CacheTrait>::getNextCandidates(TierId tid,
     }
     //2. add in batch to mmContainer
     auto& newMMContainer = getMMContainer(tid+1, pid, cid);
-    uint32_t added = newMMContainer.addBatch(newAllocs);
+    uint32_t added = newMMContainer.addBatch(newAllocs.begin(), newAllocs.end());
     XDCHECK_EQ(added,newAllocs.size());
     if (added != newAllocs.size()) {
       throw std::runtime_error(

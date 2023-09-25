@@ -339,6 +339,9 @@ class MMLru {
     //          if the node was already in the contianer. On error state of node
     //          is unchanged.
     bool add(T& node) noexcept;
+
+    // helper function to add the node under the container lock
+    void addNodeLocked(T& node, const Time& currTime);
     
     // adds the given nodes into the container and marks each as being present in
     // the container. The nodes are added to the head of the lru.
@@ -346,7 +349,8 @@ class MMLru {
     // @param vector of nodes  The nodes to be added to the container.
     // @return  number of nodes added - it is up to user to verify all
     //          expected nodes have been added.
-    uint32_t addBatch(std::vector<T*>& nodes) noexcept;
+    template <typename It>
+    uint32_t addBatch(It begin, It end) noexcept;
 
     // removes the node from the lru and sets it previous and next to nullptr.
     //

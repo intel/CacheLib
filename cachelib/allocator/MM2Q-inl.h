@@ -227,21 +227,42 @@ bool MM2Q::Container<T, HookPtr>::add(T& node) noexcept {
     if (node.isInMMContainer()) {
       return false;
     }
-
-    markHot(node);
-    unmarkCold(node);
-    unmarkTail(node);
-    lru_.getList(LruType::Hot).linkAtHead(node);
-    rebalance();
-
-    node.markInMMContainer();
-    setUpdateTime(node, currTime);
+    addNodeLocked(node, currTime);
     return true;
   });
 }
+
+// adds the node to the list assuming not in 
+// container and holding container lock
 template <typename T, MM2Q::Hook<T> T::*HookPtr>
-bool MM2Q::Container<T, HookPtr>::addBatch(std::vector<T*>& nodes) noexcept {
-    return false;
+void MM2Q::Container<T, HookPtr>::addNodeLocked(T& node, const Time& currTime) {
+  XDCHECK(!node.isInMMContainer());
+  markHot(node);
+  unmarkCold(node);
+  unmarkTail(node);
+  lru_.getList(LruType::Hot).linkAtHead(node);
+  rebalance();
+
+  node.markInMMContainer();
+  setUpdateTime(node, currTime);
+}
+
+template <typename T, MM2Q::Hook<T> T::*HookPtr>
+template <typename It>
+uint32_t MM2Q::Container<T, HookPtr>::addBatch(It begin, It end) noexcept {
+  const auto currTime = static_cast<Time>(util::getCurrentTimeSec());
+  return lruMutex_->lock_combine([this, begin, end, currTime]() {
+    uint32_t i = 0;
+    for (auto itr = begin; itr != end; itr++) {
+      T* node = *itr;
+      if (node->isInMMContainer()) {
+        return i;
+      }
+      addNodeLocked(*node,currTime);
+      i++;
+    }
+    return i;
+  });
 }
 
 template <typename T, MM2Q::Hook<T> T::*HookPtr>

@@ -193,42 +193,41 @@ void MMLru::Container<T, HookPtr>::updateLruInsertionPoint() noexcept {
 template <typename T, MMLru::Hook<T> T::*HookPtr>
 bool MMLru::Container<T, HookPtr>::add(T& node) noexcept {
   const auto currTime = static_cast<Time>(util::getCurrentTimeSec());
-
   return lruMutex_->lock_combine([this, &node, currTime]() {
     if (node.isInMMContainer()) {
       return false;
     }
-    if (config_.lruInsertionPointSpec == 0 || insertionPoint_ == nullptr) {
-      lru_.linkAtHead(node);
-    } else {
-      lru_.insertBefore(*insertionPoint_, node);
-    }
-    node.markInMMContainer();
-    setUpdateTime(node, currTime);
-    unmarkAccessed(node);
-    updateLruInsertionPoint();
+    addNodeLocked(node,currTime);
     return true;
   });
 }
 
 template <typename T, MMLru::Hook<T> T::*HookPtr>
-uint32_t MMLru::Container<T, HookPtr>::addBatch(std::vector<T*>& nodes) noexcept {
+void MMLru::Container<T, HookPtr>::addNodeLocked(T& node, const Time& currTime) {
+  XDCHECK(!node.isInMMContainer());
+  if (config_.lruInsertionPointSpec == 0 || insertionPoint_ == nullptr) {
+    lru_.linkAtHead(node);
+  } else {
+    lru_.insertBefore(*insertionPoint_, node);
+  }
+  node.markInMMContainer();
+  setUpdateTime(node, currTime);
+  unmarkAccessed(node);
+  updateLruInsertionPoint();
+}
+
+template <typename T, MMLru::Hook<T> T::*HookPtr>
+template <typename It>
+uint32_t MMLru::Container<T, HookPtr>::addBatch(It begin, It end) noexcept {
   const auto currTime = static_cast<Time>(util::getCurrentTimeSec());
-  return lruMutex_->lock_combine([this, &nodes, currTime]() {
+  return lruMutex_->lock_combine([this, begin, end, currTime]() {
     uint32_t i = 0;
-    for (auto node : nodes) {
+    for (auto itr = begin; itr != end; itr++) {
+      T* node = *itr;
       if (node->isInMMContainer()) {
         return i;
       }
-      if (config_.lruInsertionPointSpec == 0 || insertionPoint_ == nullptr) {
-        lru_.linkAtHead(*node);
-      } else {
-        lru_.insertBefore(*insertionPoint_, *node);
-      }
-      node->markInMMContainer();
-      setUpdateTime(*node, currTime);
-      unmarkAccessed(*node);
-      updateLruInsertionPoint();
+      addNodeLocked(*node,currTime);
       i++;
     }
     return i;
