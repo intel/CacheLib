@@ -122,9 +122,21 @@ struct CacheStat {
   // number of evictions from this class id that was of a chained item
   uint64_t chainedItemEvictions{0};
 
-  // number of regular items that were evicted from this classId
-  uint64_t regularItemEvictions{0};
+  // number of batch submissions via DML hardware interface for eviction
+  uint64_t evictDmlBatchSubmits{0};
 
+  // number of DSA batch fails via DML hardware interface for eviction
+  uint64_t evictDmlBatchFails{0};
+
+  // number of batch submissions via DML hardware interface for promotion
+  uint64_t promoteDmlBatchSubmits{0};
+
+  // number of DSA batch fails via DML hardware interface for promotion
+  uint64_t promoteDmlBatchFails{0};
+
+  // number of regular items that were evicted from this classId
+
+  uint64_t regularItemEvictions{0};
   // number of items that are moved to next tier
   uint64_t numWritebacks{0};
 
@@ -489,6 +501,18 @@ struct GlobalCacheStats {
   // number of failures to allocate an item due to internal error
   std::vector<uint64_t> allocFailures;
 
+  // number of dsa hardware evictions batch submits across all the pools in the cache.
+  std::vector<uint64_t> evictDmlBatchSubmits;
+
+  // number of dsa software evictions batch submits across all the pools in the cache.
+  std::vector<uint64_t> evictDmlBatchFails;
+
+  // number of dsa hardware evictions individual submits across all the pools in the cache.
+  std::vector<uint64_t> promoteDmlBatchSubmits;
+
+  // number of dsa software evictions individual submits across all the pools in the cache.
+  std::vector<uint64_t> promoteDmlBatchFails;
+
   // number of evictions across all the pools in the cache.
   std::vector<uint64_t> numEvictions;
 
@@ -528,7 +552,11 @@ struct GlobalCacheStats {
   // latency and percentile stats of various cachelib operations
   util::PercentileStats::Estimates allocateLatencyNs{};
   util::PercentileStats::Estimates bgEvictLatencyNs{};
+  util::PercentileStats::Estimates evictDmlLargeItemWaitLatencyNs{};
+  util::PercentileStats::Estimates evictDmlSmallItemWaitLatencyNs{};
   util::PercentileStats::Estimates bgPromoteLatencyNs{};
+  util::PercentileStats::Estimates promoteDmlLargeItemWaitLatencyNs{};
+  util::PercentileStats::Estimates promoteDmlSmallItemWaitLatencyNs{};
   util::PercentileStats::Estimates moveChainedLatencyNs{};
   util::PercentileStats::Estimates moveRegularLatencyNs{};
   util::PercentileStats::Estimates nvmLookupLatencyNs{};

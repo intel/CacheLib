@@ -61,7 +61,7 @@ class BackgroundMover : public PeriodicWorker {
   //                            (promoted vs. evicted and how much)
   BackgroundMover(Cache& cache,
                   std::shared_ptr<BackgroundMoverStrategy> strategy,
-                  MoverDir direction_);
+                  MoverDir direction);
 
   ~BackgroundMover() override;
 
@@ -102,9 +102,7 @@ class BackgroundMover : public PeriodicWorker {
   std::shared_ptr<BackgroundMoverStrategy> strategy_;
   MoverDir direction_;
 
-  std::function<size_t(
-      Cache&, unsigned int, unsigned int, unsigned int, size_t)>
-      moverFunc;
+  std::function<size_t(Cache&, unsigned int, unsigned int, unsigned int, size_t)> moverFunc;
 
   // implements the actual logic of running the background evictor
   void work() override final;

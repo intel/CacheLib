@@ -17,6 +17,7 @@
 #pragma once
 
 #include <folly/Random.h>
+#include <dml/dml.hpp>
 
 namespace facebook {
 namespace cachelib {
@@ -1384,9 +1385,255 @@ size_t CacheAllocator<CacheTrait>::wakeUpWaitersLocked(folly::StringPiece key,
   return 0;
 }
 
+static std::string dmlErrStr(dml::batch_result& result) {
+  std::string error;
+  switch (result.status) {
+    case dml::status_code::false_predicate:
+      /* Operation completed successfully, but result is unexpected */
+      error = "false predicate";
+      break;
+    case dml::status_code::partial_completion:
+      /* Operation was partially completed */
+      error = "partial complte";
+      break;
+    case dml::status_code::nullptr_error:
+      /* One of data pointers is NULL */
+      error = "nullptr";
+      break;
+    case dml::status_code::bad_size:
+      /* Invalid byte size was specified */
+      error = "bad size";
+      break;
+    case dml::status_code::bad_length:
+      /* Invalid number of elements was specified */
+      error = "bad length";
+      break;
+    case dml::status_code::inconsistent_size:
+      /* Input data sizes are different */
+      error = "inconsistent size";
+      break;
+    case dml::status_code::dualcast_bad_padding:
+      /* Bits 11:0 of the two destination addresses are not the same */
+      error = "dualcast bad padding";
+      break;
+    case dml::status_code::bad_alignment:
+      /* One of data pointers has invalid alignment */
+      error = "bad align";
+      break;
+    case dml::status_code::buffers_overlapping:
+      /* Buffers overlap with each other */
+      error = "buf overlap";
+      break;
+    case dml::status_code::delta_bad_size:
+      /* Invalid delta record size was specified */
+      error = "delta bad size";
+      break;
+    case dml::status_code::delta_delta_empty:
+      /* Delta record is empty */
+      error = "delta emptry";
+      break;
+    case dml::status_code::batch_overflow:
+      /* Batch is full */
+      error = "batch overflow";
+      break;
+    case dml::status_code::execution_failed:
+      /* Unknown execution error */
+      error = "unknown exec";
+      break;
+    case dml::status_code::unsupported_operation:
+      /* Unknown execution error */
+      error = "unsupported op";
+      break;
+    case dml::status_code::queue_busy:
+      /* Enqueue failed to one or several queues */
+      error = "busy";
+      break;
+    case dml::status_code::error:
+      /* Internal library error occurred */
+      error = "internal";
+      break;
+    case dml::status_code::ok:
+      /* should not be here */
+      error = "ok";
+      break;
+    default:
+      error = "none of the above - okay!!";
+      break;
+  }
+  return error + " batch copy error";
+}
+
+static std::string dmlErrStr(dml::mem_copy_result& result) {
+  std::string error;
+  switch (result.status) {
+    case dml::status_code::false_predicate:
+      /* Operation completed successfully: but result is unexpected */
+      error = "false pred";
+      break;
+    case dml::status_code::partial_completion:
+      /* Operation was partially completed */
+      error = "partial complte";
+      break;
+    case dml::status_code::nullptr_error:
+      /* One of data pointers is NULL */
+      error = "nullptr";
+      break;
+    case dml::status_code::bad_size:
+      /* Invalid byte size was specified */
+      error = "bad size";
+      break;
+    case dml::status_code::bad_length:
+      /* Invalid number of elements was specified */
+      error = "bad len";
+      break;
+    case dml::status_code::inconsistent_size:
+      /* Input data sizes are different */
+      error = "inconsis size";
+      break;
+    case dml::status_code::dualcast_bad_padding:
+      /* Bits 11:0 of the two destination addresses are not the same */
+      error = "dualcast bad padding";
+      break;
+    case dml::status_code::bad_alignment:
+      /* One of data pointers has invalid alignment */
+      error = "bad align";
+      break;
+    case dml::status_code::buffers_overlapping:
+      /* Buffers overlap with each other */
+      error = "buf overlap";
+      break;
+    case dml::status_code::delta_bad_size:
+      /* Invalid delta record size was specified */
+      error = "delta bad size";
+      break;
+    case dml::status_code::delta_delta_empty:
+      /* Delta record is empty */
+      error = "delta emptry";
+      break;
+    case dml::status_code::batch_overflow:
+      /* Batch is full */
+      error = "batch overflow";
+      break;
+    case dml::status_code::execution_failed:
+      /* Unknown execution error */
+      error = "unknw exec";
+      break;
+    case dml::status_code::unsupported_operation:
+      /* Unknown execution error */
+      error = "unsupported op";
+      break;
+    case dml::status_code::queue_busy:
+      /* Enqueue failed to one or several queues */
+      error = "busy";
+      break;
+    case dml::status_code::error:
+      /* Internal library error occurred */
+      error = "internal";
+      break;
+    case dml::status_code::ok:
+      /* should not be here */
+      error = "ok";
+      break;
+    default:
+      error = "none of the above - okay!!";
+      break;
+  }
+  return error + " mem copy error";
+}
+
+using allocator_t = std::allocator<dml::byte_t>;
+using batch_handler_t = dml::handler<dml::batch_operation, allocator_t>;
+
 template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::moveRegularItem(
-    Item& oldItem, WriteHandle& newItemHdl, bool skipAddInMMContainer, bool fromBgThread) {
+void CacheAllocator<CacheTrait>::evictRegularItems(TierId tid, PoolId pid, ClassId cid,
+                                                   std::vector<EvictionData>& evictionData,
+                                                   std::vector<WriteHandle>& newItemHdls,
+                                                   bool skipAddInMMContainer,
+                                                   bool fromBgThread,
+                                                   std::vector<bool>& moved) {
+  /* Split batch for DSA-based move */
+  const auto& pool = allocator_[tid]->getPool(pid);
+  const auto& allocSizes = pool.getAllocSizes();
+  auto isLarge = allocSizes[cid] >= config_.largeItemMinSize;
+  auto dmlBatchRatio = isLarge ? config_.largeItemBatchEvictDsaUsageFraction :
+                                 config_.smallItemBatchEvictDsaUsageFraction;
+  size_t dmlBatchSize =
+      (config_.dsaEnabled && evictionData.size() >= config_.minBatchSizeForDsaUsage) ?
+                    static_cast<size_t>(evictionData.size() * dmlBatchRatio) : 0;
+  auto sequence = dml::sequence<allocator_t>(dmlBatchSize);
+  batch_handler_t handler{};
+
+  /* Move a calculated portion of the batch using DSA (if enabled) */
+  for (auto i = 0U; i < dmlBatchSize; i++) {
+    XDCHECK(!evictionData[i].candidate->isExpired());
+    XDCHECK_EQ(newItemHdls[i]->getSize(), evictionData[i].candidate->getSize());
+    if (evictionData[i].candidate->isNvmClean()) {
+      newItemHdls[i]->markNvmClean();
+    }
+    dml::const_data_view srcView = dml::make_view(
+          reinterpret_cast<uint8_t*>(evictionData[i].candidate->getMemory()),
+          evictionData[i].candidate->getSize());
+    dml::data_view dstView = dml::make_view(
+          reinterpret_cast<uint8_t*>(newItemHdls[i]->getMemory()),
+          newItemHdls[i]->getSize());
+    if (sequence.add(dml::mem_copy, srcView, dstView) != dml::status_code::ok) {
+      throw std::runtime_error(folly::sformat(
+          "failed to add dml::mem_copy operation to the sequence for item: {}",
+          evictionData[i].candidate->toString()));
+    }
+  }
+  if (dmlBatchSize) {
+    handler = dml::submit<dml::hardware>(dml::batch, sequence);
+    if (!handler.valid()) {
+      auto status = handler.get();
+      XDCHECK(handler.valid()) << dmlErrStr(status);
+      throw std::runtime_error(folly::sformat(
+          "Failed dml sequence hw submission: {}", dmlErrStr(status)));
+    }
+    (*stats_.evictDmlBatchSubmits)[tid][pid][cid].inc();
+  }
+
+  /* Move the remaining batch using CPU memmove */
+  for (auto i = dmlBatchSize; i < evictionData.size(); i++) {
+    moved[i] = moveRegularItem(*evictionData[i].candidate, newItemHdls[i],
+                                         skipAddInMMContainer, fromBgThread);
+  }
+
+  /* If DSA batch move not in use */
+  if (!dmlBatchSize) {
+    return;
+  }
+
+  /* Complete the DSA based batch move */
+  dml::batch_result result{};
+  {
+    size_t largeBatch = isLarge ? dmlBatchSize : 0;
+    size_t smallBatch = dmlBatchSize - largeBatch;
+    util::LatencyTracker largeItemWait{stats().evictDmlLargeItemWaitLatency_, largeBatch};
+    util::LatencyTracker smallItemWait{stats().evictDmlSmallItemWaitLatency_, smallBatch};
+    result = handler.get();
+  }
+  if (result.status != dml::status_code::ok) {
+    /* Re-try using CPU memmove */
+    for (auto i = 0U; i < dmlBatchSize; i++) {
+      moved[i] = moveRegularItem(*evictionData[i].candidate, newItemHdls[i],
+                                         skipAddInMMContainer, fromBgThread);
+    }
+    (*stats_.evictDmlBatchFails)[tid][pid][cid].inc();
+    return;
+  }
+
+  /* Complete book keeping for items moved successfully via DSA based batch move */
+  for (auto i = 0U; i < dmlBatchSize; i++) {
+    moved[i] = moveRegularItemBookKeeper(*evictionData[i].candidate, newItemHdls[i]);
+  }
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::moveRegularItem(Item& oldItem,
+                                                 WriteHandle& newItemHdl,
+                                                 bool skipAddInMMContainer,
+                                                 bool fromBgThread) {
   XDCHECK(!oldItem.isExpired());
   // TODO: should we introduce new latency tracker. E.g. evictRegularLatency_
   // ??? util::LatencyTracker tracker{stats_.evictRegularLatency_};
@@ -1446,14 +1693,17 @@ bool CacheAllocator<CacheTrait>::moveRegularItem(
     XDCHECK(!oldItem.hasChainedItem());
     XDCHECK(newItemHdl->hasChainedItem());
   }
-  
+  return moveRegularItemBookKeeper(oldItem, newItemHdl);
+}
+
+template <typename CacheTrait>
+bool CacheAllocator<CacheTrait>::moveRegularItemBookKeeper(
+                                Item& oldItem, WriteHandle& newItemHdl) {
   auto predicate = [&](const Item& item){
     // we rely on moving flag being set (it should block all readers)
     return true;
   };
-
-  auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl,
-                                   predicate);
+  auto replaced = accessContainer_->replaceIf(oldItem, *newItemHdl, predicate);
   // another thread may have called insertOrReplace which could have
   // marked this item as unaccessible causing the replaceIf
   // in the access container to fail - in this case we want
@@ -1916,12 +2166,15 @@ CacheAllocator<CacheTrait>::getNextCandidates(TierId tid,
         folly::sformat("Was not able to add all new items, failed item {} and handle {}", 
                         newAllocs[added]->toString(),newHandles[added]->toString()));
     }
+
     //3. copy item data - don't need to add in mmContainer
+    std::vector<bool> moved(evictionData.size());
+    evictRegularItems(tid, pid, cid, evictionData, newHandles, true, true, moved);
+
     for (int i = 0; i < evictionData.size(); i++) {
       Item *candidate = evictionData[i].candidate;
       WriteHandle newHandle = std::move(newHandles[i]);
-      bool moved = moveRegularItem(*candidate,newHandle, true, true);
-      if (moved) {
+      if (moved[i]) {
         (*stats_.numWritebacks)[tid][pid][cid].inc();
         XDCHECK(candidate->getKey() == newHandle->getKey());
         if (markMoving) {
@@ -3310,6 +3563,8 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
     for (const ClassId cid : classIds) {
       uint64_t allocAttempts = 0, evictionAttempts = 0, allocFailures = 0,
                fragmentationSize = 0, classHits = 0, chainedItemEvictions = 0,
+               evictDmlBatchSubmits = 0, evictDmlBatchFails = 0,
+               promoteDmlBatchSubmits = 0, promoteDmlBatchFails = 0,
                regularItemEvictions = 0, numWritebacks = 0;
       MMContainerStat mmContainerStats;
       for (TierId tid = 0; tid < getNumTiers(); tid++) {
@@ -3319,6 +3574,10 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
         fragmentationSize += (*stats_.fragmentationSize)[tid][poolId][cid].get();
         classHits += (*stats_.cacheHits)[tid][poolId][cid].get();
         chainedItemEvictions += (*stats_.chainedItemEvictions)[tid][poolId][cid].get();
+        evictDmlBatchSubmits += (*stats_.evictDmlBatchSubmits)[tid][poolId][cid].get();
+        evictDmlBatchFails += (*stats_.evictDmlBatchFails)[tid][poolId][cid].get();
+        promoteDmlBatchSubmits += (*stats_.promoteDmlBatchSubmits)[tid][poolId][cid].get();
+        promoteDmlBatchFails += (*stats_.promoteDmlBatchFails)[tid][poolId][cid].get();
         regularItemEvictions += (*stats_.regularItemEvictions)[tid][poolId][cid].get();
         numWritebacks += (*stats_.numWritebacks)[tid][poolId][cid].get();
         mmContainerStats += getMMContainerStat(tid, poolId, cid);
@@ -3334,6 +3593,10 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(PoolId poolId) const {
             fragmentationSize,
             classHits,
             chainedItemEvictions,
+            evictDmlBatchSubmits,
+            evictDmlBatchFails,
+            promoteDmlBatchSubmits,
+            promoteDmlBatchFails,
             regularItemEvictions,
             numWritebacks,
             mmContainerStats}});
@@ -3388,6 +3651,10 @@ PoolStats CacheAllocator<CacheTrait>::getPoolStats(TierId tid, PoolId poolId) co
             (*stats_.fragmentationSize)[tid][poolId][cid].get(),
             classHits,
             (*stats_.chainedItemEvictions)[tid][poolId][cid].get(),
+            (*stats_.evictDmlBatchSubmits)[tid][poolId][cid].get(),
+            (*stats_.evictDmlBatchFails)[tid][poolId][cid].get(),
+            (*stats_.promoteDmlBatchSubmits)[tid][poolId][cid].get(),
+            (*stats_.promoteDmlBatchFails)[tid][poolId][cid].get(),
             (*stats_.regularItemEvictions)[tid][poolId][cid].get(),
             (*stats_.numWritebacks)[tid][poolId][cid].get(),
             getMMContainerStat(tid, poolId, cid)}});
@@ -4725,7 +4992,8 @@ bool CacheAllocator<CacheTrait>::startNewBackgroundEvictor(
   }
 
   for (size_t i = 0; i < threads; i++) {
-    auto ret = startNewWorker("BackgroundEvictor" + std::to_string(i), backgroundEvictor_[i], interval, *this, strategy, MoverDir::Evict);
+    auto ret = startNewWorker("BackgroundEvictor" + std::to_string(i), backgroundEvictor_[i],
+                              interval, *this, strategy, MoverDir::Evict);
     result = result && ret;
     if (result) {
       uint32_t tid = i % getNumTiers();

@@ -33,6 +33,11 @@ struct Stats {
   std::vector<BackgroundMoverStats> backgroundPromoStats;
   ReaperStats reaperStats;
 
+  std::vector<uint64_t> evictDmlBatchSubmits;
+  std::vector<uint64_t> evictDmlBatchFails;
+  std::vector<uint64_t> promoteDmlBatchSubmits;
+  std::vector<uint64_t> promoteDmlBatchFails;
+
   std::vector<uint64_t> numEvictions;
   std::vector<uint64_t> numWritebacks;
   std::vector<uint64_t> numCacheHits;
@@ -70,8 +75,15 @@ struct Stats {
   uint64_t numNvmItemRemovedSetSize{0};
 
   util::PercentileStats::Estimates cacheAllocateLatencyNs;
+
   util::PercentileStats::Estimates cacheBgEvictLatencyNs;
+  util::PercentileStats::Estimates cacheEvictDmlLargeItemWaitLatencyNs;
+  util::PercentileStats::Estimates cacheEvictDmlSmallItemWaitLatencyNs;
+
   util::PercentileStats::Estimates cacheBgPromoteLatencyNs;
+  util::PercentileStats::Estimates cachePromoteDmlLargeItemWaitLatencyNs;
+  util::PercentileStats::Estimates cachePromoteDmlSmallItemWaitLatencyNs;
+
   util::PercentileStats::Estimates cacheFindLatencyNs;
 
   double nvmReadLatencyMicrosP50{0};
@@ -151,9 +163,17 @@ struct Stats {
     }
     for (TierId tid = 0; tid < nTiers; tid++) {
         out << folly::sformat("Tier {} Evictions: {:,}\n"
+                              "Tier {} DSA HW Batch Eviction Submits: {:,}\n"
+                              "Tier {} DSA HW Batch Eviction Fails: {:,}\n"
+                              "Tier {} DSA HW Batch Promotion Submits: {:,}\n"
+                              "Tier {} DSA HW Batch Promotion Fails: {:,}\n"
                               "Tier {} Writebacks: {:,}\n"
                               "Tier {} Success: {:.2f}%",
                               tid, numEvictions[tid],
+                              tid, evictDmlBatchSubmits[tid],
+                              tid, evictDmlBatchFails[tid],
+                              tid, promoteDmlBatchSubmits[tid],
+                              tid, promoteDmlBatchFails[tid],
                               tid, numWritebacks[tid],
                               tid, invertPctFn(numEvictions[tid] - numWritebacks[tid], numEvictions[tid]))
             << std::endl;
@@ -298,7 +318,11 @@ struct Stats {
         printLatencies("Cache Find API latency", cacheFindLatencyNs);
         printLatencies("Cache Allocate API latency", cacheAllocateLatencyNs);
         printLatencies("Cache Background Eviction latency", cacheBgEvictLatencyNs);
+        printLatencies("Cache Evict DML Large Item Wait latency", cacheEvictDmlLargeItemWaitLatencyNs);
+        printLatencies("Cache Evict DML Small Item Wait latency", cacheEvictDmlSmallItemWaitLatencyNs);
         printLatencies("Cache Background Promotion latency", cacheBgPromoteLatencyNs);
+        printLatencies("Cache Promote DML Large Item Wait latency", cachePromoteDmlLargeItemWaitLatencyNs);
+        printLatencies("Cache Promote DML Small Item Wait latency", cachePromoteDmlSmallItemWaitLatencyNs);
       }
     }
 
@@ -539,8 +563,14 @@ struct Stats {
 
     counters["find_latency_p99"] = cacheFindLatencyNs.p99;
     counters["alloc_latency_p99"] = cacheAllocateLatencyNs.p99;
+
     counters["bg_evict_latency_p99"] = cacheBgEvictLatencyNs.p99;
+    counters["evict_dml_large_item_wait_latency_p99"] = cacheEvictDmlLargeItemWaitLatencyNs.p99;
+    counters["evict_dml_small_item_wait_latency_p99"] = cacheEvictDmlSmallItemWaitLatencyNs.p99;
+
     counters["bg_promote_latency_p99"] = cacheBgPromoteLatencyNs.p99;
+    counters["promote_dml_large_item_wait_latency_p99"] = cachePromoteDmlLargeItemWaitLatencyNs.p99;
+    counters["promote_dml_small_item_wait_latency_p99"] = cachePromoteDmlSmallItemWaitLatencyNs.p99;
 
     counters["ram_hit_rate"] = calcInvertPctFn(numCacheGetMiss, numCacheGets);
     counters["nvm_hit_rate"] = calcInvertPctFn(numCacheGetMiss, numCacheGets);

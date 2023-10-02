@@ -279,6 +279,14 @@ class CacheAllocatorConfig {
       std::shared_ptr<BackgroundMoverStrategy> backgroundMoverStrategy,
       std::chrono::milliseconds regularInterval, size_t threads);
 
+  // Enable DSA, read min batch size, large item min size,
+  // large and small item split fraction
+  CacheAllocatorConfig& enableDSA(bool useDsa,
+                                  uint64_t minBatchSize,
+                                  uint64_t largeItemSizeMin,
+                                  double largeItemBatchFrac,
+                                  double smallItemBatchFrac);
+
   // This enables an optimization for Pool rebalancing and resizing.
   // The rough idea is to ensure only the least useful items are evicted when
   // we move slab memory around. Come talk to Cache Library team if you think
@@ -499,6 +507,21 @@ class CacheAllocatorConfig {
   // for regular pools and compact caches
   std::chrono::seconds regularPoolOptimizeInterval{0};
   std::chrono::seconds compactCacheOptimizeInterval{0};
+
+  // DSA enabled or disabled
+  bool dsaEnabled{false};
+
+  // Min batch size for DSA use
+  uint64_t minBatchSizeForDsaUsage{10};
+
+  // Min item size (in Bytes) to get classified as Large
+  uint64_t largeItemMinSize{8192};
+
+  // Large items - 80:20 split
+  double largeItemBatchEvictDsaUsageFraction{0.8};
+
+  // Small items - 70:30 split
+  double smallItemBatchEvictDsaUsageFraction{0.7};
 
   // step size for compact cache size optimization: how many percents of the
   // victim to move
@@ -1017,6 +1040,20 @@ CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enablePoolRebalancing(
     throw std::invalid_argument(
         "Invalid rebalance strategy for the cache allocator.");
   }
+  return *this;
+}
+
+template <typename T>
+CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enableDSA(bool useDsa,
+                                                            uint64_t minBatchSize,
+                                                            uint64_t largeItemSizeMin,
+                                                            double largeItemBatchFrac,
+                                                            double smallItemBatchFrac) {
+  dsaEnabled = useDsa;
+  minBatchSizeForDsaUsage = minBatchSize;
+  largeItemMinSize = largeItemSizeMin;
+  largeItemBatchEvictDsaUsageFraction = largeItemBatchFrac;
+  smallItemBatchEvictDsaUsageFraction = smallItemBatchFrac;
   return *this;
 }
 

@@ -37,6 +37,8 @@ target_link_libraries(cachelib_cachebench PUBLIC
   cachelib_datatype
   cachelib_allocator
   gflags
+  dmlhl
+  dl
 )
 
 if ((CMAKE_SYSTEM_NAME STREQUAL Linux) AND
@@ -51,6 +53,10 @@ target_link_libraries(cachebench cachelib_cachebench)
 
 if (WITH_DTO)
     target_link_libraries(cachebench accel-config dto)
+endif ()
+
+if (WITH_DML_WRAPPER)
+    target_link_libraries(cachebench accel-config dml_cstring)
 endif ()
 
 install(

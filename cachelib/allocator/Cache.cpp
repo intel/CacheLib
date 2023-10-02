@@ -478,10 +478,21 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
 
   visitEstimates(uploadStatsNanoToMicro, stats.allocateLatencyNs,
                  statPrefix + "allocate.latency_us");
+
   visitEstimates(uploadStatsNanoToMicro, stats.bgEvictLatencyNs,
                  statPrefix + "background.eviction.latency_us");
+  visitEstimates(uploadStatsNanoToMicro, stats.evictDmlLargeItemWaitLatencyNs,
+                 statPrefix + "background.eviction.dml.large_item_wait.latency_us");
+  visitEstimates(uploadStatsNanoToMicro, stats.evictDmlSmallItemWaitLatencyNs,
+                 statPrefix + "background.eviction.dml.small_item_wait.latency_us");
+
   visitEstimates(uploadStatsNanoToMicro, stats.bgPromoteLatencyNs,
                  statPrefix + "background.promotion.latency_us");
+  visitEstimates(uploadStatsNanoToMicro, stats.promoteDmlLargeItemWaitLatencyNs,
+                 statPrefix + "background.promotion.dml.large_item_wait.latency_us");
+  visitEstimates(uploadStatsNanoToMicro, stats.promoteDmlSmallItemWaitLatencyNs,
+                 statPrefix + "background.promotion.dml.small_item_wait.latency_us");
+
   visitEstimates(uploadStatsNanoToMicro, stats.moveChainedLatencyNs,
                  statPrefix + "move.chained.latency_us");
   visitEstimates(uploadStatsNanoToMicro, stats.moveRegularLatencyNs,

@@ -76,6 +76,11 @@ struct CacheConfig : public JSONConfig {
   uint64_t backgroundPromoterIntervalMilSec{0};
   std::string rebalanceStrategy;
   std::string backgroundEvictorStrategy;
+  bool dsaEnabled{false};
+  uint64_t minBatchSizeForDsaUsage{10};
+  uint64_t largeItemMinSize{8192};
+  double largeItemBatchEvictDsaUsageFraction{0.8};
+  double smallItemBatchEvictDsaUsageFraction{0.7};
   uint64_t rebalanceMinSlabs{1};
   double rebalanceDiffRatio{0.25};
   bool moveOnSlabRelease{false};

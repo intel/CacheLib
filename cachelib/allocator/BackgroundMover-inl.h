@@ -19,9 +19,7 @@ namespace cachelib {
 
 template <typename CacheT>
 BackgroundMover<CacheT>::BackgroundMover(
-    Cache& cache,
-    std::shared_ptr<BackgroundMoverStrategy> strategy,
-    MoverDir direction)
+    Cache& cache, std::shared_ptr<BackgroundMoverStrategy> strategy, MoverDir direction)
     : cache_(cache), strategy_(strategy), direction_(direction) {
   if (direction_ == MoverDir::Evict) {
     moverFunc = BackgroundMoverAPIWrapper<CacheT>::traverseAndEvictItems;

@@ -190,7 +190,11 @@ struct Stats {
   // latency stats of various cachelib operations
   mutable util::PercentileStats allocateLatency_;
   mutable util::PercentileStats bgEvictLatency_;
+  mutable util::PercentileStats evictDmlLargeItemWaitLatency_;
+  mutable util::PercentileStats evictDmlSmallItemWaitLatency_;
   mutable util::PercentileStats bgPromoteLatency_;
+  mutable util::PercentileStats promoteDmlLargeItemWaitLatency_;
+  mutable util::PercentileStats promoteDmlSmallItemWaitLatency_;
   mutable util::PercentileStats moveChainedLatency_;
   mutable util::PercentileStats moveRegularLatency_;
   mutable util::PercentileStats nvmLookupLatency_;
@@ -232,6 +236,10 @@ struct Stats {
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> allocFailures{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> fragmentationSize{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> chainedItemEvictions{};
+  std::unique_ptr<PerTierPerPoolClassAtomicCounters> evictDmlBatchSubmits{};
+  std::unique_ptr<PerTierPerPoolClassAtomicCounters> evictDmlBatchFails{};
+  std::unique_ptr<PerTierPerPoolClassAtomicCounters> promoteDmlBatchSubmits{};
+  std::unique_ptr<PerTierPerPoolClassAtomicCounters> promoteDmlBatchFails{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> regularItemEvictions{};
   std::unique_ptr<PerTierPerPoolClassAtomicCounters> numWritebacks{};
 

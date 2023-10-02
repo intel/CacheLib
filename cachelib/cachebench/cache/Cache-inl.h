@@ -46,6 +46,11 @@ Cache<Allocator>::Cache(const CacheConfig& config,
       config_.getRebalanceStrategy(),
       std::chrono::seconds(config_.poolRebalanceIntervalSec));
 
+  allocatorConfig_.enableDSA(config_.dsaEnabled,
+                             config_.minBatchSizeForDsaUsage,
+                             config_.largeItemMinSize,
+                             config_.largeItemBatchEvictDsaUsageFraction,
+                             config_.smallItemBatchEvictDsaUsageFraction);
   allocatorConfig_.enableBackgroundEvictor(
       config_.getBackgroundEvictorStrategy(),
       std::chrono::milliseconds(config_.backgroundEvictorIntervalMilSec),
@@ -694,6 +699,10 @@ Stats Cache<Allocator>::getStats() const {
   ret.backgroundPromoStats = cacheStats.promotionStats;
 
   ret.evictAttempts = cacheStats.evictionAttempts;
+  ret.evictDmlBatchSubmits = cacheStats.evictDmlBatchSubmits;
+  ret.evictDmlBatchFails = cacheStats.evictDmlBatchFails;
+  ret.promoteDmlBatchSubmits = cacheStats.promoteDmlBatchSubmits;
+  ret.promoteDmlBatchFails = cacheStats.promoteDmlBatchFails;
   ret.allocAttempts = cacheStats.allocAttempts;
   ret.allocFailures = cacheStats.allocFailures;
 
@@ -736,8 +745,15 @@ Stats Cache<Allocator>::getStats() const {
       static_cast<int64_t>(itemRecords_.count()) - totalDestructor_;
 
   ret.cacheAllocateLatencyNs = cacheStats.allocateLatencyNs;
+
   ret.cacheBgEvictLatencyNs = cacheStats.bgEvictLatencyNs;
+  ret.cacheEvictDmlLargeItemWaitLatencyNs = cacheStats.evictDmlLargeItemWaitLatencyNs;
+  ret.cacheEvictDmlSmallItemWaitLatencyNs = cacheStats.evictDmlSmallItemWaitLatencyNs;
+
   ret.cacheBgPromoteLatencyNs = cacheStats.bgPromoteLatencyNs;
+  ret.cachePromoteDmlLargeItemWaitLatencyNs = cacheStats.promoteDmlLargeItemWaitLatencyNs;
+  ret.cachePromoteDmlSmallItemWaitLatencyNs = cacheStats.promoteDmlSmallItemWaitLatencyNs;
+
   ret.cacheFindLatencyNs = cacheFindLatency_.estimate();
 
   // Populate counters.
