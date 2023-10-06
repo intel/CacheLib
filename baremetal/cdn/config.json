@@ -1,0 +1,53 @@
+{
+  "cache_config": {
+    "cacheSizeMB": 32768,
+    "dsaEnabled": "true",
+    "minBatchSizeForDsaUsage": 10,
+    "largeItemMinSize": 4096,
+    "largeItemBatchEvictDsaUsageFraction": 0.75,
+    "smallItemBatchEvictDsaUsageFraction": 0.7,
+    "htBucketPower": 27,
+    "htBucketLock": 27,
+    "evictorThreads": 4,
+    "maxEvictionBatch": 100,
+    "backgroundEvictorIntervalMilSec": 1,
+    "promotorThreads": 4,
+    "maxPromotionBatch": 100,
+    "backgroundPromoterIntervalMilSec": 1,
+    "memoryTiers": [
+      {
+        "ratio": 1,
+        "memBindNodes": 0
+      },
+      {
+        "ratio": 1,
+        "memBindNodes": 1
+      }
+    ],
+    "poolRebalanceIntervalSec": 0,
+    "moveOnSlabRelease": false
+  },
+  "test_config": {
+    "addChainedRatio": 0.0,
+    "delRatio": 0.0,
+    "enableLookaside": true,
+    "getRatio": 0.9911552928593673,
+    "keySizeRange": [
+      1,
+      8,
+      64
+    ],
+    "keySizeRangeProbability": [
+      0.3,
+      0.7
+    ],
+    "loneGetRatio": 0.008844707140632665,
+    "numKeys": 8935378,
+    "numOps": 5000000,
+    "opRatePerSec": 1000000,
+    "numThreads": 24,
+    "popDistFile": "pop.json",
+    "setRatio": 0.0,
+    "valSizeDistFile": "sizes.json"
+  }
+}
