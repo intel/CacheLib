@@ -313,7 +313,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
                      "set attached=1\n"
                      "break gdb_sync1\n"
                      "break gdb_sync2\n"
-                     "break moveRegularItemWithSync\n"
+                     "break moveRegularItem\n"
                      "c\n"
                      "set scheduler-locking on\n"
                      "thread 1\n"
