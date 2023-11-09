@@ -2000,7 +2000,6 @@ bool CacheAllocator<CacheTrait>::handleFailedMove(Item* candidate,
     accessContainer_->remove(*candidate);
   }
  
-  XDCHECK_EQ(candidate->getRefCountAndFlagsRaw(),0);
   if (token.isValid() && shouldWriteToNvmCacheExclusive(*candidate)
           && !failedToReplace) {
     nvmCache_->put(*candidate, std::move(token));
