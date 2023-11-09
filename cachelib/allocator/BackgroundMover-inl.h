@@ -32,12 +32,10 @@ BackgroundMover<CacheT>::BackgroundMover(
 
 template <typename CacheT>
 void BackgroundMover<CacheT>::TraversalStats::recordTraversalTime(uint64_t nsTaken) {
-  lastTraversalTimeNs_.store(nsTaken, std::memory_order_relaxed);
-  minTraversalTimeNs_.store(std::min(minTraversalTimeNs_.load(), nsTaken),
-                            std::memory_order_relaxed);
-  maxTraversalTimeNs_.store(std::max(maxTraversalTimeNs_.load(), nsTaken),
-                            std::memory_order_relaxed);
-  totalTraversalTimeNs_.fetch_add(nsTaken, std::memory_order_relaxed);
+  lastTraversalTimeNs_ = nsTaken;
+  minTraversalTimeNs_ = std::min(minTraversalTimeNs_, nsTaken);
+  maxTraversalTimeNs_ = std::max(maxTraversalTimeNs_, nsTaken);
+  totalTraversalTimeNs_ += nsTaken;
 }
 
 template <typename CacheT>
@@ -100,8 +98,8 @@ void BackgroundMover<CacheT>::checkAndRun() {
     auto end = util::getCurrentTimeNs();
     if (moves > 0) {
       traversalStats_.recordTraversalTime(end > begin ? end - begin : 0);
-      numMovedItems.add(moves);
-      numTraversals.inc();
+      numMovedItems += moves;
+      numTraversals++;
     }
 
     //we didn't move any objects done with this run
@@ -114,12 +112,12 @@ void BackgroundMover<CacheT>::checkAndRun() {
 template <typename CacheT>
 BackgroundMoverStats BackgroundMover<CacheT>::getStats() const noexcept {
   BackgroundMoverStats stats;
-  stats.numMovedItems = numMovedItems.get();
-  stats.totalBytesMoved = totalBytesMoved.get();
-  stats.totalClasses = totalClasses.get();
+  stats.numMovedItems = numMovedItems;
+  stats.totalBytesMoved = totalBytesMoved;
+  stats.totalClasses = totalClasses;
   auto runCount = getRunCount();
   stats.runCount = runCount;
-  stats.numTraversals = numTraversals.get();
+  stats.numTraversals = numTraversals;
   stats.avgItemsMoved = (double) stats.numMovedItems / (double)runCount;
   stats.lastTraversalTimeNs = traversalStats_.getLastTraversalTimeNs();
   stats.avgTraversalTimeNs = traversalStats_.getAvgTraversalTimeNs(runCount);

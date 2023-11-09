@@ -86,12 +86,12 @@ class BackgroundMover : public PeriodicWorker {
 
    private:
     // time it took us the last time to traverse the cache.
-    std::atomic<uint64_t> lastTraversalTimeNs_{0};
-    std::atomic<uint64_t> minTraversalTimeNs_{
+    uint64_t lastTraversalTimeNs_{0};
+    uint64_t minTraversalTimeNs_{
         std::numeric_limits<uint64_t>::max()};
-    std::atomic<uint64_t> maxTraversalTimeNs_{0};
-    std::atomic<uint64_t> totalTraversalTimeNs_{0};
-    std::atomic<uint64_t> numTraversals_{0};
+    uint64_t maxTraversalTimeNs_{0};
+    uint64_t totalTraversalTimeNs_{0};
+    uint64_t numTraversals_{0};
   };
 
   TraversalStats traversalStats_;
@@ -110,10 +110,10 @@ class BackgroundMover : public PeriodicWorker {
   void work() override final;
   void checkAndRun();
 
-  AtomicCounter numMovedItems{0};
-  AtomicCounter numTraversals{0};
-  AtomicCounter totalClasses{0};
-  AtomicCounter totalBytesMoved{0};
+  uint64_t numMovedItems{0};
+  uint64_t numTraversals{0};
+  uint64_t totalClasses{0};
+  uint64_t totalBytesMoved{0};
 
   std::vector<MemoryDescriptorType> assignedMemory_;
   folly::DistributedMutex mutex;
