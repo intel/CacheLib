@@ -154,6 +154,21 @@ case "$1" in
     external_git_clone=yes
     ;;
 
+  dml)
+    NAME=dml
+    REPO=https://github.com/intel/DML.git
+    REPODIR=cachelib/external/$NAME
+    SRCDIR=$REPODIR
+    external_git_clone=yes
+    external_git_tag="v1.1.1"
+    cmake_custom_params="-DCMAKE_INSTALL_PREFIX=/usr/ -DDML_BUILD_TESTS=OFF -DLOG_HW_INIT=ON"
+    if test "$debug_build" ; then
+        cmake_custom_params="$cmake_custom_params -DCMAKE_BUILD_TYPE=Debug"
+    else
+        cmake_custom_params="$cmake_custom_params -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    fi
+    ;;
+
   fmt)
     NAME=fmt
     REPO=https://github.com/fmtlib/fmt.git
