@@ -312,7 +312,7 @@ class Cache {
   // return true if the key was previously detected to be inconsistent. This
   // is useful only when consistency checking is enabled by calling
   // enableConsistencyCheck()
-  bool isInvalidKey(const std::string& key) {
+  bool isInvalidKey(const std::string_view key) {
     return invalidKeys_[key].load(std::memory_order_relaxed);
   }
 
@@ -430,7 +430,7 @@ class Cache {
   // Since this can be accessed from multiple threads, the map is initialized
   // during start up and only the value is updated by flipping the bit
   // atomically.
-  std::unordered_map<std::string, std::atomic<bool>> invalidKeys_;
+  std::unordered_map<std::string_view, std::atomic<bool>> invalidKeys_;
 
   // number of inconsistency detected so far with the operations
   std::atomic<unsigned int> inconsistencyCount_{0};

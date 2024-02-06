@@ -16,9 +16,13 @@
 
 #pragma once
 
+#include <fcntl.h>
 #include <folly/Format.h>
 #include <folly/Random.h>
 #include <folly/logging/xlog.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -30,6 +34,7 @@
 
 #include "cachelib/cachebench/util/Config.h"
 #include "cachelib/cachebench/util/Exceptions.h"
+#include "cachelib/cachebench/util/Request.h"
 #include "cachelib/cachebench/workload/GeneratorBase.h"
 
 namespace facebook {
@@ -83,6 +88,34 @@ class TraceFileStream {
     }
 
     return infile_;
+  }
+
+  uint64_t getN() {
+    uint64_t lines = 0;
+    const std::string& traceFileName = infileNames_[0];
+    std::ifstream file;
+    std::string a;
+    file.open(traceFileName);
+    while (std::getline(file, a)) {
+      if (!a.empty()) {
+        lines++;
+      }
+    }
+    file.close();
+    return lines - 1;
+  }
+
+  // The number of requests (not including ampFactor) to skip
+  // in the trace. This is so that after warming up the cache
+  // with a certain number of requests, we can easily reattach
+  // and resume execution with different cache configurations.
+  void fastForwardTrace(uint64_t fastForwardCount) {
+    uint64_t count = 0;
+    while (count < fastForwardCount) {
+      std::string line;
+      this->getline(line); // can throw
+      count++;
+    }
   }
 
   bool setNextLine(const std::string& line) {
@@ -255,6 +288,60 @@ class TraceFileStream {
   std::vector<folly::StringPiece> nextLineFields_;
 
   std::vector<std::string> keys_;
+  uint64_t lines_ = 0;
+};
+
+class BinaryFileStream {
+ public:
+  BinaryFileStream(const StressorConfig& config)
+      : infileName_(config.traceFileName),
+        repeatTraceReplay_(config.repeatTraceReplay) {
+    fd_ = open(infileName_.c_str(), O_RDONLY);
+    // Get the size of the file
+    struct stat fileStat;
+    if (fstat(fd_, &fileStat) == -1) {
+      close(fd_);
+      XLOGF(INFO, "Error reading file size {}", infileName_);
+    }
+    fileSize_ = fileStat.st_size;
+    size_t* binaryData = reinterpret_cast<size_t*>(
+        mmap(nullptr, fileSize_, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd_, 0));
+    nreqs_ = binaryData[0];
+    binaryData++;
+    binaryReqData_ = reinterpret_cast<BinaryRequest*>(binaryData);
+    binaryKeyData_ = reinterpret_cast<char*>(binaryData);
+    binaryKeyData_ += nreqs_ * sizeof(BinaryRequest);
+    offset_ = 0;
+  }
+
+  char* getKeyOffset() { return binaryKeyData_; }
+
+  BinaryRequest* getNextPtr() {
+    if (offset_ >= nreqs_) {
+      if (!repeatTraceReplay_) {
+        throw cachelib::cachebench::EndOfTrace("");
+      } else {
+        offset_ = 0;
+      }
+    }
+    BinaryRequest* binReq = binaryReqData_ + offset_;
+    offset_++;
+    XDCHECK_LT(binReq->op_, 12);
+    return binReq;
+  }
+
+  void setOffset(uint64_t offset) { offset_ = offset; }
+
+ private:
+  const StressorConfig config_;
+  const bool repeatTraceReplay_;
+  std::string infileName_;
+  BinaryRequest* binaryReqData_;
+  char* binaryKeyData_;
+  size_t offset_;
+  size_t fileSize_;
+  uint64_t nreqs_;
+  int fd_;
 };
 
 class ReplayGeneratorBase : public GeneratorBase {
@@ -263,6 +350,9 @@ class ReplayGeneratorBase : public GeneratorBase {
       : config_(config),
         repeatTraceReplay_{config_.repeatTraceReplay},
         ampFactor_(config.replayGeneratorConfig.ampFactor),
+        binaryFileName_(config.replayGeneratorConfig.binaryFileName),
+        fastForwardCount_(config.replayGeneratorConfig.fastForwardCount),
+        preLoadReqs_(config.replayGeneratorConfig.preLoadReqs),
         timestampFactor_(config.timestampFactor),
         numShards_(config.numThreads),
         mode_(config_.replayGeneratorConfig.getSerializationMode()) {
@@ -280,7 +370,9 @@ class ReplayGeneratorBase : public GeneratorBase {
   const StressorConfig config_;
   const bool repeatTraceReplay_;
   const size_t ampFactor_;
-
+  const uint64_t fastForwardCount_;
+  const uint64_t preLoadReqs_;
+  const std::string binaryFileName_;
   // The constant to be divided from the timestamp value
   // to turn the timestamp into seconds.
   const uint64_t timestampFactor_{1};
