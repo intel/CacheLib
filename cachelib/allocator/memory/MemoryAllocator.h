@@ -167,6 +167,8 @@ class MemoryAllocator {
   // @throw std::invalid_argument if the poolId is invalid or the size is
   //        invalid.
   void* allocate(PoolId id, uint32_t size);
+  void* allocateByCid(PoolId id, ClassId cid);
+  std::vector<void*> allocateByCidBatch(PoolId id, ClassId cid, uint64_t batch);
 
   // Allocate a zeroed Slab
   //
