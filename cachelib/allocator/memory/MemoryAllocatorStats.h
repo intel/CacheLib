@@ -68,7 +68,7 @@ struct ACStats {
 
     return activeAllocs / (usedSlabs * allocsPerSlab);
   }
-
+  
   constexpr double approxUsage() const noexcept {
     const unsigned long long nSlabsAllocated = usedSlabs;
     if (nSlabsAllocated == 0) {
