@@ -315,6 +315,8 @@ class CacheAllocatorConfig {
 
   // Insert items to first free memory tier
   CacheAllocatorConfig& enableInsertToFirstFreeTier();
+  
+  CacheAllocatorConfig& enableNoOnlineEviction();
 
   // Passes in a callback to initialize an event tracker when the allocator
   // starts
@@ -547,6 +549,8 @@ class CacheAllocatorConfig {
   // from the bottom one if memory cache is full
   bool insertToFirstFreeTier = false;
 
+  bool noOnlineEviction = false;
+
   // the number of tries to search for an item to evict
   // 0 means it's infinite
   unsigned int evictionSearchTries{50};
@@ -684,6 +688,12 @@ class CacheAllocatorConfig {
 template <typename T>
 CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enableInsertToFirstFreeTier() {
   insertToFirstFreeTier = true;
+  return *this;
+}
+
+template <typename T>
+CacheAllocatorConfig<T>& CacheAllocatorConfig<T>::enableNoOnlineEviction() {
+  noOnlineEviction = true;
   return *this;
 }
 
@@ -1269,6 +1279,7 @@ std::map<std::string, std::string> CacheAllocatorConfig<T>::serialize() const {
   configMap["delayCacheWorkersStart"] =
       delayCacheWorkersStart ? "true" : "false";
   configMap["insertToFirstFreeTier"] = std::to_string(insertToFirstFreeTier);
+  configMap["noOnlineEviction"] = std::to_string(noOnlineEviction);
   mergeWithPrefix(configMap, throttleConfig.serialize(), "throttleConfig");
   mergeWithPrefix(configMap,
                   chainedItemAccessConfig.serialize(),

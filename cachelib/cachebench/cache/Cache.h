@@ -579,6 +579,7 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   }
 
   allocatorConfig_.insertToFirstFreeTier = config_.insertToFirstFreeTier;
+  allocatorConfig_.noOnlineEviction = config_.noOnlineEviction;
 
   auto cleanupGuard = folly::makeGuard([&] {
     if (!nvmCacheFilePath_.empty()) {
