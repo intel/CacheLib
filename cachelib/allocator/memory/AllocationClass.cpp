@@ -140,6 +140,26 @@ void* AllocationClass::addSlabAndAllocate(Slab* slab) {
   });
 }
 
+std::vector<void*> AllocationClass::addSlabAndAllocateBatch(Slab* slab, uint64_t batch) {
+  XDCHECK_NE(nullptr, slab);
+  std::vector<void*> allocs;
+  allocs.reserve(batch);
+  lock_->lock_combine([this, slab, batch, &allocs]() {
+    addSlabLocked(slab);
+    uint64_t total = 0;
+    while (total < batch) {
+     void *alloc = allocateLocked();
+     if (alloc != nullptr) {
+       allocs.push_back(alloc);
+       total++;
+     } else {
+       break;
+     }
+    }
+  });
+  return allocs;
+}
+
 void* AllocationClass::allocateFromCurrentSlabLocked() noexcept {
   XDCHECK(canAllocateFromCurrentSlabLocked());
   void* ret = currSlab_->memoryAtOffset(currOffset_);
@@ -157,6 +177,26 @@ void* AllocationClass::allocate() {
     return nullptr;
   }
   return lock_->lock_combine([this]() -> void* { return allocateLocked(); });
+}
+
+std::vector<void*> AllocationClass::allocateBatch(uint64_t batch) {
+  std::vector<void*> allocs;
+  if (!canAllocate_) {
+    return allocs;
+  }
+  lock_->lock_combine([this, &allocs, batch]() { 
+    uint64_t total = 0;
+    while (total < batch) {
+      void *alloc = allocateLocked();
+      if (alloc != nullptr) {
+        allocs.push_back(alloc);
+        total++;
+      } else {
+        break;
+      }
+    }
+  });
+  return allocs;
 }
 
 void* AllocationClass::allocateLocked() {
