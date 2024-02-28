@@ -401,9 +401,13 @@ CacheAllocator<CacheTrait>::allocate(PoolId poolId,
 }
 
 template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(TierId tid,
-                                                       PoolId /* pid */,
-                                                       ClassId /* cid */) {
+bool CacheAllocator<CacheTrait>::shouldWakeupBgEvictor(TierId tid, PoolId pid, ClassId cid) {
+  // TODO: should we also work on lower tiers? should we have separate set of params?
+  if (tid == 1) return false;
+  double usage = getPoolByTid(pid, tid).getApproxUsage(cid);
+  if (((1-usage)*100) <= config_.lowEvictionAcWatermark) {
+    return true;
+  }
   return false;
 }
 
