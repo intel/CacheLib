@@ -116,6 +116,7 @@ class AllocationClass {
   //          don't have any free memory. The caller will have to add a slab
   //          to this slab class to make further allocations out of it.
   void* allocate();
+  std::vector<void*> allocateBatch(uint64_t batch);
 
   // @param ctx     release context for the slab owning this alloc
   // @param memory  memory to check
@@ -227,6 +228,7 @@ class AllocationClass {
   // @param slab    a new slab to be added. This can NOT be nullptr.
   // @return  new allocation. This cannot fail.
   void* addSlabAndAllocate(Slab* slab);
+  std::vector<void*> addSlabAndAllocateBatch(Slab* slab, uint64_t batch);
 
   // Releasing a slab is a two step process.
   // 1. Mark a slab for release, by calling `startSlabRelease`.
