@@ -195,7 +195,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     const auto& mpStats = allocator->getPoolByTid(poolId, 0).getStats(); 
     //cache is 10MB should move about 1MB to reach 10% free
     uint32_t approxEvict = (1024*1024)/mpStats.acStats.at(cid).allocSize;
-    while (stats.evictionStats.numMovedItems < approxEvict*0.95 && (1-slabStats.usageFraction()) >= 0.095) {
+    while (stats.evictionStats[0].numMovedItems < approxEvict*0.95 && (1-slabStats.usageFraction()) >= 0.095) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         stats = allocator->getGlobalCacheStats();
         slabStats = allocator->getACStats(0,0,cid);
@@ -205,12 +205,14 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
     auto perclassEstats = allocator->getBackgroundMoverClassStats(MoverDir::Evict);
     auto perclassPstats = allocator->getBackgroundMoverClassStats(MoverDir::Promote);
 
-    ASSERT_GE(stats.evictionStats.numMovedItems,1);
-    ASSERT_GE(stats.evictionStats.runCount,1);
-    ASSERT_GE(stats.promotionStats.numMovedItems,1);
-   
-    ASSERT_GE(perclassEstats[0][0][cid], 1);
-    ASSERT_GE(perclassPstats[1][0][cid], 1);
+    ASSERT_GE(stats.evictionStats[0].numMovedItems,1);
+    ASSERT_GE(stats.evictionStats[0].runCount,1);
+    ASSERT_GE(stats.promotionStats[0].numMovedItems,1);
+    
+    MemoryDescriptorType tier0(0,0,cid);
+    MemoryDescriptorType tier1(1,0,cid);
+    ASSERT_GE(perclassEstats[tier0], 1);
+    ASSERT_GE(perclassPstats[tier1], 1);
     
   }
 
@@ -311,7 +313,7 @@ class AllocatorMemoryTiersTest : public AllocatorTest<AllocatorT> {
                      "set attached=1\n"
                      "break gdb_sync1\n"
                      "break gdb_sync2\n"
-                     "break moveRegularItemWithSync\n"
+                     "break moveRegularItem\n"
                      "c\n"
                      "set scheduler-locking on\n"
                      "thread 1\n"

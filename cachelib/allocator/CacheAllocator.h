@@ -220,7 +220,7 @@ class CacheAllocator : public CacheBase {
   using PoolIds = std::set<PoolId>;
 
   using EventTracker = EventInterface<Key>;
-
+  using ClassBgStatsType = std::map<MemoryDescriptorType,uint64_t>;
   // SampleItem is a wrapper for the CacheItem which is provided as the sample
   // for uploading to Scuba (see ItemStatsExporter). It is guaranteed that the
   // CacheItem is accessible as long as the SampleItem is around since the
@@ -1169,47 +1169,39 @@ class CacheAllocator : public CacheBase {
     auto stats = reaper_ ? reaper_->getStats() : ReaperStats{};
     return stats;
   }
-  
-  // returns the background mover stats
-  BackgroundMoverStats getBackgroundMoverStats(MoverDir direction) const {
-    
-    auto stats = BackgroundMoverStats{};
+
+  // returns the background mover stats per thread
+  std::vector<BackgroundMoverStats> getBackgroundMoverStats(MoverDir direction) const {
+    auto stats = std::vector<BackgroundMoverStats>();
     if (direction == MoverDir::Evict) {
-        for (auto &bg : backgroundEvictor_)
-          stats += bg->getStats();
+      for (auto& bg : backgroundEvictor_)
+        stats.push_back(bg->getStats());
     } else if (direction == MoverDir::Promote) {
-        for (auto &bg : backgroundPromoter_)
-          stats += bg->getStats();
+      for (auto& bg : backgroundPromoter_)
+        stats.push_back(bg->getStats());
     }
     return stats;
-
   }
-  
-  
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
+
+  ClassBgStatsType
   getBackgroundMoverClassStats(MoverDir direction) const {
-    std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>> stats;
+    ClassBgStatsType stats;
+    auto record = [&](auto &bg) {
+      //gives a unique descriptor
+      auto classStats = bg->getClassStats();
+      for (const auto& [key,value] : classStats) {
+          stats[key] = value;
+      }
+    };
 
     if (direction == MoverDir::Evict) {
-        for (auto &bg : backgroundEvictor_) {
-          for (auto &tid : bg->getClassStats()) {
-            for (auto &pid : tid.second) {
-              for (auto &cid : pid.second) {
-                stats[tid.first][pid.first][cid.first] += cid.second;
-              }
-            }
-          }
-        }
+      for (auto& bg : backgroundEvictor_) {
+          record(bg);
+      }
     } else if (direction == MoverDir::Promote) {
-        for (auto &bg : backgroundPromoter_) {
-          for (auto &tid : bg->getClassStats()) {
-            for (auto &pid : tid.second) {
-              for (auto &cid : pid.second) {
-                stats[tid.first][pid.first][cid.first] += cid.second;
-              }
-            }
-          }
-        }
+      for (auto& bg : backgroundPromoter_) {
+          record(bg);
+      }
     }
 
     return stats;

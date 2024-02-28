@@ -53,6 +53,7 @@ enum class MoverDir { Evict = 0, Promote };
 template <typename CacheT>
 class BackgroundMover : public PeriodicWorker {
  public:
+  using ClassBgStatsType = std::map<MemoryDescriptorType,uint64_t>;
   using Cache = CacheT;
   // @param cache               the cache interface
   // @param strategy            the stragey class that defines how objects are
@@ -65,15 +66,35 @@ class BackgroundMover : public PeriodicWorker {
   ~BackgroundMover() override;
 
   BackgroundMoverStats getStats() const noexcept;
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
-  getClassStats() const noexcept;
+  ClassBgStatsType getClassStats() const noexcept {
+    return moves_per_class_;
+  }
 
   void setAssignedMemory(
       std::vector<MemoryDescriptorType>&& assignedMemory);
 
  private:
-  std::map<TierId, std::map<PoolId, std::map<ClassId, uint64_t>>>
-      moves_per_class_;
+  ClassBgStatsType moves_per_class_;
+
+  struct TraversalStats {
+    // record a traversal and its time taken
+    void recordTraversalTime(uint64_t nsTaken);
+
+    uint64_t getAvgTraversalTimeNs(uint64_t numTraversals) const;
+    uint64_t getMinTraversalTimeNs() const { return minTraversalTimeNs_; }
+    uint64_t getMaxTraversalTimeNs() const { return maxTraversalTimeNs_; }
+    uint64_t getLastTraversalTimeNs() const { return lastTraversalTimeNs_; }
+
+   private:
+    // time it took us the last time to traverse the cache.
+    uint64_t lastTraversalTimeNs_{0};
+    uint64_t minTraversalTimeNs_{
+        std::numeric_limits<uint64_t>::max()};
+    uint64_t maxTraversalTimeNs_{0};
+    uint64_t totalTraversalTimeNs_{0};
+  };
+
+  TraversalStats traversalStats_;
   // cache allocator's interface for evicting
   using Item = typename Cache::Item;
 
@@ -89,10 +110,10 @@ class BackgroundMover : public PeriodicWorker {
   void work() override final;
   void checkAndRun();
 
-  AtomicCounter numMovedItems{0};
-  AtomicCounter numTraversals{0};
-  AtomicCounter totalClasses{0};
-  AtomicCounter totalBytesMoved{0};
+  uint64_t numMovedItems{0};
+  uint64_t numTraversals{0};
+  uint64_t totalClasses{0};
+  uint64_t totalBytesMoved{0};
 
   std::vector<MemoryDescriptorType> assignedMemory_;
   folly::DistributedMutex mutex;

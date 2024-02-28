@@ -22,13 +22,6 @@
 namespace facebook {
 namespace cachelib {
 
-struct MemoryDescriptorType {
-    MemoryDescriptorType(TierId tid, PoolId pid, ClassId cid) : 
-        tid_(tid), pid_(pid), cid_(cid) {}
-    TierId tid_;
-    PoolId pid_;
-    ClassId cid_;
-};
 
 // Base class for background eviction strategy.
 class BackgroundMoverStrategy {

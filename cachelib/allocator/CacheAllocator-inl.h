@@ -2966,6 +2966,9 @@ ACStats CacheAllocator<CacheTrait>::getACStats(TierId tid,
 
   auto stats = ac.getStats();
   stats.allocLatencyNs = (*stats_.classAllocLatency)[tid][poolId][classId];
+  stats.evictionAttempts = (*stats_.evictionAttempts)[tid][poolId][classId].get();
+  stats.evictions = (*stats_.regularItemEvictions)[tid][poolId][classId].get() + 
+                    (*stats_.chainedItemEvictions)[tid][poolId][classId].get();
   return stats;
 }
 
