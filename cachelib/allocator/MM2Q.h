@@ -461,6 +461,18 @@ class MM2Q {
     //          is unchanged.
     bool add(T& node) noexcept;
 
+    // helper function to add the node under the container lock
+    void addNodeLocked(T& node, const Time& currTime);
+    
+    // adds the given nodes into the container and marks each as being present in
+    // the container. The nodes are added to the head of the lru.
+    //
+    // @param vector of nodes  The nodes to be added to the container.
+    // @return  number of nodes added - it is up to user to verify all
+    //          expected nodes have been added.
+    template <typename It>
+    uint32_t addBatch(It begin, It end) noexcept;
+
     // removes the node from the lru and sets it previous and next to nullptr.
     //
     // @param node  The node to be removed from the container.
@@ -895,16 +907,41 @@ bool MM2Q::Container<T, HookPtr>::add(T& node) noexcept {
     if (node.isInMMContainer()) {
       return false;
     }
-
-    markHot(node);
-    unmarkCold(node);
-    unmarkTail(node);
-    lru_.getList(LruType::Hot).linkAtHead(node);
-    rebalance();
-
-    node.markInMMContainer();
-    setUpdateTime(node, currTime);
+    addNodeLocked(node, currTime);
     return true;
+  });
+}
+
+// adds the node to the list assuming not in 
+// container and holding container lock
+template <typename T, MM2Q::Hook<T> T::*HookPtr>
+void MM2Q::Container<T, HookPtr>::addNodeLocked(T& node, const Time& currTime) {
+  XDCHECK(!node.isInMMContainer());
+  markHot(node);
+  unmarkCold(node);
+  unmarkTail(node);
+  lru_.getList(LruType::Hot).linkAtHead(node);
+  rebalance();
+
+  node.markInMMContainer();
+  setUpdateTime(node, currTime);
+}
+
+template <typename T, MM2Q::Hook<T> T::*HookPtr>
+template <typename It>
+uint32_t MM2Q::Container<T, HookPtr>::addBatch(It begin, It end) noexcept {
+  const auto currTime = static_cast<Time>(util::getCurrentTimeSec());
+  return lruMutex_->lock_combine([this, begin, end, currTime]() {
+    uint32_t i = 0;
+    for (auto itr = begin; itr != end; itr++) {
+      T* node = *itr;
+      if (node->isInMMContainer()) {
+        return i;
+      }
+      addNodeLocked(*node,currTime);
+      i++;
+    }
+    return i;
   });
 }
 
@@ -935,6 +972,7 @@ MM2Q::Container<T, HookPtr>::withPromotionIterator(F&& fun) {
     fun(LockedIterator{LockHolder{}, lru_.begin(LruType::Hot)});
   });
 }
+
 template <typename T, MM2Q::Hook<T> T::*HookPtr>
 template <typename F>
 void MM2Q::Container<T, HookPtr>::withContainerLock(F&& fun) {
