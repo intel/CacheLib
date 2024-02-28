@@ -49,6 +49,10 @@ endif()
 add_executable (cachebench main.cpp)
 target_link_libraries(cachebench cachelib_cachebench)
 
+if (BUILD_WITH_DTO)
+    target_link_libraries(cachebench accel-config dto)
+endif ()
+
 install(
   TARGETS
      cachebench
