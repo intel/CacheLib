@@ -73,6 +73,22 @@ enum class DestructorContext {
   kRemovedFromNVM
 };
 
+struct MemoryDescriptorType {
+    MemoryDescriptorType(TierId tid, PoolId pid, ClassId cid) :
+        tid_(tid), pid_(pid), cid_(cid) {}
+    TierId tid_;
+    PoolId pid_;
+    ClassId cid_;
+
+    bool operator<(const MemoryDescriptorType& rhs) const {
+      return std::make_tuple(tid_, pid_, cid_) < std::make_tuple(rhs.tid_, rhs.pid_, rhs.cid_);
+    }
+
+    bool operator==(const MemoryDescriptorType& rhs) const {
+      return std::make_tuple(tid_, pid_, cid_) == std::make_tuple(rhs.tid_, rhs.pid_, rhs.cid_);
+    }
+};
+
 // A base class of cache exposing members and status agnostic of template type.
 class CacheBase {
  public:
