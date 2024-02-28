@@ -2996,7 +2996,7 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
   }
 
   if (memory == nullptr) {
-    if (!evict) {
+    if (!evict || config_.noOnlineEviction) {
       return {};
     }
     memory = findEviction(tid, pid, cid);
@@ -3047,7 +3047,7 @@ CacheAllocator<CacheTrait>::allocateInternal(PoolId pid,
                                              uint32_t expiryTime) {
   auto tid = 0; /* TODO: consult admission policy */
   for(TierId tid = 0; tid < getNumTiers(); ++tid) {
-    bool evict = !config_.insertToFirstFreeTier || tid == getNumTiers() - 1;
+    bool evict = (!config_.insertToFirstFreeTier || tid == getNumTiers() - 1);
     auto handle = allocateInternalTier(tid, pid, key, size, creationTime,
                                        expiryTime, evict);
     if (handle) return handle;
@@ -4477,7 +4477,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
   bool isExpired = false;
   bool chainedItem = false;
   auto& mmContainer = getMMContainer(tid, pid, cid);
-  bool lastTier = tid+1 >= getNumTiers();
+  bool lastTier = tid+1 >= getNumTiers() || config_.noOnlineEviction;
 
   mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate,
                                     &toRecycle, &toRecycleParent,
