@@ -472,11 +472,10 @@ CacheAllocator<CacheTrait>::allocateInternalTier(TierId tid,
                            tid, pid, cid, backgroundEvictor_.size())]
         ->wakeUp();
   }
-
-  if (memory == nullptr) {
-    if (!evict) {
-      return {};
-    }
+  
+  if ((memory == nullptr && !evict) || (memory == nullptr && config_.noOnlineEviction)) {
+    return {};
+  } else if (memory == nullptr) {
     memory = findEviction(tid, pid, cid);
   }
 
@@ -1959,7 +1958,7 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
   bool isExpired = false;
   bool chainedItem = false;
   auto& mmContainer = getMMContainer(tid, pid, cid);
-  bool lastTier = tid+1 >= getNumTiers();
+  bool lastTier = tid+1 >= getNumTiers() || config_.noOnlineEviction;
 
   mmContainer.withEvictionIterator([this, tid, pid, cid, &candidate,
                                     &toRecycle, &toRecycleParent,
