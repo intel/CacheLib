@@ -314,8 +314,8 @@ class Cache {
   // return true if the key was previously detected to be inconsistent. This
   // is useful only when consistency checking is enabled by calling
   // enableConsistencyCheck()
-  bool isInvalidKey(const std::string& key) {
-    return invalidKeys_[key].load(std::memory_order_relaxed);
+  bool isInvalidKey(const std::string_view key) {
+    return invalidKeys_[std::string(key)].load(std::memory_order_relaxed);
   }
 
   // Get overall stats on the whole cache allocator
