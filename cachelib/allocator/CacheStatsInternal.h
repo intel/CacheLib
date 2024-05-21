@@ -189,6 +189,8 @@ struct Stats {
 
   // latency stats of various cachelib operations
   mutable util::PercentileStats allocateLatency_;
+  mutable util::PercentileStats bgEvictLatency_;
+  mutable util::PercentileStats bgPromoteLatency_;
   mutable util::PercentileStats moveChainedLatency_;
   mutable util::PercentileStats moveRegularLatency_;
   mutable util::PercentileStats nvmLookupLatency_;

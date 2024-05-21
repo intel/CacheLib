@@ -22,6 +22,7 @@ These dependencies further require multiple libraries:
 * [https://github.com/google/googletest.git](googletest) - Google Testing Framework
 * [https://github.com/fmtlib/fmt.git](fmt) - open-source formatting library
 * [https://github.com/Tessil/sparse-map.git](sparse-map) - memory efficient hash map and hash set
+* [https://github.com/intel/DML.git](dml) - provides high-performance data manipulation on Intel CPUs
 * And many more libraries, commonly available as installable packages, e.g:
   `boost`, `libevent`, `lz4`, `snappy`, `zlib`, `ssl`, `libunwind`, `libsodium`
 
@@ -148,7 +149,7 @@ options:
 NAME: the dependency to build supported values are:
   googlelog, googleflags, googletest,
   fmt, sparsemap,
-  folly, fizz, wangle, fbthrift,
+  folly, fizz, wangle, fbthrift, dml,
   cachelib
 ```
 
@@ -261,6 +262,7 @@ Example:
 ./contrib/build-package.sh -B googlelog
 ./contrib/build-package.sh -B googleflags
 ./contrib/build-package.sh -B googletest
+./contrib/build-package.sh -B dml
 ./contrib/build-package.sh -B fmt
 ./contrib/build-package.sh -B sparsemap
 ./contrib/build-package.sh -B folly

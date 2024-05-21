@@ -154,6 +154,21 @@ case "$1" in
     external_git_clone=yes
     ;;
 
+  dml)
+    NAME=dml
+    REPO=https://github.com/intel/DML.git
+    REPODIR=cachelib/external/$NAME
+    SRCDIR=$REPODIR
+    external_git_clone=yes
+    external_git_tag="v1.1.1"
+    cmake_custom_params="-DCMAKE_INSTALL_PREFIX=/usr/ -DDML_BUILD_TESTS=OFF -DLOG_HW_INIT=ON"
+    if test "$debug_build" ; then
+        cmake_custom_params="$cmake_custom_params -DCMAKE_BUILD_TYPE=Debug"
+    else
+        cmake_custom_params="$cmake_custom_params -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    fi
+    ;;
+
   fmt)
     NAME=fmt
     REPO=https://github.com/fmtlib/fmt.git
@@ -197,7 +212,6 @@ case "$1" in
   folly)
     NAME=folly
     SRCDIR=cachelib/external/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
@@ -209,7 +223,6 @@ case "$1" in
   fizz)
     NAME=fizz
     SRCDIR=cachelib/external/$NAME/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
@@ -221,7 +234,6 @@ case "$1" in
   wangle)
     NAME=wangle
     SRCDIR=cachelib/external/$NAME/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
@@ -233,7 +245,6 @@ case "$1" in
   fbthrift)
     NAME=fbthrift
     SRCDIR=cachelib/external/$NAME
-    update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     ;;
 
