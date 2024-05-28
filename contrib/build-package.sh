@@ -24,6 +24,7 @@
 ## is closely controlled, an explicit 'shellcheck disable SC2086'
 ## was added to the relevant lines.
 
+source /opt/rh/gcc-toolset-12/enable
 set -u
 
 die()

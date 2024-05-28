@@ -35,6 +35,7 @@ sudo dnf install -y \
   gtest-devel \
   libsodium-static \
   libdwarf-static \
+  gcc-toolset-12 \
   numactl-devel
 
 
