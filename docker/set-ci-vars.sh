@@ -20,6 +20,10 @@ function get_commit_range_from_last_merge {
 
 		LAST_COMMIT=$(git log --pretty=%H -2 | tail -n1)
 		LAST_MERGE=$(git log --merges --pretty=%H -2 | tail -n1)
+                echo "last commit"
+                echo $(git show $LAST_COMMIT)
+                echo "last merge"
+                echo $(git show $LAST_MERGE)
 		# If still the last commit is a merge commit it means we're manually
 		# merging changes (probably back from stable branch). We have to use
 		# left parent of the merge and the current commit for COMMIT_RANGE.
@@ -40,6 +44,8 @@ function get_commit_range_from_last_merge {
 		# - pick up the first commit
 		LAST_MERGE=$(git log --pretty=%H | tail -n1)
 	fi
+        echo "last last merge"
+        echo $(git show $LAST_MERGE)
 	COMMIT_RANGE="${LAST_MERGE}..${RANGE_END}"
 	# make sure it works now
 	if ! git rev-list ${COMMIT_RANGE} >/dev/null; then
