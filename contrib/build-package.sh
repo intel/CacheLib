@@ -80,7 +80,7 @@ many_jobs=
 verbose=
 PREFIX="$PWD/opt/cachelib/"
 
-while getopts :BSdhijtvI: param
+while getopts :BSdhijtvp: param
 do
   case $param in
     i) install=yes ;;
@@ -91,7 +91,7 @@ do
     v) verbose=yes ;;
     j) many_jobs=yes ;;
     t) build_tests=yes ;;
-    p) PREFIX=$OPTARG ;;
+    p) PREFIX=${OPTARG} ;;
     ?) die "unknown option $param. See -h for help."
   esac
 done
