@@ -10,7 +10,7 @@
 set -e
 
 function get_commit_range_from_develop {
-    LAST_COMMIT=$(git log develop --pretty=%H -1)
+    LAST_COMMIT=$(git log --pretty=%H -1)
     RANGE_END="HEAD"
     COMMIT_RANGE="${LAST_MERGE}..${RANGE_END}"
     echo ${COMMIT_RANGE}
@@ -113,6 +113,9 @@ export CI_CPU_ARCH=${CI_CPU_ARCH}
 echo CI_COMMIT=${CI_COMMIT}
 echo "-----------------------"
 echo $(git show ${CI_COMMIT})
+echo "-----------------------"
+echo "-----------------------"
+echo $(git show)
 echo "-----------------------"
 echo CI_COMMIT_RANGE=${CI_COMMIT_RANGE}
 echo CI_BRANCH=${CI_BRANCH}
