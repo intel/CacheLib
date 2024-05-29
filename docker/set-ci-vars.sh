@@ -104,6 +104,9 @@ export CI_REPO_SLUG=${CI_REPO_SLUG}
 export CI_CPU_ARCH=${CI_CPU_ARCH}
 
 echo CI_COMMIT=${CI_COMMIT}
+echo "-----------------------"
+echo $(git show ${CI_COMMIT})
+echo "-----------------------"
 echo CI_COMMIT_RANGE=${CI_COMMIT_RANGE}
 echo CI_BRANCH=${CI_BRANCH}
 echo CI_EVENT_TYPE=${CI_EVENT_TYPE}
