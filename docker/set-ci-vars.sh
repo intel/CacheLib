@@ -10,9 +10,9 @@
 set -e
 
 function get_commit_range_from_develop {
-    LAST_COMMIT=$(git log --pretty=%H -1)
+    LAST_COMMIT=$(git log intel/develop --pretty=%H -1)
     RANGE_END="HEAD"
-    COMMIT_RANGE="${LAST_MERGE}..${RANGE_END}"
+    COMMIT_RANGE="${LAST_COMMIT}..${RANGE_END}"
     echo ${COMMIT_RANGE}
 }
 
