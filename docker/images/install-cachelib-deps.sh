@@ -7,6 +7,7 @@ echo 'Defaults env_keep += "HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PRO
 
 for pkg in zstd googleflags googlelog googletest sparsemap fmt folly fizz wangle mvfst fbthrift ;
 do
-    sudo ./contrib/build-package.sh -j -p /opt/ "$pkg"
+    #sudo ./contrib/build-package.sh -j -p /opt/ "$pkg"
+    sudo ./contrib/build-package.sh -j -v -d "$pkg"
 done
 
