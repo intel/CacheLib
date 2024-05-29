@@ -92,7 +92,7 @@ do
     j) many_jobs=yes ;;
     t) build_tests=yes ;;
     p) PREFIX=$OPTARG ;;
-    ?) die "unknown option. See -h for help."
+    ?) die "unknown option $param. See -h for help."
   esac
 done
 test -n "$show_help" && show_help_and_exit;
