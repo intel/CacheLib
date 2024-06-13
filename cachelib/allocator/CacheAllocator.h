@@ -395,6 +395,7 @@ class CacheAllocator : public CacheBase {
   using MMSerializationTypeContainer =
       typename MMType::SerializationTypeContainer;
   using AccessSerializationType = typename AccessType::SerializationType;
+  using AllocatorsSerializationType = serialization::MemoryAllocatorCollection;
 
   using ShmManager = facebook::cachelib::ShmManager;
 
@@ -2153,7 +2154,7 @@ class CacheAllocator : public CacheBase {
   PrivateSegmentOpts createPrivateSegmentOpts(TierId tid);
   std::unique_ptr<MemoryAllocator> createPrivateAllocator(TierId tid);
   std::unique_ptr<MemoryAllocator> createNewMemoryAllocator(TierId tid);
-  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator(TierId tid);
+  std::unique_ptr<MemoryAllocator> restoreMemoryAllocator(TierId tid, const serialization::MemoryAllocatorObject& sAllocator);
   std::unique_ptr<CCacheManager> restoreCCacheManager(TierId tid);
 
   PoolIds filterCompactCachePools(const PoolIds& poolIds) const;
@@ -2698,9 +2699,10 @@ CacheAllocator<CacheTrait>::createNewMemoryAllocator(TierId tid) {
 
 template <typename CacheTrait>
 std::unique_ptr<MemoryAllocator>
-CacheAllocator<CacheTrait>::restoreMemoryAllocator(TierId tid) {
+CacheAllocator<CacheTrait>::restoreMemoryAllocator(TierId tid,
+        const serialization::MemoryAllocatorObject& sAllocator) {
   return std::make_unique<MemoryAllocator>(
-      deserializer_->deserialize<MemoryAllocator::SerializationType>(),
+      sAllocator,
       shmManager_
           ->attachShm(detail::kShmCacheName + std::to_string(tid),
             config_.slabMemoryBaseAddr, createShmCacheOpts(tid)).addr,
@@ -2732,8 +2734,11 @@ template <typename CacheTrait>
 std::vector<std::unique_ptr<MemoryAllocator>>
 CacheAllocator<CacheTrait>::restoreAllocators() {
   std::vector<std::unique_ptr<MemoryAllocator>> allocators;
+  const auto allocatorCollection  =
+      deserializer_->deserialize<AllocatorsSerializationType>();
+  auto allocMap = *allocatorCollection.allocators();
   for (int tid = 0; tid < getNumTiers(); tid++) {
-    allocators.emplace_back(restoreMemoryAllocator(tid));
+    allocators.emplace_back(restoreMemoryAllocator(tid,allocMap[tid]));
   }
   return allocators;
 }
@@ -6410,26 +6415,43 @@ folly::IOBufQueue CacheAllocator<CacheTrait>::saveStateToIOBuf() {
   *metadata_.numChainedChildItems() = stats_.numChainedChildItems.get();
   *metadata_.numAbortedSlabReleases() = stats_.numAbortedSlabReleases.get();
 
+  const auto numTiers = getNumTiers();
   // TODO: implement serialization for multiple tiers
-  auto serializeMMContainers = [](MMContainers& mmContainers) {
-    MMSerializationTypeContainer state;
-    for (unsigned int i = 0; i < 1 /* TODO: */ ; ++i) {
+  auto serializeMMContainers = [numTiers](MMContainers& mmContainers) {
+    std::map<serialization::MemoryDescriptorObject,MMSerializationType> containers;
+    for (unsigned int i = 0; i < numTiers; ++i) {
       for (unsigned int j = 0; j < mmContainers[i].size(); ++j) {
         for (unsigned int k = 0; k < mmContainers[i][j].size(); ++k) {
           if (mmContainers[i][j][k]) {
-            state.pools_ref()[j][k] = mmContainers[i][j][k]->saveState();
+            serialization::MemoryDescriptorObject md;
+            md.tid_ref() = i;
+            md.pid_ref() = j;
+            md.cid_ref() = k;
+            containers[md] = mmContainers[i][j][k]->saveState();
           }
         }
       }
     }
+    MMSerializationTypeContainer state;
+    state.containers_ref() = containers;
     return state;
   };
   MMSerializationTypeContainer mmContainersState =
       serializeMMContainers(mmContainers_);
 
   AccessSerializationType accessContainerState = accessContainer_->saveState();
-  // TODO: foreach allocator
-  MemoryAllocator::SerializationType allocatorState = allocator_[0]->saveState();
+
+  auto serializeAllocators = [numTiers,this]() {
+    AllocatorsSerializationType state;
+    std::map<int,MemoryAllocator::SerializationType> allocators;
+    for (int i = 0; i < numTiers; ++i) {
+      allocators[i] = allocator_[i]->saveState();
+    }
+    state.allocators_ref() = allocators;
+    return state;
+  };
+  AllocatorsSerializationType allocatorsState = serializeAllocators();
+
   CCacheManager::SerializationType ccState = compactCacheManager_->saveState();
 
   AccessSerializationType chainedItemAccessContainerState =
@@ -6439,7 +6461,7 @@ folly::IOBufQueue CacheAllocator<CacheTrait>::saveStateToIOBuf() {
   // results into a single buffer.
   folly::IOBufQueue queue;
   Serializer::serializeToIOBufQueue(queue, metadata_);
-  Serializer::serializeToIOBufQueue(queue, allocatorState);
+  Serializer::serializeToIOBufQueue(queue, allocatorsState);
   Serializer::serializeToIOBufQueue(queue, ccState);
   Serializer::serializeToIOBufQueue(queue, mmContainersState);
   Serializer::serializeToIOBufQueue(queue, accessContainerState);
@@ -6562,23 +6584,22 @@ CacheAllocator<CacheTrait>::deserializeMMContainers(
    * only works for a single (topmost) tier. */
   MMContainers mmContainers{getNumTiers()};
 
-  for (auto& kvPool : *container.pools_ref()) {
-    auto i = static_cast<PoolId>(kvPool.first);
-    auto& pool = getPool(i);
-    for (auto& kv : kvPool.second) {
-      auto j = static_cast<ClassId>(kv.first);
-      for (TierId tid = 0; tid < getNumTiers(); tid++) {
-        MMContainerPtr ptr =
-            std::make_unique<typename MMContainerPtr::element_type>(kv.second,
-                                                                    compressor);
-        auto config = ptr->getConfig();
-        config.addExtraConfig(config_.trackTailHits
-                                  ? pool.getAllocationClass(j).getAllocsPerSlab()
-                                  : 0);
-        ptr->setConfig(config);
-        mmContainers[tid][i][j] = std::move(ptr);
-      }
-    }
+  std::map<serialization::MemoryDescriptorObject,MMSerializationType> containerMap = 
+      *container.containers();
+  for (auto md : containerMap) {
+     uint32_t tid = *md.first.tid();
+     uint32_t pid = *md.first.pid();
+     uint32_t cid = *md.first.cid();
+     auto& pool = getPoolByTid(pid,tid);
+     MMContainerPtr ptr =
+         std::make_unique<typename MMContainerPtr::element_type>(md.second,
+                                                                 compressor);
+     auto config = ptr->getConfig();
+     config.addExtraConfig(config_.trackTailHits
+                               ? pool.getAllocationClass(cid).getAllocsPerSlab()
+                               : 0);
+     ptr->setConfig(config);
+     mmContainers[tid][pid][cid] = std::move(ptr);
   }
   // We need to drop the unevictableMMContainer in the desierializer.
   // TODO: remove this at version 17.
