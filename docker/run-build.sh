@@ -14,7 +14,8 @@ cd build
 
 source /opt/rh/gcc-toolset-12/enable
 
-cmake ../cachelib -DBUILD_TESTS=ON -DCMAKE_INSTALL_PREFIX=/opt -DCMAKE_BUILD_TYPE=Debug
-sudo_password make install -j$(nproc)
+./build-package -d -j -v -T cachelib
+#cmake ../cachelib -DBUILD_TESTS=ON -DCMAKE_INSTALL_PREFIX=/opt -DCMAKE_BUILD_TYPE=Debug
+#sudo_password make install -j$(nproc)
 
-cd /opt/tests && $WORKDIR/run_tests.sh
+cd opt/tests && $WORKDIR/run_tests.sh

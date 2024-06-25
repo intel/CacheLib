@@ -73,7 +73,7 @@ function push_image {
 		echo "Skip pushing the image to the Container Registry."
 	fi
 }
-
+echo "${1}"
 # If "rebuild" or "pull" are passed to the script as param, force rebuild/pull.
 if [[ "${1}" == "rebuild" ]]; then
 	build_image

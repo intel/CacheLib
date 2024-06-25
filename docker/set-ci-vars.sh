@@ -9,6 +9,13 @@
 
 set -e
 
+function get_commit_range_from_develop {
+    LAST_COMMIT=$(git log origin/develop --pretty=%H -1)
+    RANGE_END="HEAD"
+    COMMIT_RANGE="${LAST_COMMIT}..${RANGE_END}"
+    echo ${COMMIT_RANGE}
+}
+
 function get_commit_range_from_last_merge {
 	# get commit id of the last merge
 	LAST_MERGE=$(git log --merges --pretty=%H -1)
@@ -48,7 +55,7 @@ function get_commit_range_from_last_merge {
 	echo ${COMMIT_RANGE}
 }
 
-COMMIT_RANGE_FROM_LAST_MERGE=$(get_commit_range_from_last_merge)
+COMMIT_RANGE_FROM_LAST_MERGE=$(get_commit_range_from_develop)
 
 if [ -n "${TRAVIS}" ]; then
 	CI_COMMIT=${TRAVIS_COMMIT}
@@ -104,6 +111,18 @@ export CI_REPO_SLUG=${CI_REPO_SLUG}
 export CI_CPU_ARCH=${CI_CPU_ARCH}
 
 echo CI_COMMIT=${CI_COMMIT}
+echo "-----------------------"
+echo $(git show ${CI_COMMIT})
+echo "-----------------------"
+echo "-----------------------"
+echo $(git show)
+echo "-----------------------"
+echo "-----------------------"
+echo $(git branches)
+echo "-----------------------"
+echo "-----------------------"
+echo $(git remote -v)
+echo "-----------------------"
 echo CI_COMMIT_RANGE=${CI_COMMIT_RANGE}
 echo CI_BRANCH=${CI_BRANCH}
 echo CI_EVENT_TYPE=${CI_EVENT_TYPE}
