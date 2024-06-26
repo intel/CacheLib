@@ -1,4 +1,4 @@
-FROM quay.io/centos/centos:stream8
+FROM quay.io/centos/centos:stream9
 
 RUN dnf install -y \
 cmake \
@@ -8,22 +8,20 @@ tzdata \
 vim \
 gdb \
 clang \
-python36 \
-glibc-devel.i686 \
 xmlto \
 uuid \
 libuuid-devel \
-json-c-devel \
 perf \
 numactl
 
 RUN dnf -y install gcc-toolset-12
 RUN echo "source /opt/rh/gcc-toolset-12/enable" >> /etc/bashrc
+
 SHELL ["/bin/bash", "--login", "-c"]
 
 COPY ./contrib ./contrib
 COPY ./docker ./docker
 COPY ./cachelib/external ./cachelib/external
-
+RUN ls ./cachelib/external/
 RUN ./docker/images/install-cachelib-deps.sh
 RUN ./docker/images/install-dsa-deps.sh

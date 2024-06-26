@@ -88,7 +88,7 @@ docker run --privileged=true --name=${CONTAINER_NAME} -i \
 	--env COVERITY_SCAN_TOKEN=${COVERITY_SCAN_TOKEN} \
 	--env COVERITY_SCAN_NOTIFICATION_EMAIL=${COVERITY_SCAN_NOTIFICATION_EMAIL} \
 	--env TEST_TIMEOUT=${TEST_TIMEOUT} \
-	--env TZ='Europe/Warsaw' \
+	--env TZ='America/Los_Angeles' \
 	--shm-size=4G \
 	-v ${HOST_WORKDIR}:${WORKDIR} \
 	-v /etc/localtime:/etc/localtime \

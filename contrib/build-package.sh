@@ -230,7 +230,7 @@ case "$1" in
   mvfst)
     NAME=mvfst
     SRCDIR=cachelib/external/$NAME
-    update_submodules=yes
+    #update_submodules=yes
     cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     ;;
 

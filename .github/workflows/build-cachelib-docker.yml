@@ -19,7 +19,7 @@ jobs:
       IMG_VER:              devel
     strategy:
       matrix:
-        CONFIG: ["OS=centos OS_VER=8streams PUSH_IMAGE=1"]
+        CONFIG: ["OS=centos OS_VER=9streams PUSH_IMAGE=1"]
     steps:
       - name: "System Information"
         run: |
