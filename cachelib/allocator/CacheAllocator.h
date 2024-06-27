@@ -4610,7 +4610,6 @@ CacheAllocator<CacheTrait>::getNextCandidate(TierId tid,
     if (chainedItem) {
       XDCHECK(toRecycleParent->isMoving());
       XDCHECK_EQ(evictedToNext->getRefCount(),2u);
-      (*stats_.chainedItemEvictions)[tid][pid][cid].inc();
       // check if by releasing the item we intend to, we actually
       // recycle the candidate.
       auto ret = releaseBackToAllocator(*candidate, RemoveContext::kEviction,
