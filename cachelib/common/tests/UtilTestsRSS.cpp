@@ -30,7 +30,7 @@ namespace tests {
 
 TEST(Util, MemRSS) {
   for (int i = 0; i < 10; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     auto val = util::getRSSBytes();
     EXPECT_GT(val, 0);
@@ -42,7 +42,7 @@ TEST(Util, MemRSS) {
     std::memset(reinterpret_cast<char*>(ptr), 5, len);
     // sleep to let the stat catch up.
     /* sleep override */
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     auto newVal = util::getRSSBytes();
     EXPECT_GT(newVal, val) << folly::sformat("newVal = {}, val = {}", newVal,
                                              val);
