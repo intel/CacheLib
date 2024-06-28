@@ -25,7 +25,9 @@ jobs:
     name: "CentOS/9 - Build CacheLib with all dependencies"
     runs-on: ubuntu-latest
     # Docker container image name
-    container: "quay.io/centos/centos:stream9"
+    container: 
+      image: "quay.io/centos/centos:stream9"
+      options: --privileged
     steps:
       - name: "Show Head Commit"
         env:

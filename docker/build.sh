@@ -66,7 +66,7 @@ echo "Running build using Docker image: ${IMAGE_NAME}"
 #  - environment variables set (--env)
 #  - host directory containing source mounted (-v)
 #  - working directory set (-w)
-docker run --privileged=true --name=${CONTAINER_NAME} -i \
+docker run --privileged --name=${CONTAINER_NAME} -i \
 	${DOCKER_OPTS} \
 	--env http_proxy=${http_proxy} \
 	--env https_proxy=${https_proxy} \
