@@ -90,9 +90,11 @@ jobs:
         run: ./contrib/build-package.sh -j -v -i fbthrift
       - name: "build CacheLib"
         # Build cachelib in debug mode (-d)
-        run: ./contrib/build-package.sh -j -v -i -d cachelib
+        run: ./contrib/build-package.sh -j -v -i -d -t cachelib
       - name: "run cachebench"
         run: ./opt/cachelib/bin/cachebench --json_test_config ./opt/cachelib/test_configs/simple_test.json
+      - name: "run cachebench tests"
+        run: cd ./opt/cachelib/tests/ && ../../../run_tests.sh
       - uses: actions/upload-artifact@v3
         if: failure()
         with:
